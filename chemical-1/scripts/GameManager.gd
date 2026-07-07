@@ -175,6 +175,11 @@ func play_cards(player_index: int, cards: Array) -> int:
 			if i != player_index:
 				players[i].has_passed = false
 		is_round_starter = false
+		# Bug3 修复: 族炸后检查手牌是否清空
+		if player.get_hand_count() == 0:
+			phase = 2
+			winner_index = player_index
+			log_messages.append("===== 游戏结束！获胜者: %s =====" % player.player_name)
 		return 0
 
 	if pattern == UtilsScript.CardPattern.COMPOUND:

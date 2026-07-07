@@ -118,13 +118,10 @@ static func get_compound_formula(cards: Array) -> Dictionary:
 			elem_counts[c.symbol] = 0
 		elem_counts[c.symbol] += 1
 
-	# 必须恰好 2 种元素
-	if elem_counts.size() != 2:
-		return {}
-
-	# 分类：金属正价优先
-	var pos_candidates: Array = []
-	var neg_candidates: Array = []
+	# 多元素化合物：每种元素取第一个正价或负价的化学式规则
+	# 金属优先正价，非金属优先负价，稀有气体排除（已由 _is_compound 处理）
+	var pos_list: Array = []
+	var neg_list: Array = []
 
 	for sym in elem_counts:
 		var sample = null
@@ -132,72 +129,66 @@ static func get_compound_formula(cards: Array) -> Dictionary:
 			if c.symbol == sym:
 				sample = c
 				break
-		if sample == null:
-			continue
+		if sample == null: continue
 
 		var max_pos = 0
 		var max_neg = 0
 		for v in sample.common_valence:
-			if v > 0 and v > max_pos:
-				max_pos = v
-			elif v < 0 and v < max_neg:
-				max_neg = v
+			if v > 0 and v > max_pos: max_pos = v
+			elif v < 0 and v < max_neg: max_neg = v
 
-		if max_pos > 0:
-			pos_candidates.append({"symbol": sym, "valence": max_pos, "is_metal": sample.element_type == CardDataScript.TYPE_METAL})
-		if max_neg < 0:
-			neg_candidates.append({"symbol": sym, "valence": abs(max_neg), "is_metal": sample.element_type == CardDataScript.TYPE_METAL})
+		if max_pos > 0 or max_neg < 0:
+			pos_list.append({"symbol": sym, "max_pos": max_pos, "max_neg": max_neg,
+				"is_metal": sample.element_type == CardDataScript.TYPE_METAL,
+				"count": elem_counts[sym]})
 
-	if pos_candidates.is_empty() or neg_candidates.is_empty():
+	if pos_list.is_empty():
 		return {}
 
-	# 金属优先作为正价元素
-	var pos_elem = null
-	for pc in pos_candidates:
-		if pc.is_metal:
-			pos_elem = pc
-			break
-	if pos_elem == null:
-		pos_elem = pos_candidates[0]
+	# 金属正价优先排序
+	pos_list.sort_custom(func(a, b):
+		if a.is_metal and not b.is_metal: return true
+		if not a.is_metal and b.is_metal: return false
+		return a.max_pos > b.max_pos
+	)
 
-	# 找非同符号的负价元素
-	var neg_elem = null
-	for nc in neg_candidates:
-		if nc.symbol != pos_elem.symbol:
-			neg_elem = nc
+	# 选正价：第一个有 max_pos > 0 的金属（或非金属）
+	var pos_data = null
+	for e in pos_list:
+		if e.max_pos > 0:
+			pos_data = e
 			break
+	# 选负价：找非同名且有 max_neg 的元素（非金属优先）
+	var neg_data = null
+	for e in pos_list:
+		if e.symbol != pos_data.symbol and e.max_neg < 0:
+			if neg_data == null or (e.is_metal == false and neg_data.is_metal):
+				neg_data = e
+			elif e.max_neg < neg_data.max_neg:
+				neg_data = e
 
-	if neg_elem == null:
+	if pos_data == null or neg_data == null:
 		return {}
 
-	var pos_val = pos_elem.valence
-	var neg_val = neg_elem.valence
-	var pos_symbol = pos_elem.symbol
-	var neg_symbol = neg_elem.symbol
+	var pv = pos_data.max_pos
+	var nv = abs(neg_data.max_neg)
+	var g = _gcd(pv, nv)
+	var rp = nv / g
+	var rn = pv / g
 
-	var g = _gcd(pos_val, neg_val)
-	var ratio_pos = neg_val / g
-	var ratio_neg = pos_val / g
+	var ratio_ok = (pos_data.count == rp and neg_data.count == rn)
 
-	var actual_pos = elem_counts.get(pos_symbol, 0)
-	var actual_neg = elem_counts.get(neg_symbol, 0)
-
-	# 严格检查：比例精确匹配（不允许倍数放大或其他元素混入）
-	var ratio_ok = (actual_pos == ratio_pos and actual_neg == ratio_neg)
-
-	var formula = pos_symbol
-	if ratio_neg > 1:
-		formula += _to_subscript(ratio_neg)
-	formula += neg_symbol
-	if ratio_pos > 1:
-		formula += _to_subscript(ratio_pos)
+	var formula = pos_data.symbol
+	if rn > 1: formula += _to_subscript(rn)
+	formula += neg_data.symbol
+	if rp > 1: formula += _to_subscript(rp)
 
 	return {
 		"formula": formula,
 		"ratio_ok": ratio_ok,
-		"ratio": {"pos_symbol": pos_symbol, "neg_symbol": neg_symbol,
-				  "pos_val": pos_val, "neg_val": neg_val,
-				  "ratio_pos": ratio_pos, "ratio_neg": ratio_neg},
+		"ratio": {"pos_symbol": pos_data.symbol, "neg_symbol": neg_data.symbol,
+				  "pos_val": pv, "neg_val": nv,
+				  "ratio_pos": rp, "ratio_neg": rn},
 		"actual_counts": elem_counts,
 	}
 

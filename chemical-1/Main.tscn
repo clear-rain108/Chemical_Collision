@@ -1,4 +1,4 @@
-[gd_scene load_steps=2 format=3 uid="uid://dqldho57604rv"]
+[gd_scene format=3 uid="uid://dqldho57604rv"]
 
 [ext_resource type="Script" uid="uid://da0nq8ih8tyri" path="res://scripts/GameUI.gd" id="1_game_ui"]
 
@@ -11,18 +11,17 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_game_ui")
 
-[node name="StartPage" type="Control" parent="."]
+[node name="StartPage" type="Control" parent="." unique_id=783610178]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-visible = true
 
-[node name="StartTitle" type="Label" parent="StartPage"]
+[node name="StartTitle" type="Label" parent="StartPage" unique_id=890957704]
 layout_mode = 1
-anchors_preset = 8
+anchors_preset = -1
 anchor_left = 0.5
 anchor_top = 0.3
 anchor_right = 0.5
@@ -33,11 +32,11 @@ offset_right = 200.0
 offset_bottom = 40.0
 grow_horizontal = 2
 grow_vertical = 2
+theme_override_font_sizes/font_size = 48
 text = "Chemical Collision"
 horizontal_alignment = 1
-theme_override_font_sizes/font_size = 48
 
-[node name="StartButton" type="Button" parent="StartPage"]
+[node name="StartButton" type="Button" parent="StartPage" unique_id=982323632]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -50,19 +49,19 @@ offset_right = 100.0
 offset_bottom = 25.0
 grow_horizontal = 2
 grow_vertical = 2
-text = "Start Game"
 theme_override_font_sizes/font_size = 24
+text = "Start Game"
 
-[node name="GamePage" type="Control" parent="."]
+[node name="GamePage" type="Control" parent="." unique_id=849744340]
+visible = false
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-visible = false
 
-[node name="TitleLabel" type="Label" parent="GamePage"]
+[node name="TitleLabel" type="Label" parent="GamePage" unique_id=81170594]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 10.0
@@ -71,7 +70,7 @@ offset_bottom = 55.0
 theme_override_font_sizes/font_size = 32
 text = "Chemical Collision"
 
-[node name="InfoLabel" type="Label" parent="GamePage"]
+[node name="InfoLabel" type="Label" parent="GamePage" unique_id=1401271126]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 60.0
@@ -80,16 +79,16 @@ offset_bottom = 200.0
 theme_override_font_sizes/font_size = 16
 text = "Initializing..."
 
-[node name="TableLabel" type="Label" parent="GamePage"]
+[node name="TableLabel" type="Label" parent="GamePage" unique_id=699005206]
 layout_mode = 0
-offset_left = 20.0
-offset_top = 263.0
-offset_right = 600.0
-offset_bottom = 298.0
+offset_left = 560.0
+offset_top = 260.0
+offset_right = 1140.0
+offset_bottom = 295.0
 theme_override_font_sizes/font_size = 20
 text = "Table: empty"
 
-[node name="HandLabel" type="Label" parent="GamePage"]
+[node name="HandLabel" type="Label" parent="GamePage" unique_id=2103165371]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 320.0
@@ -98,40 +97,40 @@ offset_bottom = 350.0
 theme_override_font_sizes/font_size = 18
 text = "My Hand:"
 
-[node name="HandContainer" type="HFlowContainer" parent="GamePage"]
+[node name="HandContainer" type="HFlowContainer" parent="GamePage" unique_id=1910911796]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 355.0
 offset_right = 480.0
 offset_bottom = 550.0
 
-[node name="ActionPanel" type="HBoxContainer" parent="GamePage"]
+[node name="ActionPanel" type="HBoxContainer" parent="GamePage" unique_id=1139398523]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 560.0
 offset_right = 480.0
 offset_bottom = 610.0
 
-[node name="HintButton" type="Button" parent="GamePage"]
+[node name="HintButton" type="Button" parent="GamePage" unique_id=516846863]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 620.0
 offset_right = 480.0
 offset_bottom = 660.0
-text = "Show hints"
 theme_override_font_sizes/font_size = 14
 toggle_mode = true
+text = "Show hints"
 
-[node name="QuitButton" type="Button" parent="GamePage"]
+[node name="QuitButton" type="Button" parent="GamePage" unique_id=2051724742]
 layout_mode = 0
 offset_left = 500.0
 offset_top = 620.0
 offset_right = 600.0
 offset_bottom = 660.0
-text = "Quit"
 theme_override_font_sizes/font_size = 14
+text = "Quit"
 
-[node name="LogLabel" type="Label" parent="GamePage"]
+[node name="LogLabel" type="Label" parent="GamePage" unique_id=628790660]
 layout_mode = 0
 offset_left = 510.0
 offset_top = 10.0
@@ -141,18 +140,18 @@ theme_override_font_sizes/font_size = 16
 text = "Game Log:"
 autowrap_mode = 3
 
-[node name="EndPage" type="Control" parent="."]
+[node name="EndPage" type="Control" parent="." unique_id=158618380]
+visible = false
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-visible = false
 
-[node name="EndTitle" type="Label" parent="EndPage"]
+[node name="EndTitle" type="Label" parent="EndPage" unique_id=1899741738]
 layout_mode = 1
-anchors_preset = 8
+anchors_preset = -1
 anchor_left = 0.5
 anchor_top = 0.25
 anchor_right = 0.5
@@ -163,13 +162,13 @@ offset_right = 300.0
 offset_bottom = 40.0
 grow_horizontal = 2
 grow_vertical = 2
+theme_override_font_sizes/font_size = 48
 text = "Game Over"
 horizontal_alignment = 1
-theme_override_font_sizes/font_size = 48
 
-[node name="EndLabel" type="Label" parent="EndPage"]
+[node name="EndLabel" type="Label" parent="EndPage" unique_id=986438456]
 layout_mode = 1
-anchors_preset = 8
+anchors_preset = -1
 anchor_left = 0.5
 anchor_top = 0.4
 anchor_right = 0.5
@@ -180,13 +179,12 @@ offset_right = 200.0
 offset_bottom = 40.0
 grow_horizontal = 2
 grow_vertical = 2
-text = ""
-horizontal_alignment = 1
 theme_override_font_sizes/font_size = 24
+horizontal_alignment = 1
 
-[node name="EndButton" type="Button" parent="EndPage"]
+[node name="EndButton" type="Button" parent="EndPage" unique_id=1517613719]
 layout_mode = 1
-anchors_preset = 8
+anchors_preset = -1
 anchor_left = 0.5
 anchor_top = 0.6
 anchor_right = 0.5
@@ -197,5 +195,5 @@ offset_right = 100.0
 offset_bottom = 25.0
 grow_horizontal = 2
 grow_vertical = 2
-text = "Return"
 theme_override_font_sizes/font_size = 24
+text = "Return"
