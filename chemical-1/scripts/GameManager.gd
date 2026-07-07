@@ -1,6 +1,6 @@
 # ============================================================
 # GameManager.gd - 多人发牌与玩家管理
-# 族炸接炸链 + 冷却机制
+# 族炸接炸链 + 冷却 + 同牌型接牌
 # ============================================================
 
 const CardDatabaseScript = preload("res://scripts/CardDatabase.gd")
@@ -17,12 +17,13 @@ var phase: int = 0
 var winner_index: int = -1
 var table_cards: Array = []
 var table_player_index: int = -1
+var table_pattern: int = -1    # 桌面牌型（用于限制接牌类型）
 var is_round_starter: bool = true
 var log_messages: Array = []
+var compound_immune: bool = false  # 溢出化合物免疫族炸
 
-# 族炸接炸链
 var clan_bomb_chain_active: bool = false
-var clan_bomb_owner: int = -1      # 当前桌面族炸的拥有者（最后一个出炸的人）
+var clan_bomb_owner: int = -1
 
 class PlayerInfo:
 	var player_name: String = ""
@@ -70,9 +71,11 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> void:
 	players.clear()
 	table_cards.clear()
 	table_player_index = -1
+	table_pattern = -1
 	winner_index = -1
 	current_player_index = 0
 	is_round_starter = true
+	compound_immune = false
 	clan_bomb_chain_active = false
 	clan_bomb_owner = -1
 	log_messages.clear()
@@ -114,35 +117,40 @@ func play_cards(player_index: int, cards: Array) -> int:
 	var player = players[player_index]
 	var pattern = UtilsScript.detect_pattern(cards)
 	if pattern == -1:
-		return -1  # INVALID_PATTERN
-
-	var effective_starter = is_round_starter
+		return -1
 
 	# === 族炸判定 ===
 	if pattern == UtilsScript.CardPattern.CLAN_BOMB:
-		# 冷却检查（接炸模式下不受限）
 		if not clan_bomb_chain_active and player.clan_bomb_cooling:
-			return -3  # CANT_BOMB
-
+			return -3
 		if clan_bomb_chain_active:
-			# 接炸：必须比桌面族炸大（如果桌面非空）
 			if table_cards.size() > 0:
 				var cmp = UtilsScript.compare_cards(cards, table_cards)
 				if cmp <= 0:
-					return -2  # NOT_STRONGER
+					return -2
 	else:
-		# 非族炸出牌
+		# 非族炸：检查是否可以接当前桌面
 		if clan_bomb_chain_active:
 			return -1  # 接炸模式只能出族炸
-		if not effective_starter and table_cards.size() > 0:
-			var cmp = UtilsScript.compare_cards(cards, table_cards)
-			if cmp <= 0:
-				return -2
+		if not is_round_starter:
+			if table_pattern == UtilsScript.CardPattern.ELEMENT and pattern != UtilsScript.CardPattern.ELEMENT:
+				return -4  # 单质后只能接单质或族炸
+			if table_pattern == UtilsScript.CardPattern.COMPOUND and pattern != UtilsScript.CardPattern.COMPOUND:
+				# 但如果 compound_immune，不允许任何接牌
+				if compound_immune:
+					return -4  # 免疫化合物无法被接
+				return -4  # 化合物后只能接化合物或族炸
+			if table_cards.size() > 0:
+				var cmp = UtilsScript.compare_cards(cards, table_cards)
+				if cmp <= 0:
+					return -2
 
 	# 从手牌移除
 	player.remove_cards(cards)
 	table_cards = cards.duplicate()
+	table_pattern = pattern
 	table_player_index = player_index
+	compound_immune = false  # 默认不免疫，下面特殊设置
 
 	# 构建日志
 	var pname = UtilsScript.get_pattern_name(pattern)
@@ -160,22 +168,22 @@ func play_cards(player_index: int, cards: Array) -> int:
 	log_messages.append(log_msg)
 
 	if pattern == UtilsScript.CardPattern.CLAN_BOMB:
-		# 标记冷却
 		player.clan_bomb_cooling = true
-		# 启动/持续接炸链
 		clan_bomb_chain_active = true
 		clan_bomb_owner = player_index
-		# 重置其他玩家 pass
 		for i in range(players.size()):
 			if i != player_index:
 				players[i].has_passed = false
 		is_round_starter = false
-		return 0  # OK，不切换回合
+		return 0
 
 	if pattern == UtilsScript.CardPattern.COMPOUND:
 		player.clan_bomb_cooling = false
+		# 溢出检查：牌数 > 玩家数 → 免疫
+		if cards.size() > players.size():
+			compound_immune = true
+			log_messages.append("⚠ 溢出化合物！免疫接炸")
 
-	# 非族炸出牌成功
 	clan_bomb_chain_active = false
 	clan_bomb_owner = -1
 	_reset_all_passes()
@@ -197,18 +205,15 @@ func player_pass(player_index: int) -> void:
 	var player = players[player_index]
 
 	if clan_bomb_chain_active:
-		# 接炸模式：跳过不抽牌
 		player.has_passed = true
 		log_messages.append("%s 不接炸" % player.player_name)
 	else:
-		# 正常跳过
 		player.has_passed = true
 		var drawn = database.draw_cards(1)
 		if drawn.size() > 0:
 			player.add_card(drawn[0])
 			player.sort_hand_by_atomic_number()
-		var drawn_str = drawn[0].symbol if drawn.size() > 0 else "空"
-		log_messages.append("%s 跳过，抽到: %s" % [player.player_name, drawn_str])
+		log_messages.append("%s 跳过回合" % player.player_name)
 
 	next_turn()
 
@@ -234,14 +239,7 @@ func next_turn() -> void:
 	_start_new_round()
 
 
-# 接炸链：按顺时针问下一个未 pass 的非 owner 玩家
 func _intercept_next() -> void:
-	var can_intercept: Array = []
-	for i in range(players.size()):
-		var p = players[i]
-		if i != clan_bomb_owner and p.get_hand_count() > 0 and not p.has_passed:
-			can_intercept.append(i)
-
 	var next_idx = clan_bomb_owner
 	for _i in range(players.size()):
 		next_idx = (next_idx + 1) % players.size()
@@ -249,7 +247,6 @@ func _intercept_next() -> void:
 			current_player_index = next_idx
 			return
 
-	# 所有其他玩家都已 pass → 接炸结束
 	_finish_clan_bomb_chain()
 
 
@@ -258,6 +255,7 @@ func _finish_clan_bomb_chain() -> void:
 	var owner_idx = clan_bomb_owner
 	clan_bomb_owner = -1
 	table_cards.clear()
+	table_pattern = -1
 	table_player_index = -1
 	is_round_starter = true
 	_reset_all_passes()
@@ -267,11 +265,13 @@ func _finish_clan_bomb_chain() -> void:
 
 func _start_new_round() -> void:
 	table_cards.clear()
+	table_pattern = -1
 	table_player_index = -1
 	is_round_starter = true
 	_reset_all_passes()
 	clan_bomb_chain_active = false
 	clan_bomb_owner = -1
+	compound_immune = false
 
 	for _i in range(players.size()):
 		var p = players[current_player_index]
@@ -331,7 +331,10 @@ func get_all_players_info() -> String:
 		info += "桌面: %s 打出 %s (%s" % [tp.player_name, _cards_to_string(table_cards), pn]
 		if pat == UtilsScript.CardPattern.ELEMENT and el != "":
 			info += " " + el
-		info += ")\n"
+		info += ")"
+		if compound_immune:
+			info += " [免疫]"
+		info += "\n"
 	else:
 		info += "桌面: 空 (自由出牌)\n"
 	if clan_bomb_chain_active:
@@ -349,12 +352,20 @@ func get_available_patterns(player_idx: int) -> String:
 			return "等待他人接炸..."
 		return "仅可出: 更大的族炸 / 跳过"
 	if is_round_starter or table_cards.is_empty():
-		if p.clan_bomb_cooling:
-			return "当前可出: 单质 / 化合物 / 跳过"
-		return "当前可出: 单质 / 化合物 / 族炸 / 跳过"
+		var s = "自由出牌: 单质+化合物"
+		if not p.clan_bomb_cooling:
+			s += "+族炸"
+		s += " / 跳过"
+		return s
 	if p.clan_bomb_cooling:
-		return "需出比桌面牌大的单质/化合物 / 跳过"
-	return "需出比桌面牌大的单质/化合物/族炸 / 跳过"
+		return "需要打出更大的牌 / 跳过"
+	if table_pattern == UtilsScript.CardPattern.ELEMENT:
+		return "桌面是单质，只能出更大的单质/族炸 / 跳过"
+	if table_pattern == UtilsScript.CardPattern.COMPOUND:
+		if compound_immune:
+			return "桌面化合物免疫，只能出族炸/跳过"
+		return "桌面是化合物，只能出更大的化合物/族炸 / 跳过"
+	return "需要打出更大的牌 / 跳过"
 
 
 func flush_logs() -> Array:

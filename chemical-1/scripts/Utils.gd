@@ -106,77 +106,86 @@ static func _can_balance_valence(cards: Array) -> bool:
 	return has_positive and has_negative
 
 
-# 获取化合价配平比例（用于化合物显示）
-# 返回值包含 formula 和 ratio_check（出牌数量是否匹配最简比）
+# 获取化合价配平比例（金属优先，严格原子匹配）
 static func get_compound_formula(cards: Array) -> Dictionary:
 	if not _is_compound(cards):
 		return {}
 
-	# 统计每种元素的出现次数（用于比值检查）
+	# 统计每种元素
 	var elem_counts: Dictionary = {}
 	for c in cards:
 		if not elem_counts.has(c.symbol):
 			elem_counts[c.symbol] = 0
 		elem_counts[c.symbol] += 1
 
-	# 为每种元素选取其最大正价或负价
-	var pos_info: Array = []   # [{symbol, valence}]
-	var neg_info: Array = []   # [{symbol, valence}]
+	# 必须恰好 2 种元素
+	if elem_counts.size() != 2:
+		return {}
 
-	for c in cards:
+	# 分类：金属正价优先
+	var pos_candidates: Array = []
+	var neg_candidates: Array = []
+
+	for sym in elem_counts:
+		var sample = null
+		for c in cards:
+			if c.symbol == sym:
+				sample = c
+				break
+		if sample == null:
+			continue
+
 		var max_pos = 0
 		var max_neg = 0
-		for v in c.common_valence:
+		for v in sample.common_valence:
 			if v > 0 and v > max_pos:
 				max_pos = v
 			elif v < 0 and v < max_neg:
 				max_neg = v
 
 		if max_pos > 0:
-			pos_info.append({"symbol": c.symbol, "valence": max_pos})
-			break  # 只用第一次出现的正价元素定比（简化）
-
-	if pos_info.is_empty():
-		return {}
-
-	for c in cards:
-		var max_neg = 0
-		for v in c.common_valence:
-			if v < 0 and v < max_neg:
-				max_neg = v
+			pos_candidates.append({"symbol": sym, "valence": max_pos, "is_metal": sample.element_type == CardDataScript.TYPE_METAL})
 		if max_neg < 0:
-			neg_info.append({"symbol": c.symbol, "valence": abs(max_neg)})
-			break  # 只用第一次出现的负价元素定比
+			neg_candidates.append({"symbol": sym, "valence": abs(max_neg), "is_metal": sample.element_type == CardDataScript.TYPE_METAL})
 
-	if neg_info.is_empty():
+	if pos_candidates.is_empty() or neg_candidates.is_empty():
 		return {}
 
-	var pos_val = pos_info[0].valence
-	var neg_val = neg_info[0].valence
-	var pos_symbol = pos_info[0].symbol
-	var neg_symbol = neg_info[0].symbol
+	# 金属优先作为正价元素
+	var pos_elem = null
+	for pc in pos_candidates:
+		if pc.is_metal:
+			pos_elem = pc
+			break
+	if pos_elem == null:
+		pos_elem = pos_candidates[0]
 
-	# 最简整数比：正价 a 个原子 × neg_val，负价 b 个原子 × pos_val
-	# pos_val * a = neg_val * b  →  a:b = neg_val:pos_val
+	# 找非同符号的负价元素
+	var neg_elem = null
+	for nc in neg_candidates:
+		if nc.symbol != pos_elem.symbol:
+			neg_elem = nc
+			break
+
+	if neg_elem == null:
+		return {}
+
+	var pos_val = pos_elem.valence
+	var neg_val = neg_elem.valence
+	var pos_symbol = pos_elem.symbol
+	var neg_symbol = neg_elem.symbol
+
 	var g = _gcd(pos_val, neg_val)
-	var ratio_pos = neg_val / g    # 正价元素需要的原子数
-	var ratio_neg = pos_val / g    # 负价元素需要的原子数
+	var ratio_pos = neg_val / g
+	var ratio_neg = pos_val / g
 
-	# 检查出牌数量是否匹配最简比
-	var ratio_ok = false
-	if elem_counts.has(pos_symbol) and elem_counts.has(neg_symbol):
-		var actual_pos = elem_counts[pos_symbol]
-		var actual_neg = elem_counts[neg_symbol]
-		# 检查比例是否匹配（允许倍数放大）
-		if actual_pos > 0 and actual_neg > 0:
-			var k = float(actual_pos) / ratio_pos
-			if k >= 1 and k == floor(k):
-				if int(actual_neg) == int(ratio_neg * k):
-					ratio_ok = true
+	var actual_pos = elem_counts.get(pos_symbol, 0)
+	var actual_neg = elem_counts.get(neg_symbol, 0)
 
-	# 构建化学式（使用 Unicode 下标）
-	var formula = ""
-	formula += pos_symbol
+	# 严格检查：比例精确匹配（不允许倍数放大或其他元素混入）
+	var ratio_ok = (actual_pos == ratio_pos and actual_neg == ratio_neg)
+
+	var formula = pos_symbol
 	if ratio_neg > 1:
 		formula += _to_subscript(ratio_neg)
 	formula += neg_symbol
