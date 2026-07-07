@@ -17,7 +17,8 @@ const DIATOMIC_SYMBOLS = ["H", "N", "O", "F", "Cl"]
 
 
 # 判定一组牌的牌型
-static func detect_pattern(cards: Array) -> int:
+# skip_clan_bomb: 指定"化合物"路径时设为 true，跳过族炸检测
+static func detect_pattern(cards: Array, skip_clan_bomb: bool = false) -> int:
 	if cards.is_empty():
 		return -1
 
@@ -31,9 +32,10 @@ static func detect_pattern(cards: Array) -> int:
 			return CardPattern.ELEMENT   # 双原子分子单质
 		return -1  # 非法
 
-	# 检查族炸（同族不同元素 ≥2 张）
-	if _is_clan_bomb(cards):
-		return CardPattern.CLAN_BOMB
+	# 检查族炸（同族不同元素 ≥2 张）— 可选跳过
+	if not skip_clan_bomb:
+		if _is_clan_bomb(cards):
+			return CardPattern.CLAN_BOMB
 
 	# 检查化合物（多元素化合价匹配，≥2 张）
 	if cards.size() >= 2 and _is_compound(cards):
@@ -119,81 +121,57 @@ static func get_compound_formula(cards: Array, custom_valences: Dictionary = {})
 			elem_counts[c.symbol] = 0
 		elem_counts[c.symbol] += 1
 
-	# 多元素化合物形成规则
-	# 1. 为每种元素采集样本
-	# 2. 分类：有正价的归 pos_pool，有负价的归 neg_pool
-	# 3. 金属优先作为正价(cation)，非金属优先作为负价(anion)
-	# 4. 化学式：正价在前，下标为负价/GCD；负价在后，下标为正价/GCD
+	# 多元素化合物形成规则 (支持 2+ 元素)
+	# - custom_valences 中的元素决定正/负价划分
+	# - 所有正价元素在前，所有负价元素在后
+	# - 2 元素: GCD 计算最简比
+	# - 3+ 元素: 玩家必须提供准确的原子数 (charge balance: Σ count×valence = 0)
 
-	var pos_pool: Array = []    # [{symbol, max_pos, is_metal, count}]
-	var neg_pool: Array = []    # [{symbol, max_neg, is_metal, count}]
+	var pos_list: Array = []    # [{symbol, valence, count}]
+	var neg_list: Array = []
 
-	for sym in elem_counts:
-		var sample = null
-		for c in cards:
-			if c.symbol == sym: sample = c; break
-		if sample == null: continue
-
-		var mp = 0; var mn = 0
-		for v in sample.common_valence:
-			if v > 0 and v > mp: mp = v
-			elif v < 0 and v < mn: mn = v
-
-		var info = {"symbol": sym, "is_metal": sample.element_type == CardDataScript.TYPE_METAL, "count": elem_counts[sym]}
-		if mp > 0: pos_pool.append({"symbol": sym, "valence": mp, "is_metal": info.is_metal, "count": info.count})
-		if mn < 0: neg_pool.append({"symbol": sym, "valence": abs(mn), "is_metal": info.is_metal, "count": info.count})
-
-	if pos_pool.is_empty() or neg_pool.is_empty(): return {}
-
-	var pos_data = null
-	var neg_data = null
-
-	# 如果提供了自定义化合价，直接使用
 	if custom_valences.size() >= 2:
-		var pos_sym = ""
-		var neg_sym = ""
+		# 使用自定义化合价
 		for sym in custom_valences:
-			if custom_valences[sym] > 0: pos_sym = sym
-			else: neg_sym = sym
-		if pos_sym != "" and neg_sym != "":
-			for e in pos_pool:
-				if e.symbol == pos_sym: pos_data = e; break
-			for e in neg_pool:
-				if e.symbol == neg_sym: neg_data = e; break
+			var v = custom_valences[sym]
+			var cnt = elem_counts.get(sym, 0)
+			if v > 0:
+				pos_list.append({"symbol": sym, "valence": abs(v), "count": cnt})
+			else:
+				neg_list.append({"symbol": sym, "valence": abs(v), "count": cnt})
+	else:
+		# 自动检测：按 is_metal 分类
+		for sym in elem_counts:
+			var sample = null
+			for c in cards:
+				if c.symbol == sym: sample = c; break
+			if sample == null: continue
+			var mp = 0; var mn = 0
+			for v in sample.common_valence:
+				if v > 0 and v > mp: mp = v
+				elif v < 0 and v < mn: mn = v
+			if sample.element_type == CardDataScript.TYPE_METAL and mp > 0:
+				pos_list.append({"symbol": sym, "valence": mp, "count": elem_counts[sym]})
+			elif mn < 0:
+				neg_list.append({"symbol": sym, "valence": abs(mn), "count": elem_counts[sym]})
 
-	# 自动检测模式
-	if pos_data == null:
-		for e in pos_pool:
-			if e.is_metal: pos_data = e; break
-		if pos_data == null: pos_data = pos_pool[0]
+	if pos_list.is_empty() or neg_list.is_empty(): return {}
 
-	if neg_data == null:
-		for e in neg_pool:
-			if e.symbol != pos_data.symbol:
-				if neg_data == null or (e.is_metal == false and neg_data.is_metal): neg_data = e
-	if neg_data == null: return {}
+	var total_pos = 0; var total_neg = 0
+	for e in pos_list: total_pos += e.count * e.valence
+	for e in neg_list: total_neg += e.count * e.valence
+	var ratio_ok = (total_pos == total_neg and total_pos > 0)
 
-	var pv = abs(custom_valences.get(pos_data.symbol, pos_data.valence))
-	var nv = abs(custom_valences.get(neg_data.symbol, -neg_data.valence))
-	var g = _gcd(pv, nv)
-	# 最简比 = 化合价之比的倒数: a:b = pv:nv → atom_a = nv/g, atom_b = pv/g
-	var rp = nv / g   # 正价原子个数
-	var rn = pv / g   # 负价原子个数
-
-	var ratio_ok = (pos_data.count == rp and neg_data.count == rn)
-
-	# rp = 正价原子个数(下标在正价符号后)，rn = 负价原子个数(下标在负价符号后)
-	var formula = pos_data.symbol
-	if rp > 1: formula += _to_subscript(rp)
-	formula += neg_data.symbol
-	if rn > 1: formula += _to_subscript(rn)
+	# 构建化学式
+	var formula = ""
+	for e in pos_list: formula += e.symbol + ("" if e.count == 1 else _to_subscript(e.count))
+	for e in neg_list: formula += e.symbol + ("" if e.count == 1 else _to_subscript(e.count))
 
 	return {
 		"formula": formula,
 		"ratio_ok": ratio_ok,
-		"ratio": {"pos_symbol": pos_data.symbol, "neg_symbol": neg_data.symbol,
-				  "pos_val": pv, "neg_val": nv,
-				  "ratio_pos": rp, "ratio_neg": rn},
+		"total_positive": total_pos,
+		"total_negative": total_neg,
 		"actual_counts": elem_counts,
 	}
 

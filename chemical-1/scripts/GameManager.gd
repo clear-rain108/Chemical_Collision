@@ -115,7 +115,8 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 		return -1
 
 	var player = players[player_index]
-	var pattern = UtilsScript.detect_pattern(cards)
+	var skip_bomb = custom_valences.size() >= 2
+	var pattern = UtilsScript.detect_pattern(cards, skip_bomb)
 	if pattern == -1:
 		return -1
 
@@ -144,6 +145,12 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 				var cmp = UtilsScript.compare_cards(cards, table_cards)
 				if cmp <= 0:
 					return -2
+
+	# 化合物比例校验（必须在移除卡牌之前）
+	if pattern == UtilsScript.CardPattern.COMPOUND:
+		var fi = UtilsScript.get_compound_formula(cards, custom_valences)
+		if not fi.is_empty() and not fi.get("ratio_ok", false):
+			return -1  # 比例不匹配
 
 	# 从手牌移除
 	player.remove_cards(cards)

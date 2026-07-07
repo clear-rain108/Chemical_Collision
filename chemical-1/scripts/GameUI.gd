@@ -1,6 +1,6 @@
 # ============================================================
 # GameUI.gd - 游戏主界面控制脚本
-# 复合步骤流程 + 自定义化合价传递
+# 多元素化合物 + 精确牌张收集 + 电荷平衡验证
 # ============================================================
 
 extends Control
@@ -133,7 +133,8 @@ func _refresh_ui() -> void:
 
 
 func _update_info_label() -> void:
-	if info_label and game_manager: info_label.text = game_manager.get_all_players_info()
+	if info_label and game_manager:
+		info_label.text = game_manager.get_all_players_info()
 
 
 func _update_table_label() -> void:
@@ -155,7 +156,8 @@ func _update_table_label() -> void:
 		if game_manager.compound_immune: txt += " [免疫]"
 		if game_manager.clan_bomb_chain_active: txt += " ⚠接炸中"
 		table_label.text = txt
-	else: table_label.text = "桌面: 空"
+	else:
+		table_label.text = "桌面: 空"
 
 
 func _update_log_label() -> void:
@@ -164,13 +166,15 @@ func _update_log_label() -> void:
 	if new_logs.is_empty(): return
 	for msg in new_logs:
 		log_lines.push_back(msg)
-		while log_lines.size() > MAX_LOG_LINES: log_lines.pop_front()
+		while log_lines.size() > MAX_LOG_LINES:
+			log_lines.pop_front()
 	log_label.text = "\n".join(log_lines)
 
 
 func _update_action_panel() -> void:
 	if not action_panel or not game_manager: return
-	for child in action_panel.get_children(): child.queue_free()
+	for child in action_panel.get_children():
+		child.queue_free()
 	var cp = game_manager.get_current_player()
 	if cp == null or cp.is_ai or game_manager.is_game_over(): return
 
@@ -187,21 +191,30 @@ func _update_action_panel() -> void:
 
 
 func _mkb(text: String, cb: Callable, dis: bool) -> Button:
-	var b = Button.new(); b.text = text; b.custom_minimum_size = Vector2(160, 45)
-	b.add_theme_font_size_override("font_size", 16); b.disabled = dis; b.pressed.connect(cb); return b
+	var b = Button.new()
+	b.text = text
+	b.custom_minimum_size = Vector2(160, 45)
+	b.add_theme_font_size_override("font_size", 16)
+	b.disabled = dis
+	b.pressed.connect(cb)
+	return b
 
 
 func _on_hint_toggled(pressed: bool) -> void:
 	if pressed and game_manager:
 		var hint = game_manager.get_available_patterns(game_manager.get_current_player_index())
 		if info_label: info_label.text = game_manager.get_all_players_info() + "\n提示: " + hint
-	else: _update_info_label()
+	else:
+		_update_info_label()
 
 
 func _update_hand_buttons() -> void:
 	if not hand_container or not game_manager: return
-	for child in hand_container.get_children(): child.queue_free()
-	hand_buttons.clear(); ai_triggered = false
+	for child in hand_container.get_children():
+		child.queue_free()
+	hand_buttons.clear()
+	ai_triggered = false
+
 	var cp = game_manager.get_current_player()
 	if cp == null: return
 
@@ -238,36 +251,42 @@ func _update_hand_buttons() -> void:
 
 func _update_valence_buttons() -> void:
 	if not action_panel or not game_manager: return
-	for child in action_panel.get_children(): child.queue_free()
+	for child in action_panel.get_children():
+		child.queue_free()
 	var cp = game_manager.get_current_player()
+
 	var elem_map: Dictionary = {}
 	for idx in selected_indices:
 		var card = cp.hand[idx]
-		if not elem_map.has(card.symbol): elem_map[card.symbol] = card
+		if not elem_map.has(card.symbol):
+			elem_map[card.symbol] = card
 
 	if elem_map.size() < 2:
 		action_panel.add_child(_mkb("至少选两种元素 (返回)", _on_back, false))
 		return
 
-	var has_pos = false
-	var has_neg = false
-	for sel in compound_selections:
-		if sel.valence > 0: has_pos = true
-		elif sel.valence < 0: has_neg = true
+	# 每种选中元素 → 显示可选化合价
+	var all_assigned = true
+	for sym in elem_map:
+		var card = elem_map[sym]
+		var already = null
+		for sel in compound_selections:
+			if sel.symbol == sym:
+				already = sel
+				break
+		if already == null:
+			all_assigned = false
+		for v in card.common_valence:
+			if already != null and already.valence == v:
+				break
+			action_panel.add_child(_mkb("%s (%+d)" % [sym, v], _on_select_valence.bind(sym, v), false))
 
-	if not has_pos or not has_neg:
-		for sym in elem_map:
-			var card = elem_map[sym]
-			for v in card.common_valence:
-				if v > 0 and not has_pos:
-					action_panel.add_child(_mkb("%s (+%d)" % [sym, v], _on_select_valence.bind(sym, v), false))
-				elif v < 0 and not has_neg:
-					action_panel.add_child(_mkb("%s (%d)" % [sym, v], _on_select_valence.bind(sym, v), false))
+	if not all_assigned:
 		action_panel.add_child(_mkb("返回", _on_back, false))
 	else:
 		var info = ""
 		for sel in compound_selections:
-			info += "%s%d " % [sel.symbol, sel.valence]
+			info += "%s%+d " % [sel.symbol, sel.valence]
 		var lbl = Label.new()
 		lbl.text = info
 		action_panel.add_child(lbl)
@@ -284,35 +303,48 @@ func _on_card_clicked(index: int) -> void:
 	_update_action_panel()
 
 
-func _on_step_next() -> void: step_mode = 1; _update_action_panel()
+func _on_step_next() -> void:
+	step_mode = 1
+	_update_action_panel()
 
 
 func _on_element() -> void:
-	var cp = game_manager.get_current_player(); var cards: Array = []
+	var cp = game_manager.get_current_player()
+	var cards: Array = []
 	for idx in selected_indices: cards.append(cp.hand[idx])
 	if UtilsScript.detect_pattern(cards) != UtilsScript.CardPattern.ELEMENT:
 		_show_info("不是有效单质！")
-		_on_back(); return
+		_on_back()
+		return
 	var result = game_manager.play_cards(game_manager.current_player_index, cards)
 	_handle_result(result)
 
 
 func _on_clan_bomb() -> void:
-	var cp = game_manager.get_current_player(); var cards: Array = []
+	var cp = game_manager.get_current_player()
+	var cards: Array = []
 	for idx in selected_indices: cards.append(cp.hand[idx])
 	if UtilsScript.detect_pattern(cards) != UtilsScript.CardPattern.CLAN_BOMB:
 		_show_info("不是有效族炸！")
-		_on_back(); return
+		_on_back()
+		return
 	var result = game_manager.play_cards(game_manager.current_player_index, cards)
 	_handle_result(result)
 
 
 func _on_choose_compound() -> void:
-	var cp = game_manager.get_current_player(); var symbols: Array = []
+	var cp = game_manager.get_current_player()
+	var symbols: Array = []
 	for idx in selected_indices:
-		var s = cp.hand[idx].symbol; if s not in symbols: symbols.append(s)
-	if symbols.size() < 2: _show_info("化合物至少需要两种不同元素！"); _on_back(); return
-	step_mode = 2; compound_selections.clear(); _update_action_panel()
+		var s = cp.hand[idx].symbol
+		if s not in symbols: symbols.append(s)
+	if symbols.size() < 2:
+		_show_info("化合物至少需要两种不同元素！")
+		_on_back()
+		return
+	step_mode = 2
+	compound_selections.clear()
+	_update_action_panel()
 
 
 func _on_select_valence(symbol: String, valence: int) -> void:
@@ -324,53 +356,139 @@ func _on_select_valence(symbol: String, valence: int) -> void:
 
 func _on_confirm_compound() -> void:
 	var cp = game_manager.get_current_player()
-	var pos_data = null; var neg_data = null
-	for sel in compound_selections:
-		if sel.valence > 0 and pos_data == null: pos_data = sel
-		elif sel.valence < 0 and neg_data == null: neg_data = sel
-	if pos_data == null or neg_data == null: _show_info("需要正价和负价元素各一个！"); return
 
-	# 构建自定义化合价字典传递给 play_cards
+	# 构建自定义化合价字典
 	var custom_valences: Dictionary = {}
-	custom_valences[pos_data.symbol] = pos_data.valence
-	custom_valences[neg_data.symbol] = neg_data.valence
+	for sel in compound_selections:
+		custom_valences[sel.symbol] = sel.valence
 
-	var g = _gcd(abs(pos_data.valence), abs(neg_data.valence))
-	var rp = abs(neg_data.valence) / g
-	var rn = abs(pos_data.valence) / g
-	var pos_c: Array = []; var neg_c: Array = []
+	# 电荷平衡检查
+	var has_pos = false
+	var has_neg = false
+	for sel in compound_selections:
+		if sel.valence > 0: has_pos = true
+		elif sel.valence < 0: has_neg = true
+	if not has_pos or not has_neg:
+		_show_info("需要正价和负价元素！")
+		return
+
+	# 统计每种元素的可用数量
+	var available: Dictionary = {}
 	for idx in selected_indices:
 		var card = cp.hand[idx]
-		if card.symbol == pos_data.symbol and pos_c.size() < rp: pos_c.append(card)
-		elif card.symbol == neg_data.symbol and neg_c.size() < rn: neg_c.append(card)
-	if pos_c.size() < rp or neg_c.size() < rn: _show_info("手牌不足！"); return
-	var compound_cards: Array = []; compound_cards.append_array(pos_c); compound_cards.append_array(neg_c)
-	var result = game_manager.play_cards(game_manager.current_player_index, compound_cards, custom_valences)
-	_handle_result(result)
+		available[card.symbol] = available.get(card.symbol, 0) + 1
+
+	# 构建化合价列表
+	var valence_list: Array = []
+	for sel in compound_selections:
+		valence_list.append({
+			"symbol": sel.symbol,
+			"v": abs(sel.valence),
+			"sign": -1 if sel.valence < 0 else 1,
+			"avail": available.get(sel.symbol, 0)
+		})
+
+	# 2 元素化合物：GCD 计算最简比
+	if valence_list.size() == 2:
+		var a = valence_list[0]
+		var b = valence_list[1]
+		if a.sign * b.sign > 0:
+			_show_info("需要一正一负两种价态！")
+			return
+		var g = _gcd(a.v, b.v)
+		var na = b.v / g
+		var nb = a.v / g
+		if a.avail < na or b.avail < nb:
+			_show_info("手牌不足！需 %s×%d + %s×%d" % [a.symbol, na, b.symbol, nb])
+			return
+		# 精确收集所需牌张
+		var ccards: Array = []
+		for idx in selected_indices:
+			var card = cp.hand[idx]
+			if card.symbol == a.symbol:
+				var already = 0
+				for cc in ccards:
+					if cc.symbol == a.symbol: already += 1
+				if already < na: ccards.append(card)
+			elif card.symbol == b.symbol:
+				var already = 0
+				for cc in ccards:
+					if cc.symbol == b.symbol: already += 1
+				if already < nb: ccards.append(card)
+		if ccards.size() != na + nb:
+			_show_info("收集卡牌出错！")
+			return
+		var result = game_manager.play_cards(game_manager.current_player_index, ccards, custom_valences)
+		_handle_result(result)
+		return
+
+	# 3+ 元素：每种恰好 1 张且电荷平衡
+	var total_charge = 0
+	var all_one = true
+	for e in valence_list:
+		if e.avail != 1: all_one = false
+		total_charge += e.sign * e.v
+	if all_one and total_charge == 0:
+		var ccards: Array = []
+		for idx in selected_indices: ccards.append(cp.hand[idx])
+		var result = game_manager.play_cards(game_manager.current_player_index, ccards, custom_valences)
+		_handle_result(result)
+		return
+
+	_show_info("仅支持 2 元素化合物（多元素需每种恰好 1 张且电荷平衡）")
 
 
-func _on_reset_valence() -> void: compound_selections.clear(); _update_action_panel()
-func _on_back() -> void: step_mode = 0; compound_selections.clear(); _update_action_panel()
-func _on_pass() -> void: game_manager.player_pass(game_manager.current_player_index); _step_reset(); _refresh_ui()
+func _on_reset_valence() -> void:
+	compound_selections.clear()
+	_update_action_panel()
+
+
+func _on_back() -> void:
+	step_mode = 0
+	compound_selections.clear()
+	_update_action_panel()
+
+
+func _on_pass() -> void:
+	game_manager.player_pass(game_manager.current_player_index)
+	_step_reset()
+	_refresh_ui()
 
 
 func _handle_result(result: int) -> void:
-	if result == 0: _step_reset(); _refresh_ui(); return
+	if result == 0:
+		_step_reset()
+		_refresh_ui()
+		return
 	var msg = "非法出牌！"
 	if result == -2: msg = "牌不够大！"
 	elif result == -3: msg = "不能出族炸！"
 	elif result == -4: msg = "牌型不匹配！"
-	_show_info(msg); _on_back()
+	_show_info(msg)
+	_on_back()
 
 
-func _step_reset() -> void: selected_indices.clear(); step_mode = 0; compound_selections.clear()
-func _show_info(text: String) -> void: if info_label and game_manager: info_label.text = game_manager.get_all_players_info() + "\n" + text
+func _step_reset() -> void:
+	selected_indices.clear()
+	step_mode = 0
+	compound_selections.clear()
+
+
+func _show_info(text: String) -> void:
+	if info_label and game_manager:
+		info_label.text = game_manager.get_all_players_info() + "\n" + text
 
 
 func _show_end_page(custom_text: String) -> void:
-	start_page.visible = false; game_page.visible = false; end_page.visible = true
+	start_page.visible = false
+	game_page.visible = false
+	end_page.visible = true
 	if end_label:
-		if game_manager: var w = game_manager.get_winner(); if w: end_label.text = "获胜者: %s" % w.player_name; return
+		if game_manager:
+			var w = game_manager.get_winner()
+			if w:
+				end_label.text = "获胜者: %s" % w.player_name
+				return
 		end_label.text = custom_text if custom_text != "" else "游戏结束"
 
 
@@ -382,8 +500,10 @@ func _ai_auto_play() -> void:
 	if game_manager.clan_bomb_chain_active:
 		if cp.clan_bomb_cooling: game_manager.player_pass(game_manager.current_player_index)
 		else: _ai_try_clan_bomb(cp)
-		_refresh_ui(); return
-	_ai_try_play(cp); _refresh_ui()
+		_refresh_ui()
+		return
+	_ai_try_play(cp)
+	_refresh_ui()
 
 
 func _ai_try_clan_bomb(p):
@@ -401,16 +521,20 @@ func _ai_try_play(p):
 			if bg[g].size() >= 2:
 				if game_manager.play_cards(game_manager.current_player_index, bg[g].duplicate()) == 0: return
 
-	# 化合物（带自定义化合价）
 	for i in range(p.hand.size()):
 		for j in range(i + 1, p.hand.size()):
 			var pair = [p.hand[i], p.hand[j]]
 			var fi = UtilsScript.get_compound_formula(pair)
 			if not fi.is_empty() and fi.get("ratio_ok", false):
-				var r = fi.get("ratio", {})
 				var cv: Dictionary = {}
-				cv[r.pos_symbol] = r.pos_val
-				cv[r.neg_symbol] = -r.neg_val
+				var counts = fi.get("actual_counts", {})
+				for sym in counts:
+					var sample = p.hand[i] if p.hand[i].symbol == sym else p.hand[j]
+					var v = 0
+					for val in sample.common_valence:
+						if val > 0: v = val; break
+					if v == 0: v = -abs(sample.common_valence[0])
+					cv[sym] = v
 				if game_manager.play_cards(game_manager.current_player_index, pair, cv) == 0: return
 
 	for i in range(p.hand.size()):
@@ -436,5 +560,8 @@ func _group_by_group(hand: Array) -> Dictionary:
 
 
 func _gcd(a: int, b: int) -> int:
-	while b != 0: var t = b; b = a % b; a = t
+	while b != 0:
+		var t = b
+		b = a % b
+		a = t
 	return abs(a)
