@@ -11,8 +11,8 @@ var game_manager: RefCounted = null
 var selected_indices: Array = []
 var log_lines: Array = []
 const MAX_LOG_LINES = 6
-var hint_timer: float = 0.0       # 提示自动消失倒计时
-var hint_pending: String = ""     # 待显示的提示文本
+var hint_timer: float = 0.0
+var hint_pending: String = ""
 
 var hand_container: Control = null
 var info_label: Label = null
@@ -95,16 +95,19 @@ func _update_table_label() -> void:
 		var syms: Array = []
 		for c in cards:
 			syms.append(c.symbol)
-		var txt = "桌面: %s 打出 %s (%s)" % [p.player_name, ", ".join(syms), pname]
+		var txt = "桌面: %s 打出 %s (%s" % [p.player_name, ", ".join(syms), pname]
 		if pattern == UtilsScript.CardPattern.ELEMENT and element_name != "":
 			txt += " " + element_name
 		if pattern == UtilsScript.CardPattern.COMPOUND:
 			var fi = UtilsScript.get_compound_formula(cards)
 			if not fi.is_empty():
-				txt += " = " + fi.get("formula", "??")
+				txt += " " + fi.get("formula", "??")
+		txt += ")"
+		if game_manager.clan_bomb_chain_active:
+			txt += " ⚠接炸中"
 		table_label.text = txt
 	else:
-		table_label.text = "桌面: 空 (自由出牌)"
+		table_label.text = "桌面: 空"
 
 
 func _update_log_label() -> void:
@@ -126,7 +129,7 @@ func _update_hint_label() -> void:
 	var cp = game_manager.get_current_player()
 	if cp == null or cp.is_ai:
 		return
-	var hint = game_manager.get_available_patterns(game_manager.current_player_index)
+	var hint = game_manager.get_available_patterns(game_manager.get_current_player_index())
 	_show_hint(hint)
 
 
@@ -235,21 +238,18 @@ func _on_play_pressed() -> void:
 
 	var pattern = UtilsScript.detect_pattern(selected_cards)
 	if pattern == -1:
-		_show_hint("非法出牌！仅支持: 单质、双原子分子(H₂/N₂/O₂/F₂/Cl₂)、化合物、族炸")
+		_show_hint("非法出牌！")
 		return
-
-	if pattern == UtilsScript.CardPattern.CLAN_BOMB:
-		_show_hint("族炸！%s 族！" % selected_cards[0].group)
 
 	var result = game_manager.play_cards(game_manager.current_player_index, selected_cards)
-	if result == GameManagerScript.PlayResult.NOT_STRONGER:
+	if result == -1:
+		_show_hint("非法出牌！接炸模式只能出族炸")
+		return
+	if result == -2:
 		_show_hint("牌不够大！需要打出比桌面更大的牌")
 		return
-	if result == GameManagerScript.PlayResult.CANT_BOMB:
+	if result == -3:
 		_show_hint("不能出族炸！需先打出化合物以解锁")
-		return
-	if result == GameManagerScript.PlayResult.INVALID_PATTERN:
-		_show_hint("化合物比例不匹配！")
 		return
 
 	_clear_selection()
@@ -275,6 +275,32 @@ func _ai_auto_play() -> void:
 	if current_player.hand.is_empty():
 		return
 
+	# 接炸模式：只能出族炸
+	if game_manager.clan_bomb_chain_active:
+		if current_player.clan_bomb_cooling:
+			# 被冷却，不能出族炸，跳过
+			game_manager.player_pass(game_manager.current_player_index)
+		else:
+			var by_group = _group_by_group(current_player.hand)
+			var bombs: Array = []
+			for grp in by_group:
+				if by_group[grp].size() >= 2:
+					bombs.append(by_group[grp].duplicate())
+			if bombs.is_empty():
+				game_manager.player_pass(game_manager.current_player_index)
+			else:
+				# 尝试每个族炸候选
+				var played = false
+				for bomb in bombs:
+					if game_manager.play_cards(game_manager.current_player_index, bomb) == 0:
+						played = true
+						break
+				if not played:
+					game_manager.player_pass(game_manager.current_player_index)
+		_refresh_ui()
+		return
+
+	# 正常模式
 	var candidates = _ai_find_candidates(current_player)
 
 	if candidates.is_empty():
@@ -284,7 +310,7 @@ func _ai_auto_play() -> void:
 
 	for candidate in candidates:
 		var result = game_manager.play_cards(game_manager.current_player_index, candidate)
-		if result == GameManagerScript.PlayResult.OK:
+		if result == 0:
 			_refresh_ui()
 			return
 
@@ -295,14 +321,12 @@ func _ai_auto_play() -> void:
 func _ai_find_candidates(player) -> Array:
 	var result: Array = []
 
-	# 族炸候选（仅当未被禁用时）
-	if not player.cant_clan_bomb:
+	if not player.clan_bomb_cooling:
 		var by_group = _group_by_group(player.hand)
 		for grp in by_group:
 			if by_group[grp].size() >= 2:
 				result.append(by_group[grp].duplicate())
 
-	# 化合物候选
 	for i in range(player.hand.size()):
 		for j in range(i + 1, player.hand.size()):
 			var pair = [player.hand[i], player.hand[j]]
@@ -317,7 +341,6 @@ func _ai_find_candidates(player) -> Array:
 					continue
 				result.append(pair)
 
-	# 双原子分子单质
 	for i in range(player.hand.size()):
 		var card = player.hand[i]
 		if card.symbol in UtilsScript.DIATOMIC_SYMBOLS:
@@ -326,7 +349,6 @@ func _ai_find_candidates(player) -> Array:
 					result.append([player.hand[i], player.hand[j]])
 					break
 
-	# 单质单张
 	for card in player.hand:
 		result.append([card])
 
@@ -356,15 +378,6 @@ func _group_by_group(hand: Array) -> Dictionary:
 		if not result.has(card.group):
 			result[card.group] = []
 		result[card.group].append(card)
-	return result
-
-
-func _group_by_element(hand: Array) -> Dictionary:
-	var result = {}
-	for card in hand:
-		if not result.has(card.symbol):
-			result[card.symbol] = []
-		result[card.symbol].append(card)
 	return result
 
 

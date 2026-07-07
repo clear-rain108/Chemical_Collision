@@ -174,14 +174,14 @@ static func get_compound_formula(cards: Array) -> Dictionary:
 				if int(actual_neg) == int(ratio_neg * k):
 					ratio_ok = true
 
-	# 构建化学式
+	# 构建化学式（使用 Unicode 下标）
 	var formula = ""
 	formula += pos_symbol
 	if ratio_neg > 1:
-		formula += str(ratio_neg)
+		formula += _to_subscript(ratio_neg)
 	formula += neg_symbol
 	if ratio_pos > 1:
-		formula += str(ratio_pos)
+		formula += _to_subscript(ratio_pos)
 
 	return {
 		"formula": formula,
@@ -202,13 +202,25 @@ static func _gcd(a: int, b: int) -> int:
 	return a
 
 
-# 获取单质的显示名称
+# 获取单质的显示名称（含 Unicode 下标）
 static func get_element_display(cards: Array) -> String:
 	if cards.size() == 1:
 		return cards[0].symbol
 	if cards.size() == 2 and _is_same_element(cards) and cards[0].symbol in DIATOMIC_SYMBOLS:
-		return cards[0].symbol + "₂"
+		return cards[0].symbol + _to_subscript(2)
 	return ""
+
+
+# 数字转 Unicode 下标字符
+static func _to_subscript(n: int) -> String:
+	var chars = {0: "₀", 1: "₁", 2: "₂", 3: "₃", 4: "₄", 5: "₅", 6: "₆", 7: "₇", 8: "₈", 9: "₉"}
+	if n < 10:
+		return chars[n]
+	var s = str(n)
+	var result = ""
+	for c in s:
+		result += chars[int(c)]
+	return result
 
 
 # 比较两组牌的大小
