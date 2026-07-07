@@ -110,7 +110,7 @@ func get_current_player_index() -> int:
 	return current_player_index
 
 
-func play_cards(player_index: int, cards: Array) -> int:
+func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {}) -> int:
 	if player_index < 0 or player_index >= players.size() or cards.is_empty():
 		return -1
 
@@ -160,7 +160,7 @@ func play_cards(player_index: int, cards: Array) -> int:
 	if pattern == UtilsScript.CardPattern.ELEMENT and elem_name != "":
 		log_msg += " " + elem_name
 	if pattern == UtilsScript.CardPattern.COMPOUND:
-		var fi = UtilsScript.get_compound_formula(cards)
+		var fi = UtilsScript.get_compound_formula(cards, custom_valences)
 		if not fi.is_empty():
 			log_msg += " " + fi.get("formula", "??")
 	log_msg += ")"

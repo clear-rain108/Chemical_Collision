@@ -106,8 +106,9 @@ static func _can_balance_valence(cards: Array) -> bool:
 	return has_positive and has_negative
 
 
-# 获取化合价配平比例（金属优先，严格原子匹配）
-static func get_compound_formula(cards: Array) -> Dictionary:
+# 获取化合价配平比例
+# custom_valences: {symbol: valence} 当用户指定化合价时使用
+static func get_compound_formula(cards: Array, custom_valences: Dictionary = {}) -> Dictionary:
 	if not _is_compound(cards):
 		return {}
 
@@ -118,70 +119,74 @@ static func get_compound_formula(cards: Array) -> Dictionary:
 			elem_counts[c.symbol] = 0
 		elem_counts[c.symbol] += 1
 
-	# 多元素化合物：每种元素取第一个正价或负价的化学式规则
-	# 金属优先正价，非金属优先负价，稀有气体排除（已由 _is_compound 处理）
-	var pos_list: Array = []
-	var neg_list: Array = []
+	# 多元素化合物形成规则
+	# 1. 为每种元素采集样本
+	# 2. 分类：有正价的归 pos_pool，有负价的归 neg_pool
+	# 3. 金属优先作为正价(cation)，非金属优先作为负价(anion)
+	# 4. 化学式：正价在前，下标为负价/GCD；负价在后，下标为正价/GCD
+
+	var pos_pool: Array = []    # [{symbol, max_pos, is_metal, count}]
+	var neg_pool: Array = []    # [{symbol, max_neg, is_metal, count}]
 
 	for sym in elem_counts:
 		var sample = null
 		for c in cards:
-			if c.symbol == sym:
-				sample = c
-				break
+			if c.symbol == sym: sample = c; break
 		if sample == null: continue
 
-		var max_pos = 0
-		var max_neg = 0
+		var mp = 0; var mn = 0
 		for v in sample.common_valence:
-			if v > 0 and v > max_pos: max_pos = v
-			elif v < 0 and v < max_neg: max_neg = v
+			if v > 0 and v > mp: mp = v
+			elif v < 0 and v < mn: mn = v
 
-		if max_pos > 0 or max_neg < 0:
-			pos_list.append({"symbol": sym, "max_pos": max_pos, "max_neg": max_neg,
-				"is_metal": sample.element_type == CardDataScript.TYPE_METAL,
-				"count": elem_counts[sym]})
+		var info = {"symbol": sym, "is_metal": sample.element_type == CardDataScript.TYPE_METAL, "count": elem_counts[sym]}
+		if mp > 0: pos_pool.append({"symbol": sym, "valence": mp, "is_metal": info.is_metal, "count": info.count})
+		if mn < 0: neg_pool.append({"symbol": sym, "valence": abs(mn), "is_metal": info.is_metal, "count": info.count})
 
-	if pos_list.is_empty():
-		return {}
+	if pos_pool.is_empty() or neg_pool.is_empty(): return {}
 
-	# 金属正价优先排序
-	pos_list.sort_custom(func(a, b):
-		if a.is_metal and not b.is_metal: return true
-		if not a.is_metal and b.is_metal: return false
-		return a.max_pos > b.max_pos
-	)
-
-	# 选正价：第一个有 max_pos > 0 的金属（或非金属）
 	var pos_data = null
-	for e in pos_list:
-		if e.max_pos > 0:
-			pos_data = e
-			break
-	# 选负价：找非同名且有 max_neg 的元素（非金属优先）
 	var neg_data = null
-	for e in pos_list:
-		if e.symbol != pos_data.symbol and e.max_neg < 0:
-			if neg_data == null or (e.is_metal == false and neg_data.is_metal):
-				neg_data = e
-			elif e.max_neg < neg_data.max_neg:
-				neg_data = e
 
-	if pos_data == null or neg_data == null:
-		return {}
+	# 如果提供了自定义化合价，直接使用
+	if custom_valences.size() >= 2:
+		var pos_sym = ""
+		var neg_sym = ""
+		for sym in custom_valences:
+			if custom_valences[sym] > 0: pos_sym = sym
+			else: neg_sym = sym
+		if pos_sym != "" and neg_sym != "":
+			for e in pos_pool:
+				if e.symbol == pos_sym: pos_data = e; break
+			for e in neg_pool:
+				if e.symbol == neg_sym: neg_data = e; break
 
-	var pv = pos_data.max_pos
-	var nv = abs(neg_data.max_neg)
+	# 自动检测模式
+	if pos_data == null:
+		for e in pos_pool:
+			if e.is_metal: pos_data = e; break
+		if pos_data == null: pos_data = pos_pool[0]
+
+	if neg_data == null:
+		for e in neg_pool:
+			if e.symbol != pos_data.symbol:
+				if neg_data == null or (e.is_metal == false and neg_data.is_metal): neg_data = e
+	if neg_data == null: return {}
+
+	var pv = abs(custom_valences.get(pos_data.symbol, pos_data.valence))
+	var nv = abs(custom_valences.get(neg_data.symbol, -neg_data.valence))
 	var g = _gcd(pv, nv)
-	var rp = nv / g
-	var rn = pv / g
+	# 最简比 = 化合价之比的倒数: a:b = pv:nv → atom_a = nv/g, atom_b = pv/g
+	var rp = nv / g   # 正价原子个数
+	var rn = pv / g   # 负价原子个数
 
 	var ratio_ok = (pos_data.count == rp and neg_data.count == rn)
 
+	# rp = 正价原子个数(下标在正价符号后)，rn = 负价原子个数(下标在负价符号后)
 	var formula = pos_data.symbol
-	if rn > 1: formula += _to_subscript(rn)
-	formula += neg_data.symbol
 	if rp > 1: formula += _to_subscript(rp)
+	formula += neg_data.symbol
+	if rn > 1: formula += _to_subscript(rn)
 
 	return {
 		"formula": formula,
@@ -269,16 +274,22 @@ static func compare_cards(cards_a: Array, cards_b: Array) -> int:
 	return _compare_by_total_atomic(cards_a, cards_b)
 
 
-# 原子序数和越小牌越大（逆转比较）
+# 原子序数和越小牌越大（逆转比较）。平局时比相对原子质量（质量大→牌小）
 static func _compare_by_total_atomic(cards_a: Array, cards_b: Array) -> int:
-	var sum_a = 0
-	var sum_b = 0
+	var sum_a = 0; var sum_b = 0
+	var mass_a: float = 0.0; var mass_b: float = 0.0
 	for c in cards_a:
 		sum_a += c.atomic_number
+		mass_a += c.atomic_weight
 	for c in cards_b:
 		sum_b += c.atomic_number
-	# 序数和小 → 牌大 → 返回 1
-	return 1 if sum_a < sum_b else (-1 if sum_a > sum_b else 0)
+		mass_b += c.atomic_weight
+	if sum_a < sum_b: return 1
+	if sum_a > sum_b: return -1
+	# 序数和相同 → 比相对原子质量（大→小，即大质量牌"更弱"）
+	if mass_a > mass_b: return -1
+	if mass_a < mass_b: return 1
+	return 0
 
 
 # 牌型名称

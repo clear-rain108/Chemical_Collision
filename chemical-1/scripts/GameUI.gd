@@ -1,6 +1,6 @@
 # ============================================================
 # GameUI.gd - 游戏主界面控制脚本
-# 复合步骤流程 + 统一后端 play_cards
+# 复合步骤流程 + 自定义化合价传递
 # ============================================================
 
 extends Control
@@ -14,9 +14,12 @@ var game_manager: RefCounted = null
 var start_page: Control = null
 var game_page: Control = null
 var end_page: Control = null
+var help_page: Control = null
 var start_button: Button = null
 var end_label: Label = null
 var end_button: Button = null
+var help_back_btn: Button = null
+var help_btn: Button = null
 
 # UI
 var hand_container: Control = null
@@ -46,6 +49,7 @@ func _setup_pages() -> void:
 	start_page = get_node_or_null("StartPage")
 	game_page = get_node_or_null("GamePage")
 	end_page = get_node_or_null("EndPage")
+	help_page = get_node_or_null("HelpPage")
 
 	if start_page:
 		start_button = start_page.get_node_or_null("StartButton")
@@ -58,6 +62,11 @@ func _setup_pages() -> void:
 		if end_button:
 			end_button.pressed.connect(_show_start_page)
 
+	if help_page:
+		help_back_btn = help_page.get_node_or_null("HelpBackBtn")
+		if help_back_btn:
+			help_back_btn.pressed.connect(_on_help_back)
+
 	if game_page:
 		hand_container = game_page.get_node_or_null("HandContainer")
 		info_label = game_page.get_node_or_null("InfoLabel")
@@ -66,22 +75,37 @@ func _setup_pages() -> void:
 		action_panel = game_page.get_node_or_null("ActionPanel")
 		hint_button = game_page.get_node_or_null("HintButton")
 		quit_button = game_page.get_node_or_null("QuitButton")
+		help_btn = game_page.get_node_or_null("HelpBtn")
 		if hint_button:
 			hint_button.toggled.connect(_on_hint_toggled)
 		if quit_button:
 			quit_button.pressed.connect(_on_quit_game)
+		if help_btn:
+			help_btn.pressed.connect(_on_show_help)
 
 
 func _show_start_page() -> void:
 	if start_page: start_page.visible = true
 	if game_page: game_page.visible = false
 	if end_page: end_page.visible = false
+	if help_page: help_page.visible = false
+
+
+func _on_show_help() -> void:
+	if help_page: help_page.visible = true
+	if game_page: game_page.visible = false
+
+
+func _on_help_back() -> void:
+	if help_page: help_page.visible = false
+	if game_page: game_page.visible = true
 
 
 func _on_start_game() -> void:
 	start_page.visible = false
 	game_page.visible = true
 	end_page.visible = false
+	if help_page: help_page.visible = false
 	_init_game()
 
 
@@ -109,8 +133,7 @@ func _refresh_ui() -> void:
 
 
 func _update_info_label() -> void:
-	if info_label and game_manager:
-		info_label.text = game_manager.get_all_players_info()
+	if info_label and game_manager: info_label.text = game_manager.get_all_players_info()
 
 
 func _update_table_label() -> void:
@@ -122,23 +145,17 @@ func _update_table_label() -> void:
 		var pn = UtilsScript.get_pattern_name(pat)
 		var en = UtilsScript.get_element_display(cards)
 		var syms: Array = []
-		for c in cards:
-			syms.append(c.symbol)
+		for c in cards: syms.append(c.symbol)
 		var txt = "桌面: %s 打出 %s (%s" % [p.player_name, ", ".join(syms), pn]
-		if pat == UtilsScript.CardPattern.ELEMENT and en != "":
-			txt += " " + en
+		if pat == UtilsScript.CardPattern.ELEMENT and en != "": txt += " " + en
 		if pat == UtilsScript.CardPattern.COMPOUND:
 			var fi = UtilsScript.get_compound_formula(cards)
-			if not fi.is_empty():
-				txt += " " + fi.get("formula", "??")
+			if not fi.is_empty(): txt += " " + fi.get("formula", "??")
 		txt += ")"
-		if game_manager.compound_immune:
-			txt += " [免疫]"
-		if game_manager.clan_bomb_chain_active:
-			txt += " ⚠接炸中"
+		if game_manager.compound_immune: txt += " [免疫]"
+		if game_manager.clan_bomb_chain_active: txt += " ⚠接炸中"
 		table_label.text = txt
-	else:
-		table_label.text = "桌面: 空"
+	else: table_label.text = "桌面: 空"
 
 
 func _update_log_label() -> void:
@@ -147,16 +164,13 @@ func _update_log_label() -> void:
 	if new_logs.is_empty(): return
 	for msg in new_logs:
 		log_lines.push_back(msg)
-		while log_lines.size() > MAX_LOG_LINES:
-			log_lines.pop_front()
+		while log_lines.size() > MAX_LOG_LINES: log_lines.pop_front()
 	log_label.text = "\n".join(log_lines)
 
 
 func _update_action_panel() -> void:
 	if not action_panel or not game_manager: return
-	for child in action_panel.get_children():
-		child.queue_free()
-
+	for child in action_panel.get_children(): child.queue_free()
 	var cp = game_manager.get_current_player()
 	if cp == null or cp.is_ai or game_manager.is_game_over(): return
 
@@ -166,36 +180,28 @@ func _update_action_panel() -> void:
 	elif step_mode == 1:
 		action_panel.add_child(_mkb("作为单质打出", _on_element, false))
 		action_panel.add_child(_mkb("合成化合物", _on_choose_compound, false))
+		action_panel.add_child(_mkb("作为族炸打出", _on_clan_bomb, false))
 		action_panel.add_child(_mkb("返回", _on_back, false))
 	elif step_mode == 2:
 		_update_valence_buttons()
 
 
 func _mkb(text: String, cb: Callable, dis: bool) -> Button:
-	var b = Button.new()
-	b.text = text
-	b.custom_minimum_size = Vector2(160, 45)
-	b.add_theme_font_size_override("font_size", 16)
-	b.disabled = dis
-	b.pressed.connect(cb)
-	return b
+	var b = Button.new(); b.text = text; b.custom_minimum_size = Vector2(160, 45)
+	b.add_theme_font_size_override("font_size", 16); b.disabled = dis; b.pressed.connect(cb); return b
 
 
 func _on_hint_toggled(pressed: bool) -> void:
 	if pressed and game_manager:
 		var hint = game_manager.get_available_patterns(game_manager.get_current_player_index())
 		if info_label: info_label.text = game_manager.get_all_players_info() + "\n提示: " + hint
-	else:
-		_update_info_label()
+	else: _update_info_label()
 
 
 func _update_hand_buttons() -> void:
 	if not hand_container or not game_manager: return
-	for child in hand_container.get_children():
-		child.queue_free()
-	hand_buttons.clear()
-	ai_triggered = false
-
+	for child in hand_container.get_children(): child.queue_free()
+	hand_buttons.clear(); ai_triggered = false
 	var cp = game_manager.get_current_player()
 	if cp == null: return
 
@@ -232,21 +238,17 @@ func _update_hand_buttons() -> void:
 
 func _update_valence_buttons() -> void:
 	if not action_panel or not game_manager: return
-	for child in action_panel.get_children():
-		child.queue_free()
-
+	for child in action_panel.get_children(): child.queue_free()
 	var cp = game_manager.get_current_player()
 	var elem_map: Dictionary = {}
 	for idx in selected_indices:
 		var card = cp.hand[idx]
-		if not elem_map.has(card.symbol):
-			elem_map[card.symbol] = card
+		if not elem_map.has(card.symbol): elem_map[card.symbol] = card
 
 	if elem_map.size() < 2:
 		action_panel.add_child(_mkb("至少选两种元素 (返回)", _on_back, false))
 		return
 
-	# Bug1 修复：检查是否已凑齐一正一负
 	var has_pos = false
 	var has_neg = false
 	for sel in compound_selections:
@@ -254,7 +256,6 @@ func _update_valence_buttons() -> void:
 		elif sel.valence < 0: has_neg = true
 
 	if not has_pos or not has_neg:
-		# 缺少正价或负价，仍需选择
 		for sym in elem_map:
 			var card = elem_map[sym]
 			for v in card.common_valence:
@@ -264,7 +265,6 @@ func _update_valence_buttons() -> void:
 					action_panel.add_child(_mkb("%s (%d)" % [sym, v], _on_select_valence.bind(sym, v), false))
 		action_panel.add_child(_mkb("返回", _on_back, false))
 	else:
-		# 已选齐，显示确认
 		var info = ""
 		for sel in compound_selections:
 			info += "%s%d " % [sel.symbol, sel.valence]
@@ -278,168 +278,119 @@ func _update_valence_buttons() -> void:
 
 func _on_card_clicked(index: int) -> void:
 	if step_mode != 0: return
-	if index in selected_indices:
-		selected_indices.erase(index)
-	else:
-		selected_indices.append(index)
+	if index in selected_indices: selected_indices.erase(index)
+	else: selected_indices.append(index)
 	_update_hand_buttons()
 	_update_action_panel()
 
 
-func _on_step_next() -> void:
-	step_mode = 1
-	_update_action_panel()
+func _on_step_next() -> void: step_mode = 1; _update_action_panel()
 
 
 func _on_element() -> void:
-	# Bug2 修复：先检测牌型必须为单质
-	var cp = game_manager.get_current_player()
-	var cards: Array = []
-	for idx in selected_indices:
-		cards.append(cp.hand[idx])
+	var cp = game_manager.get_current_player(); var cards: Array = []
+	for idx in selected_indices: cards.append(cp.hand[idx])
 	if UtilsScript.detect_pattern(cards) != UtilsScript.CardPattern.ELEMENT:
-		_show_info("不是有效单质！单质=1张任意元素 / 双原子分子(H₂/N₂/O₂/F₂/Cl₂)")
-		_on_back()
-		return
+		_show_info("不是有效单质！")
+		_on_back(); return
+	var result = game_manager.play_cards(game_manager.current_player_index, cards)
+	_handle_result(result)
+
+
+func _on_clan_bomb() -> void:
+	var cp = game_manager.get_current_player(); var cards: Array = []
+	for idx in selected_indices: cards.append(cp.hand[idx])
+	if UtilsScript.detect_pattern(cards) != UtilsScript.CardPattern.CLAN_BOMB:
+		_show_info("不是有效族炸！")
+		_on_back(); return
 	var result = game_manager.play_cards(game_manager.current_player_index, cards)
 	_handle_result(result)
 
 
 func _on_choose_compound() -> void:
-	var cp = game_manager.get_current_player()
-	var symbols: Array = []
+	var cp = game_manager.get_current_player(); var symbols: Array = []
 	for idx in selected_indices:
-		var s = cp.hand[idx].symbol
-		if s not in symbols:
-			symbols.append(s)
-	if symbols.size() < 2:
-		_show_info("化合物至少需要两种不同元素！")
-		_on_back()
-		return
-	step_mode = 2
-	compound_selections.clear()
-	_update_action_panel()
+		var s = cp.hand[idx].symbol; if s not in symbols: symbols.append(s)
+	if symbols.size() < 2: _show_info("化合物至少需要两种不同元素！"); _on_back(); return
+	step_mode = 2; compound_selections.clear(); _update_action_panel()
 
 
 func _on_select_valence(symbol: String, valence: int) -> void:
 	for sel in compound_selections:
-		if sel.symbol == symbol:
-			return
+		if sel.symbol == symbol: return
 	compound_selections.append({"symbol": symbol, "valence": valence})
 	_update_action_panel()
 
 
 func _on_confirm_compound() -> void:
 	var cp = game_manager.get_current_player()
-	var pos_data = null
-	var neg_data = null
+	var pos_data = null; var neg_data = null
 	for sel in compound_selections:
 		if sel.valence > 0 and pos_data == null: pos_data = sel
 		elif sel.valence < 0 and neg_data == null: neg_data = sel
-	if pos_data == null or neg_data == null:
-		_show_info("需要正价和负价元素各一个！")
-		return
+	if pos_data == null or neg_data == null: _show_info("需要正价和负价元素各一个！"); return
+
+	# 构建自定义化合价字典传递给 play_cards
+	var custom_valences: Dictionary = {}
+	custom_valences[pos_data.symbol] = pos_data.valence
+	custom_valences[neg_data.symbol] = neg_data.valence
 
 	var g = _gcd(abs(pos_data.valence), abs(neg_data.valence))
 	var rp = abs(neg_data.valence) / g
 	var rn = abs(pos_data.valence) / g
-
-	var pos_c: Array = []
-	var neg_c: Array = []
+	var pos_c: Array = []; var neg_c: Array = []
 	for idx in selected_indices:
 		var card = cp.hand[idx]
 		if card.symbol == pos_data.symbol and pos_c.size() < rp: pos_c.append(card)
 		elif card.symbol == neg_data.symbol and neg_c.size() < rn: neg_c.append(card)
-
-	if pos_c.size() < rp or neg_c.size() < rn:
-		_show_info("手牌不足！需 %s×%d + %s×%d" % [pos_data.symbol, rp, neg_data.symbol, rn])
-		return
-
-	var compound_cards: Array = []
-	compound_cards.append_array(pos_c)
-	compound_cards.append_array(neg_c)
-	var result = game_manager.play_cards(game_manager.current_player_index, compound_cards)
+	if pos_c.size() < rp or neg_c.size() < rn: _show_info("手牌不足！"); return
+	var compound_cards: Array = []; compound_cards.append_array(pos_c); compound_cards.append_array(neg_c)
+	var result = game_manager.play_cards(game_manager.current_player_index, compound_cards, custom_valences)
 	_handle_result(result)
 
 
-func _on_reset_valence() -> void:
-	compound_selections.clear()
-	_update_action_panel()
-
-
-func _on_back() -> void:
-	step_mode = 0
-	compound_selections.clear()
-	_update_action_panel()
-
-
-func _on_pass() -> void:
-	game_manager.player_pass(game_manager.current_player_index)
-	_step_reset()
-	_refresh_ui()
+func _on_reset_valence() -> void: compound_selections.clear(); _update_action_panel()
+func _on_back() -> void: step_mode = 0; compound_selections.clear(); _update_action_panel()
+func _on_pass() -> void: game_manager.player_pass(game_manager.current_player_index); _step_reset(); _refresh_ui()
 
 
 func _handle_result(result: int) -> void:
-	if result == 0:
-		_step_reset()
-		_refresh_ui()
-		return
+	if result == 0: _step_reset(); _refresh_ui(); return
 	var msg = "非法出牌！"
 	if result == -2: msg = "牌不够大！"
-	elif result == -3: msg = "不能出族炸！需先打出化合物"
+	elif result == -3: msg = "不能出族炸！"
 	elif result == -4: msg = "牌型不匹配！"
-	_show_info(msg)
-	_on_back()
+	_show_info(msg); _on_back()
 
 
-func _step_reset() -> void:
-	selected_indices.clear()
-	step_mode = 0
-	compound_selections.clear()
-
-
-func _show_info(text: String) -> void:
-	if info_label and game_manager:
-		info_label.text = game_manager.get_all_players_info() + "\n" + text
+func _step_reset() -> void: selected_indices.clear(); step_mode = 0; compound_selections.clear()
+func _show_info(text: String) -> void: if info_label and game_manager: info_label.text = game_manager.get_all_players_info() + "\n" + text
 
 
 func _show_end_page(custom_text: String) -> void:
-	start_page.visible = false
-	game_page.visible = false
-	end_page.visible = true
+	start_page.visible = false; game_page.visible = false; end_page.visible = true
 	if end_label:
-		if game_manager:
-			var w = game_manager.get_winner()
-			if w:
-				end_label.text = "获胜者: %s" % w.player_name
-				return
+		if game_manager: var w = game_manager.get_winner(); if w: end_label.text = "获胜者: %s" % w.player_name; return
 		end_label.text = custom_text if custom_text != "" else "游戏结束"
 
 
-# ==== AI（与玩家共用 play_cards 后端） ====
+# ==== AI ====
 func _ai_auto_play() -> void:
 	if game_manager == null or game_manager.is_game_over(): return
 	var cp = game_manager.get_current_player()
 	if cp == null or not cp.is_ai or cp.hand.is_empty(): return
-
 	if game_manager.clan_bomb_chain_active:
-		if cp.clan_bomb_cooling:
-			game_manager.player_pass(game_manager.current_player_index)
-		else:
-			_ai_try_clan_bomb(cp)
-		_refresh_ui()
-		return
-
-	_ai_try_play(cp)
-	_refresh_ui()
+		if cp.clan_bomb_cooling: game_manager.player_pass(game_manager.current_player_index)
+		else: _ai_try_clan_bomb(cp)
+		_refresh_ui(); return
+	_ai_try_play(cp); _refresh_ui()
 
 
 func _ai_try_clan_bomb(p):
 	var bg = _group_by_group(p.hand)
 	for g in bg:
 		if bg[g].size() >= 2:
-			if game_manager.play_cards(game_manager.current_player_index, bg[g].duplicate()) == 0:
-				return
+			if game_manager.play_cards(game_manager.current_player_index, bg[g].duplicate()) == 0: return
 	game_manager.player_pass(game_manager.current_player_index)
 
 
@@ -448,16 +399,19 @@ func _ai_try_play(p):
 		var bg = _group_by_group(p.hand)
 		for g in bg:
 			if bg[g].size() >= 2:
-				if game_manager.play_cards(game_manager.current_player_index, bg[g].duplicate()) == 0:
-					return
+				if game_manager.play_cards(game_manager.current_player_index, bg[g].duplicate()) == 0: return
 
+	# 化合物（带自定义化合价）
 	for i in range(p.hand.size()):
 		for j in range(i + 1, p.hand.size()):
 			var pair = [p.hand[i], p.hand[j]]
 			var fi = UtilsScript.get_compound_formula(pair)
 			if not fi.is_empty() and fi.get("ratio_ok", false):
-				if game_manager.play_cards(game_manager.current_player_index, pair) == 0:
-					return
+				var r = fi.get("ratio", {})
+				var cv: Dictionary = {}
+				cv[r.pos_symbol] = r.pos_val
+				cv[r.neg_symbol] = -r.neg_val
+				if game_manager.play_cards(game_manager.current_player_index, pair, cv) == 0: return
 
 	for i in range(p.hand.size()):
 		var c = p.hand[i]
@@ -465,14 +419,11 @@ func _ai_try_play(p):
 			for j in range(p.hand.size()):
 				if i != j and p.hand[j].symbol == c.symbol:
 					var dp = [p.hand[i], p.hand[j]]
-					if game_manager.play_cards(game_manager.current_player_index, dp) == 0:
-						return
+					if game_manager.play_cards(game_manager.current_player_index, dp) == 0: return
 					break
 
 	for c in p.hand:
-		if game_manager.play_cards(game_manager.current_player_index, [c]) == 0:
-			return
-
+		if game_manager.play_cards(game_manager.current_player_index, [c]) == 0: return
 	game_manager.player_pass(game_manager.current_player_index)
 
 
@@ -485,8 +436,5 @@ func _group_by_group(hand: Array) -> Dictionary:
 
 
 func _gcd(a: int, b: int) -> int:
-	while b != 0:
-		var t = b
-		b = a % b
-		a = t
+	while b != 0: var t = b; b = a % b; a = t
 	return abs(a)

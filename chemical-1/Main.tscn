@@ -11,7 +11,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_game_ui")
 
-[node name="StartPage" type="Control" parent="." unique_id=783610178]
+[node name="StartPage" type="Control" parent="." unique_id=455970612]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -19,7 +19,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="StartTitle" type="Label" parent="StartPage" unique_id=890957704]
+[node name="StartTitle" type="Label" parent="StartPage" unique_id=107308317]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
@@ -36,7 +36,7 @@ theme_override_font_sizes/font_size = 48
 text = "Chemical Collision"
 horizontal_alignment = 1
 
-[node name="StartButton" type="Button" parent="StartPage" unique_id=982323632]
+[node name="StartButton" type="Button" parent="StartPage" unique_id=1964796302]
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -52,7 +52,7 @@ grow_vertical = 2
 theme_override_font_sizes/font_size = 24
 text = "Start Game"
 
-[node name="GamePage" type="Control" parent="." unique_id=849744340]
+[node name="HelpPage" type="Control" parent="." unique_id=1080407921]
 visible = false
 layout_mode = 1
 anchors_preset = 15
@@ -61,7 +61,66 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="TitleLabel" type="Label" parent="GamePage" unique_id=81170594]
+[node name="HelpTitle" type="Label" parent="HelpPage" unique_id=1577193719]
+layout_mode = 0
+offset_left = 40.0
+offset_top = 20.0
+offset_right = 800.0
+offset_bottom = 60.0
+theme_override_font_sizes/font_size = 36
+text = "Help & Rules"
+
+[node name="HelpContent" type="Label" parent="HelpPage" unique_id=2105439584]
+layout_mode = 0
+offset_left = 40.0
+offset_top = 70.0
+offset_right = 900.0
+offset_bottom = 620.0
+theme_override_font_sizes/font_size = 16
+text = "=== 游戏规则 ===
+- 目标: 率先打光所有手牌
+- 出牌必须比桌面牌更大(序数和小=大,族炸除外)
+- 打不出时可跳过(抽1张牌)
+
+=== 牌型 ===
+【单质】1张任意元素,或2张双原子分子(H/N/O/F/Cl)
+  例: He, O₂
+【化合物】多元素化合价匹配,必须恰好对应最简比
+  例: 1Na+1Cl=NaCl, 2Al+3O=Al₂O₃
+  规则: 金属优先正价,非金属优先负价
+【族炸】同族≥2张不同元素,3张>2张
+  例: H+Li=IA族炸, He+Ne+Ar=0族炸(3张)
+
+=== 接牌规则 ===
+桌面上有单质 → 只能出更大的单质或族炸
+桌面上有化合物 → 只能出更大的化合物或族炸
+族炸 → 顺时针询问接炸,无人接→出炸者自由出牌
+溢出化合物(牌数>玩家数) → 免疫接炸
+
+=== 接炸规则 ===
+1.打出族炸后,其他玩家按顺时针询问是否出族炸(需更大)
+2.若无人接炸,出炸者自由出牌
+3.接炸模式中,被冷却的玩家不能出族炸(需先打出化合物解锁)"
+
+[node name="HelpBackBtn" type="Button" parent="HelpPage" unique_id=628439508]
+layout_mode = 0
+offset_left = 800.0
+offset_top = 620.0
+offset_right = 920.0
+offset_bottom = 660.0
+theme_override_font_sizes/font_size = 18
+text = "Back"
+
+[node name="GamePage" type="Control" parent="." unique_id=144233166]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TitleLabel" type="Label" parent="GamePage" unique_id=1227825284]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 10.0
@@ -70,7 +129,7 @@ offset_bottom = 55.0
 theme_override_font_sizes/font_size = 32
 text = "Chemical Collision"
 
-[node name="InfoLabel" type="Label" parent="GamePage" unique_id=1401271126]
+[node name="InfoLabel" type="Label" parent="GamePage" unique_id=703680521]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 60.0
@@ -79,16 +138,16 @@ offset_bottom = 200.0
 theme_override_font_sizes/font_size = 16
 text = "Initializing..."
 
-[node name="TableLabel" type="Label" parent="GamePage" unique_id=699005206]
+[node name="TableLabel" type="Label" parent="GamePage" unique_id=315958248]
 layout_mode = 0
-offset_left = 560.0
-offset_top = 260.0
-offset_right = 1140.0
-offset_bottom = 295.0
+offset_left = 20.0
+offset_top = 263.0
+offset_right = 600.0
+offset_bottom = 298.0
 theme_override_font_sizes/font_size = 20
 text = "Table: empty"
 
-[node name="HandLabel" type="Label" parent="GamePage" unique_id=2103165371]
+[node name="HandLabel" type="Label" parent="GamePage" unique_id=661250530]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 320.0
@@ -97,21 +156,21 @@ offset_bottom = 350.0
 theme_override_font_sizes/font_size = 18
 text = "My Hand:"
 
-[node name="HandContainer" type="HFlowContainer" parent="GamePage" unique_id=1910911796]
+[node name="HandContainer" type="HFlowContainer" parent="GamePage" unique_id=1528966382]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 355.0
 offset_right = 480.0
 offset_bottom = 550.0
 
-[node name="ActionPanel" type="HBoxContainer" parent="GamePage" unique_id=1139398523]
+[node name="ActionPanel" type="HBoxContainer" parent="GamePage" unique_id=495769068]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 560.0
 offset_right = 480.0
 offset_bottom = 610.0
 
-[node name="HintButton" type="Button" parent="GamePage" unique_id=516846863]
+[node name="HintButton" type="Button" parent="GamePage" unique_id=1318784442]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 620.0
@@ -121,7 +180,22 @@ theme_override_font_sizes/font_size = 14
 toggle_mode = true
 text = "Show hints"
 
-[node name="QuitButton" type="Button" parent="GamePage" unique_id=2051724742]
+[node name="HelpBtn" type="Button" parent="GamePage" unique_id=619515125]
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 903.0
+offset_top = -29.0
+offset_right = -23.0
+offset_bottom = 11.0
+grow_horizontal = 2
+grow_vertical = 0
+theme_override_font_sizes/font_size = 18
+text = "Help"
+
+[node name="QuitButton" type="Button" parent="GamePage" unique_id=844429004]
 layout_mode = 0
 offset_left = 500.0
 offset_top = 620.0
@@ -130,7 +204,7 @@ offset_bottom = 660.0
 theme_override_font_sizes/font_size = 14
 text = "Quit"
 
-[node name="LogLabel" type="Label" parent="GamePage" unique_id=628790660]
+[node name="LogLabel" type="Label" parent="GamePage" unique_id=337895532]
 layout_mode = 0
 offset_left = 510.0
 offset_top = 10.0
@@ -140,7 +214,7 @@ theme_override_font_sizes/font_size = 16
 text = "Game Log:"
 autowrap_mode = 3
 
-[node name="EndPage" type="Control" parent="." unique_id=158618380]
+[node name="EndPage" type="Control" parent="." unique_id=262381402]
 visible = false
 layout_mode = 1
 anchors_preset = 15
@@ -149,7 +223,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="EndTitle" type="Label" parent="EndPage" unique_id=1899741738]
+[node name="EndTitle" type="Label" parent="EndPage" unique_id=405922624]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
@@ -166,7 +240,7 @@ theme_override_font_sizes/font_size = 48
 text = "Game Over"
 horizontal_alignment = 1
 
-[node name="EndLabel" type="Label" parent="EndPage" unique_id=986438456]
+[node name="EndLabel" type="Label" parent="EndPage" unique_id=831658131]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
@@ -182,7 +256,7 @@ grow_vertical = 2
 theme_override_font_sizes/font_size = 24
 horizontal_alignment = 1
 
-[node name="EndButton" type="Button" parent="EndPage" unique_id=1517613719]
+[node name="EndButton" type="Button" parent="EndPage" unique_id=430861219]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
