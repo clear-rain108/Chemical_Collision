@@ -1,6 +1,6 @@
 # ============================================================
 # GameManager.gd - 多人发牌与玩家管理
-# 迭代 3+：回合轮转 + 出牌比大小 + Pass 轮次 + 日志系统
+# 族炸接炸链 + 冷却机制 + 简洁日志
 # ============================================================
 
 const CardDatabaseScript = preload("res://scripts/CardDatabase.gd")
@@ -10,31 +10,14 @@ const MIN_PLAYERS = 3
 const MAX_PLAYERS = 6
 const INITIAL_HAND_SIZE = 8
 
-enum PlayerState {
-	HUMAN_WAITING,
-	HUMAN_ACTIVE,
-	AI_WAITING,
-	AI_ACTIVE,
-}
-
-enum GamePhase {
-	INIT,
-	PLAYING,
-	GAME_OVER,
-}
-
-enum PlayResult {
-	OK,
-	NOT_STRONGER,
-	INVALID_PATTERN,
-}
+enum PlayResult { OK, NOT_STRONGER, INVALID_PATTERN, CANT_BOMB }
 
 class PlayerInfo:
 	var player_name: String = ""
 	var hand: Array = []
 	var is_ai: bool = false
-	var state: int = PlayerState.HUMAN_WAITING
 	var has_passed: bool = false
+	var cant_clan_bomb: bool = false   # 打出化合物前不能再出族炸
 
 	func _init(p_name: String, ai: bool = false):
 		player_name = p_name
@@ -61,7 +44,7 @@ class PlayerInfo:
 
 	func get_hand_display() -> String:
 		if hand.is_empty():
-			return "[empty]"
+			return "[空]"
 		var names: Array = []
 		for card in hand:
 			names.append(card.symbol)
@@ -71,31 +54,33 @@ class PlayerInfo:
 var database: RefCounted = null
 var players: Array = []
 var current_player_index: int = 0
-var phase: int = GamePhase.INIT
-var round_number: int = 0
+var phase: int = 0  # GamePhase.INIT
 var winner_index: int = -1
 var table_cards: Array = []
 var table_player_index: int = -1
 var is_round_starter: bool = true
 var log_messages: Array = []
 
+# 族炸接炸链状态
+var clan_bomb_chain_active: bool = false
+var clan_bomb_initiator: int = -1   # 发起族炸的玩家索引
+
 
 func init_game(player_count: int = 4, ai_count: int = 3) -> void:
 	if player_count < MIN_PLAYERS or player_count > MAX_PLAYERS:
-		push_error("Player count must be %d~%d" % [MIN_PLAYERS, MAX_PLAYERS])
 		return
 	if ai_count >= player_count:
-		push_error("AI count must be less than total players")
 		return
 
-	phase = GamePhase.INIT
+	phase = 0  # INIT
 	players.clear()
 	table_cards.clear()
 	table_player_index = -1
 	winner_index = -1
-	round_number = 0
 	current_player_index = 0
 	is_round_starter = true
+	clan_bomb_chain_active = false
+	clan_bomb_initiator = -1
 	log_messages.clear()
 
 	database = CardDatabaseScript.new()
@@ -104,16 +89,8 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> void:
 
 	var human_count = player_count - ai_count
 	for i in range(player_count):
-		var p_name: String
-		var is_ai: bool
-		if i < human_count:
-			p_name = "Player %d" % (i + 1)
-			is_ai = false
-		else:
-			p_name = "AI %d" % (i + 1 - human_count)
-			is_ai = true
-		var player = PlayerInfo.new(p_name, is_ai)
-		players.append(player)
+		var p_name = "玩家 %d" % (i + 1) if i < human_count else "AI %d" % (i + 1 - human_count)
+		players.append(PlayerInfo.new(p_name, i >= human_count))
 
 	for player in players:
 		var cards = database.draw_cards(INITIAL_HAND_SIZE)
@@ -121,12 +98,9 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> void:
 			player.add_card(card)
 		player.sort_hand_by_atomic_number()
 
-	phase = GamePhase.PLAYING
-	round_number = 1
-	log_messages.append("===== Game Started =====")
-	log_messages.append("Players: %d (%d human + %d AI)" % [player_count, human_count, ai_count])
-	log_messages.append("Hands: %d cards each" % INITIAL_HAND_SIZE)
-	log_messages.append("Turn: %s (free play)" % players[current_player_index].player_name)
+	phase = 1  # PLAYING
+	log_messages.append("===== 游戏开始 =====")
+	log_messages.append("当前回合: %s (自由出牌)" % players[current_player_index].player_name)
 
 
 func get_current_player() -> PlayerInfo:
@@ -146,20 +120,24 @@ func play_cards(player_index: int, cards: Array) -> int:
 	if pattern == -1:
 		return PlayResult.INVALID_PATTERN
 
-	if not is_round_starter:
-		var cmp = UtilsScript.compare_cards(cards, table_cards)
-		if cmp <= 0:
-			return PlayResult.NOT_STRONGER
+	# 族炸冷却检查
+	if pattern == UtilsScript.CardPattern.CLAN_BOMB and player.cant_clan_bomb:
+		return PlayResult.CANT_BOMB
+
+	# 比大小（非起手者且非接炸模式）
+	if not is_round_starter and not clan_bomb_chain_active:
+		if table_cards.size() > 0:
+			var cmp = UtilsScript.compare_cards(cards, table_cards)
+			if cmp <= 0:
+				return PlayResult.NOT_STRONGER
 	else:
 		is_round_starter = false
-
-	_reset_all_passes()
 
 	# 构建日志
 	var pname = UtilsScript.get_pattern_name(pattern)
 	var elem_name = UtilsScript.get_element_display(cards)
 	var card_str = _cards_to_string(cards)
-	var log_msg = "%s played %s (%s)" % [player.player_name, card_str, pname]
+	var log_msg = "%s 打出了 %s (%s)" % [player.player_name, card_str, pname]
 
 	if pattern == UtilsScript.CardPattern.ELEMENT and elem_name != "":
 		log_msg += " = " + elem_name
@@ -171,12 +149,11 @@ func play_cards(player_index: int, cards: Array) -> int:
 			log_msg += " = " + f
 			if not formula_info.get("ratio_ok", false):
 				var r = formula_info.get("ratio", {})
-				log_msg += " (ratio mismatch! need %d:%d)" % [r.get("ratio_pos", 1), r.get("ratio_neg", 1)]
+				log_msg += " (比例不匹配! 需要 %d:%d)" % [r.get("ratio_pos", 1), r.get("ratio_neg", 1)]
 				log_messages.append(log_msg)
 				return PlayResult.INVALID_PATTERN
-
-	if pattern == UtilsScript.CardPattern.CLAN_BOMB:
-		log_msg += " --CLAN BOMB! %s group! Steal turn!" % cards[0].group
+		# 打出化合物 → 清除族炸冷却
+		player.cant_clan_bomb = false
 
 	# 从手牌移除
 	player.remove_cards(cards)
@@ -185,17 +162,31 @@ func play_cards(player_index: int, cards: Array) -> int:
 
 	log_messages.append(log_msg)
 
+	# === 族炸处理 ===
 	if pattern == UtilsScript.CardPattern.CLAN_BOMB:
-		if player.get_hand_count() == 0:
-			phase = GamePhase.GAME_OVER
-			winner_index = player_index
-			log_messages.append("===== GAME OVER! Winner: %s =====" % player.player_name)
+		# 标记冷却
+		player.cant_clan_bomb = true
+		# 启动接炸链
+		clan_bomb_chain_active = true
+		clan_bomb_initiator = player_index
+		# 重置所有其他玩家的 pass 状态
+		for i in range(players.size()):
+			if i != player_index:
+				players[i].has_passed = false
+		# 不检查胜利，不切换回合 → 等其他玩家接炸或 PASS
 		return PlayResult.OK
 
+	# 非族炸出牌成功 → 取消接炸链
+	clan_bomb_chain_active = false
+	clan_bomb_initiator = -1
+	_reset_all_passes()
+	is_round_starter = false
+
+	# 检查胜利
 	if player.get_hand_count() == 0:
-		phase = GamePhase.GAME_OVER
+		phase = 2  # GAME_OVER
 		winner_index = player_index
-		log_messages.append("===== GAME OVER! Winner: %s =====" % player.player_name)
+		log_messages.append("===== 游戏结束！获胜者: %s =====" % player.player_name)
 		return PlayResult.OK
 
 	next_turn()
@@ -211,12 +202,56 @@ func player_pass(player_index: int) -> void:
 	if drawn.size() > 0:
 		player.add_card(drawn[0])
 		player.sort_hand_by_atomic_number()
-	var drawn_str = drawn[0].symbol if drawn.size() > 0 else "empty"
-	log_messages.append("%s passed, drew: %s" % [player.player_name, drawn_str])
+	var drawn_str = drawn[0].symbol if drawn.size() > 0 else "空"
+	log_messages.append("%s 跳过，抽到: %s" % [player.player_name, drawn_str])
 	next_turn()
 
 
 func next_turn() -> void:
+	# 族炸接炸模式：找下一个能接的人
+	if clan_bomb_chain_active:
+		# 统计还有谁没 pass 且不是发起者
+		var can_intercept: Array = []
+		for i in range(players.size()):
+			var p = players[i]
+			if i != clan_bomb_initiator and p.get_hand_count() > 0 and not p.has_passed:
+				can_intercept.append(i)
+
+		if can_intercept.is_empty():
+			# 没人接炸 → 新一轮，发起者自由出牌
+			log_messages.append("无人接炸！%s 自由出牌" % players[clan_bomb_initiator].player_name)
+			clan_bomb_chain_active = false
+			var initiator = clan_bomb_initiator
+			clan_bomb_initiator = -1
+			table_cards.clear()
+			table_player_index = -1
+			is_round_starter = true
+			_reset_all_passes()
+			current_player_index = initiator
+			return
+
+		# 找到发起者顺时针下一个能接的人
+		var next_idx = clan_bomb_initiator
+		for _i in range(players.size()):
+			next_idx = (next_idx + 1) % players.size()
+			if next_idx != clan_bomb_initiator and players[next_idx].get_hand_count() > 0 and not players[next_idx].has_passed:
+				current_player_index = next_idx
+				log_messages.append("接炸: %s (需打族炸或跳过)" % players[next_idx].player_name)
+				return
+
+		# 都不行
+		log_messages.append("无人接炸！%s 自由出牌" % players[clan_bomb_initiator].player_name)
+		clan_bomb_chain_active = false
+		var initiator = clan_bomb_initiator
+		clan_bomb_initiator = -1
+		table_cards.clear()
+		table_player_index = -1
+		is_round_starter = true
+		_reset_all_passes()
+		current_player_index = initiator
+		return
+
+	# 正常模式
 	var unpassed = _get_unpassed_players()
 	if unpassed.size() <= 1:
 		_start_new_round(unpassed)
@@ -228,8 +263,7 @@ func next_turn() -> void:
 		var p = players[next_idx]
 		if p.get_hand_count() > 0 and not p.has_passed:
 			current_player_index = next_idx
-			round_number += 1
-			log_messages.append("Turn: %s (round %d)" % [p.player_name, round_number])
+			log_messages.append("回合: %s" % p.player_name)
 			return
 
 	_start_new_round([])
@@ -240,29 +274,25 @@ func _start_new_round(unpassed: Array) -> void:
 	table_player_index = -1
 	is_round_starter = true
 	_reset_all_passes()
+	clan_bomb_chain_active = false
+	clan_bomb_initiator = -1
 
-	var found = false
 	for _i in range(players.size()):
 		var p = players[current_player_index]
 		if p.get_hand_count() > 0:
-			found = true
-			break
+			log_messages.append("====== 新一轮！%s 自由出牌 ======" % p.player_name)
+			return
 		current_player_index = (current_player_index + 1) % players.size()
 
-	if not found:
-		var alive = _get_alive_players()
-		if alive.size() == 1:
-			phase = GamePhase.GAME_OVER
-			winner_index = players.find(alive[0])
+	var alive = _get_alive_players()
+	if alive.size() == 1:
+		phase = 2  # GAME_OVER
+		winner_index = players.find(alive[0])
+		return
+	for i in range(players.size()):
+		if players[i].get_hand_count() > 0:
+			current_player_index = i
 			return
-		for i in range(players.size()):
-			if players[i].get_hand_count() > 0:
-				current_player_index = i
-				found = true
-				break
-
-	round_number += 1
-	log_messages.append("====== New Round! %s free play ======" % players[current_player_index].player_name)
 
 
 func _reset_all_passes() -> void:
@@ -287,28 +317,46 @@ func _get_alive_players() -> Array:
 
 
 func get_all_players_info() -> String:
-	var info = "===== Status =====\n"
+	var info = "===== 状态 =====\n"
 	for i in range(players.size()):
 		var p = players[i]
 		var marker = ""
 		if i == current_player_index:
-			marker = " <- "
+			marker = " ← "
 		var ai_tag = "[AI]" if p.is_ai else "[P]"
-		var pass_tag = " [Pass]" if p.has_passed else ""
-		info += "%s %s: %d cards%s%s\n" % [ai_tag, p.player_name, p.get_hand_count(), pass_tag, marker]
+		var pass_tag = " [跳过]" if p.has_passed else ""
+		var bomb_tag = " [禁炸]" if p.cant_clan_bomb else ""
+		info += "%s %s: %d 张牌%s%s%s\n" % [ai_tag, p.player_name, p.get_hand_count(), pass_tag, bomb_tag, marker]
 	if table_player_index >= 0:
 		var tp = players[table_player_index]
 		var pat = UtilsScript.detect_pattern(table_cards)
 		var pn = UtilsScript.get_pattern_name(pat)
 		var el = UtilsScript.get_element_display(table_cards)
-		info += "Table: %s played %s (%s" % [tp.player_name, _cards_to_string(table_cards), pn]
+		info += "桌面: %s 打出 %s (%s" % [tp.player_name, _cards_to_string(table_cards), pn]
 		if pat == UtilsScript.CardPattern.ELEMENT and el != "":
 			info += " " + el
 		info += ")\n"
 	else:
-		info += "Table: empty (free play)\n"
-	info += "Deck: %d cards left\n" % database.get_remaining_count()
+		info += "桌面: 空 (自由出牌)\n"
+	if clan_bomb_chain_active:
+		info += "⚠ 接炸中！需打族炸或跳过\n"
+	info += "牌库: %d 张\n" % database.get_remaining_count()
 	return info
+
+
+func get_available_patterns(player_idx: int) -> String:
+	if player_idx < 0 or player_idx >= players.size():
+		return ""
+	var p = players[player_idx]
+	if clan_bomb_chain_active and not p.cant_clan_bomb:
+		return "当前可出: 族炸 / 跳过"
+	if is_round_starter or table_cards.is_empty():
+		if p.cant_clan_bomb:
+			return "当前可出: 单质 / 化合物 / 跳过"
+		return "当前可出: 单质 / 化合物 / 族炸 / 跳过"
+	if p.cant_clan_bomb:
+		return "当前可出: 比桌面大的单质或化合物 / 跳过"
+	return "当前可出: 比桌面大的单质/化合物/族炸 / 跳过"
 
 
 func flush_logs() -> Array:
@@ -327,7 +375,7 @@ func _cards_to_string(cards: Array) -> String:
 
 
 func is_game_over() -> bool:
-	return phase == GamePhase.GAME_OVER
+	return phase == 2  # GAME_OVER
 
 
 func get_winner() -> PlayerInfo:

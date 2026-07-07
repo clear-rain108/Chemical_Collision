@@ -1,6 +1,5 @@
 # ============================================================
 # GameUI.gd - 游戏主界面控制脚本
-# 牌型系统：单质 / 化合物 / 族炸 + 日志输出
 # ============================================================
 
 extends Control
@@ -11,12 +10,15 @@ const UtilsScript = preload("res://scripts/Utils.gd")
 var game_manager: RefCounted = null
 var selected_indices: Array = []
 var log_lines: Array = []
-const MAX_LOG_LINES = 8
+const MAX_LOG_LINES = 6
+var hint_timer: float = 0.0       # 提示自动消失倒计时
+var hint_pending: String = ""     # 待显示的提示文本
 
 var hand_container: Control = null
 var info_label: Label = null
 var table_label: Label = null
 var log_label: Label = null
+var hint_label: Label = null
 var action_panel: Control = null
 var play_btn: Button = null
 var pass_btn: Button = null
@@ -29,11 +31,21 @@ func _ready() -> void:
 	_init_game()
 
 
+func _process(delta: float) -> void:
+	if hint_timer > 0:
+		hint_timer -= delta
+		if hint_timer <= 0:
+			if hint_label:
+				hint_label.text = ""
+			hint_pending = ""
+
+
 func _setup_ui_references() -> void:
 	hand_container = get_node_or_null("HandContainer")
 	info_label = get_node_or_null("InfoLabel")
 	table_label = get_node_or_null("TableLabel")
 	log_label = get_node_or_null("LogLabel")
+	hint_label = get_node_or_null("HintLabel")
 	action_panel = get_node_or_null("ActionPanel")
 
 	if action_panel:
@@ -61,6 +73,7 @@ func _refresh_ui() -> void:
 	_update_info_label()
 	_update_table_label()
 	_update_log_label()
+	_update_hint_label()
 	_update_hand_buttons()
 	_update_action_buttons()
 
@@ -82,7 +95,7 @@ func _update_table_label() -> void:
 		var syms: Array = []
 		for c in cards:
 			syms.append(c.symbol)
-		var txt = "Table: %s played %s (%s)" % [p.player_name, ", ".join(syms), pname]
+		var txt = "桌面: %s 打出 %s (%s)" % [p.player_name, ", ".join(syms), pname]
 		if pattern == UtilsScript.CardPattern.ELEMENT and element_name != "":
 			txt += " " + element_name
 		if pattern == UtilsScript.CardPattern.COMPOUND:
@@ -91,7 +104,7 @@ func _update_table_label() -> void:
 				txt += " = " + fi.get("formula", "??")
 		table_label.text = txt
 	else:
-		table_label.text = "Table: empty (free play)"
+		table_label.text = "桌面: 空 (自由出牌)"
 
 
 func _update_log_label() -> void:
@@ -104,7 +117,24 @@ func _update_log_label() -> void:
 		log_lines.push_back(msg)
 		while log_lines.size() > MAX_LOG_LINES:
 			log_lines.pop_front()
-	log_label.text = "Game Log:\n" + "\n".join(log_lines)
+	log_label.text = "\n".join(log_lines)
+
+
+func _update_hint_label() -> void:
+	if not hint_label or not game_manager:
+		return
+	var cp = game_manager.get_current_player()
+	if cp == null or cp.is_ai:
+		return
+	var hint = game_manager.get_available_patterns(game_manager.current_player_index)
+	_show_hint(hint)
+
+
+func _show_hint(text: String) -> void:
+	if hint_label:
+		hint_label.text = text
+	hint_timer = 3.0
+	hint_pending = text
 
 
 func _update_hand_buttons() -> void:
@@ -121,7 +151,7 @@ func _update_hand_buttons() -> void:
 
 	if current_player.is_ai:
 		var wait_label = Label.new()
-		wait_label.text = "Waiting for %s..." % current_player.player_name
+		wait_label.text = "等待 %s 行动中..." % current_player.player_name
 		wait_label.add_theme_font_size_override("font_size", 28)
 		hand_container.add_child(wait_label)
 
@@ -205,22 +235,21 @@ func _on_play_pressed() -> void:
 
 	var pattern = UtilsScript.detect_pattern(selected_cards)
 	if pattern == -1:
-		if info_label:
-			info_label.text = "Invalid play! Only: single element, diatomic (H2/N2/O2/F2/Cl2), compound (correct ratio), or clan bomb."
+		_show_hint("非法出牌！仅支持: 单质、双原子分子(H₂/N₂/O₂/F₂/Cl₂)、化合物、族炸")
 		return
 
 	if pattern == UtilsScript.CardPattern.CLAN_BOMB:
-		if info_label:
-			info_label.text = "Clan Bomb! %s group!" % selected_cards[0].group
+		_show_hint("族炸！%s 族！" % selected_cards[0].group)
 
 	var result = game_manager.play_cards(game_manager.current_player_index, selected_cards)
 	if result == GameManagerScript.PlayResult.NOT_STRONGER:
-		if info_label:
-			info_label.text = "Cards not stronger than table! Must play bigger or Pass."
+		_show_hint("牌不够大！需要打出比桌面更大的牌")
+		return
+	if result == GameManagerScript.PlayResult.CANT_BOMB:
+		_show_hint("不能出族炸！需先打出化合物以解锁")
 		return
 	if result == GameManagerScript.PlayResult.INVALID_PATTERN:
-		if info_label:
-			info_label.text = "Compound ratio mismatch! Check the correct atom ratio."
+		_show_hint("化合物比例不匹配！")
 		return
 
 	_clear_selection()
@@ -266,11 +295,14 @@ func _ai_auto_play() -> void:
 func _ai_find_candidates(player) -> Array:
 	var result: Array = []
 
-	var by_group = _group_by_group(player.hand)
-	for grp in by_group:
-		if by_group[grp].size() >= 2:
-			result.append(by_group[grp].duplicate())
+	# 族炸候选（仅当未被禁用时）
+	if not player.cant_clan_bomb:
+		var by_group = _group_by_group(player.hand)
+		for grp in by_group:
+			if by_group[grp].size() >= 2:
+				result.append(by_group[grp].duplicate())
 
+	# 化合物候选
 	for i in range(player.hand.size()):
 		for j in range(i + 1, player.hand.size()):
 			var pair = [player.hand[i], player.hand[j]]
@@ -285,15 +317,16 @@ func _ai_find_candidates(player) -> Array:
 					continue
 				result.append(pair)
 
+	# 双原子分子单质
 	for i in range(player.hand.size()):
 		var card = player.hand[i]
 		if card.symbol in UtilsScript.DIATOMIC_SYMBOLS:
 			for j in range(player.hand.size()):
 				if i != j and player.hand[j].symbol == card.symbol:
-					var pair = [player.hand[i], player.hand[j]]
-					result.append(pair)
+					result.append([player.hand[i], player.hand[j]])
 					break
 
+	# 单质单张
 	for card in player.hand:
 		result.append([card])
 
@@ -344,9 +377,9 @@ func _show_game_over() -> void:
 	if info_label and game_manager:
 		var winner = game_manager.get_winner()
 		if winner:
-			info_label.text = "===== GAME OVER =====\nWinner: %s\n%s" % [winner.player_name, winner.get_hand_display()]
+			info_label.text = "===== 游戏结束 =====\n获胜者: %s\n%s" % [winner.player_name, winner.get_hand_display()]
 		else:
-			info_label.text = "===== GAME OVER ====="
+			info_label.text = "===== 游戏结束 ====="
 
 	if hand_container:
 		for child in hand_container.get_children():

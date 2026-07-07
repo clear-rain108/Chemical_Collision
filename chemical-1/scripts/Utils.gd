@@ -212,7 +212,7 @@ static func get_element_display(cards: Array) -> String:
 
 
 # 比较两组牌的大小
-# 返回 1 表示 cards_a 更大，-1 表示 cards_b 更大，0 表示相等
+# 序数越小牌越大 — 返回 1 表示 cards_a 更大，-1 表示 cards_b 更大，0 表示相等
 static func compare_cards(cards_a: Array, cards_b: Array) -> int:
 	var pattern_a = detect_pattern(cards_a)
 	var pattern_b = detect_pattern(cards_b)
@@ -226,17 +226,22 @@ static func compare_cards(cards_a: Array, cards_b: Array) -> int:
 	if pattern_b == CardPattern.CLAN_BOMB and pattern_a != CardPattern.CLAN_BOMB:
 		return -1
 
-	# 都是族炸：比较数量，数量多的大；同数量比原子序数和
+	# 都是族炸：3张 > 2张不论序数大小；同数量比原子序数和（小→大）
 	if pattern_a == CardPattern.CLAN_BOMB and pattern_b == CardPattern.CLAN_BOMB:
 		if cards_a.size() != cards_b.size():
+			# 3 张一定大于 2 张，不论族序数
+			if cards_a.size() >= 3:
+				return 1
+			if cards_b.size() >= 3:
+				return -1
 			return 1 if cards_a.size() > cards_b.size() else -1
 		return _compare_by_total_atomic(cards_a, cards_b)
 
-	# 都是化合物：比原子序数和
+	# 都是化合物：原子序数和小的更大
 	if pattern_a == CardPattern.COMPOUND and pattern_b == CardPattern.COMPOUND:
 		return _compare_by_total_atomic(cards_a, cards_b)
 
-	# 都是单质：比原子序数和
+	# 都是单质：原子序数和小的更大
 	if pattern_a == CardPattern.ELEMENT and pattern_b == CardPattern.ELEMENT:
 		return _compare_by_total_atomic(cards_a, cards_b)
 
@@ -252,6 +257,7 @@ static func compare_cards(cards_a: Array, cards_b: Array) -> int:
 	return _compare_by_total_atomic(cards_a, cards_b)
 
 
+# 原子序数和越小牌越大（逆转比较）
 static func _compare_by_total_atomic(cards_a: Array, cards_b: Array) -> int:
 	var sum_a = 0
 	var sum_b = 0
@@ -259,7 +265,8 @@ static func _compare_by_total_atomic(cards_a: Array, cards_b: Array) -> int:
 		sum_a += c.atomic_number
 	for c in cards_b:
 		sum_b += c.atomic_number
-	return 1 if sum_a > sum_b else (-1 if sum_a < sum_b else 0)
+	# 序数和小 → 牌大 → 返回 1
+	return 1 if sum_a < sum_b else (-1 if sum_a > sum_b else 0)
 
 
 # 牌型名称

@@ -1,4 +1,4 @@
-[gd_scene format=3 uid="uid://dqldho57604rv"]
+[gd_scene load_steps=2 format=3 uid="uid://dqldho57604rv"]
 
 [ext_resource type="Script" uid="uid://da0nq8ih8tyri" path="res://scripts/GameUI.gd" id="1_game_ui"]
 
@@ -18,7 +18,7 @@ offset_top = 10.0
 offset_right = 600.0
 offset_bottom = 55.0
 theme_override_font_sizes/font_size = 32
-text = "Chemical Collision"
+text = "化学碰撞"
 
 [node name="InfoLabel" type="Label" parent="." unique_id=1216361281]
 layout_mode = 0
@@ -27,7 +27,7 @@ offset_top = 60.0
 offset_right = 480.0
 offset_bottom = 200.0
 theme_override_font_sizes/font_size = 16
-text = "Initializing..."
+text = "初始化中..."
 
 [node name="TableLabel" type="Label" parent="." unique_id=858501697]
 layout_mode = 0
@@ -36,7 +36,7 @@ offset_top = 263.0
 offset_right = 600.0
 offset_bottom = 298.0
 theme_override_font_sizes/font_size = 20
-text = "Table: empty"
+text = "桌面: 空"
 
 [node name="HandLabel" type="Label" parent="." unique_id=1135891622]
 layout_mode = 0
@@ -45,7 +45,18 @@ offset_top = 320.0
 offset_right = 200.0
 offset_bottom = 350.0
 theme_override_font_sizes/font_size = 18
-text = "My Hand:"
+text = "我的手牌:"
+
+[node name="HintLabel" type="Label" parent="."]
+layout_mode = 0
+offset_left = 510.0
+offset_top = 560.0
+offset_right = 900.0
+offset_bottom = 600.0
+theme_override_font_sizes/font_size = 16
+theme_override_colors/font_color = Color(1.0, 0.84, 0.0, 1.0)
+text = ""
+autowrap_mode = 3
 
 [node name="HandContainer" type="HFlowContainer" parent="." unique_id=594610229]
 layout_mode = 0
@@ -66,14 +77,14 @@ layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 20
 disabled = true
-text = "Play"
+text = "出牌"
 
 [node name="PassButton" type="Button" parent="ActionPanel" unique_id=1931773762]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_font_sizes/font_size = 20
 disabled = true
-text = "Pass"
+text = "跳过"
 
 [node name="LogLabel" type="Label" parent="." unique_id=1210564611]
 layout_mode = 0
