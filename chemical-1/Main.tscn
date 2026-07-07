@@ -1,0 +1,86 @@
+[gd_scene format=3 uid="uid://dqldho57604rv"]
+
+[ext_resource type="Script" uid="uid://da0nq8ih8tyri" path="res://scripts/GameUI.gd" id="1_game_ui"]
+
+[node name="Main" type="Control" unique_id=15444468]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_game_ui")
+
+[node name="TitleLabel" type="Label" parent="." unique_id=695790043]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 10.0
+offset_right = 600.0
+offset_bottom = 55.0
+theme_override_font_sizes/font_size = 32
+text = "Chemical Collision"
+
+[node name="InfoLabel" type="Label" parent="." unique_id=1216361281]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 60.0
+offset_right = 480.0
+offset_bottom = 200.0
+theme_override_font_sizes/font_size = 16
+text = "Initializing..."
+
+[node name="TableLabel" type="Label" parent="." unique_id=858501697]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 263.0
+offset_right = 600.0
+offset_bottom = 298.0
+theme_override_font_sizes/font_size = 20
+text = "Table: empty"
+
+[node name="HandLabel" type="Label" parent="." unique_id=1135891622]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 320.0
+offset_right = 200.0
+offset_bottom = 350.0
+theme_override_font_sizes/font_size = 18
+text = "My Hand:"
+
+[node name="HandContainer" type="HFlowContainer" parent="." unique_id=594610229]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 355.0
+offset_right = 480.0
+offset_bottom = 550.0
+
+[node name="ActionPanel" type="HBoxContainer" parent="." unique_id=1903633363]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 560.0
+offset_right = 400.0
+offset_bottom = 610.0
+
+[node name="PlayButton" type="Button" parent="ActionPanel" unique_id=737343942]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 20
+disabled = true
+text = "Play"
+
+[node name="PassButton" type="Button" parent="ActionPanel" unique_id=1931773762]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_font_sizes/font_size = 20
+disabled = true
+text = "Pass"
+
+[node name="LogLabel" type="Label" parent="." unique_id=1210564611]
+layout_mode = 0
+offset_left = 510.0
+offset_top = 10.0
+offset_right = 900.0
+offset_bottom = 600.0
+theme_override_font_sizes/font_size = 16
+text = "Game Log:"
+autowrap_mode = 3
