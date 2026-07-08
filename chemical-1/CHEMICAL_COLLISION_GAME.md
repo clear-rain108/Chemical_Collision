@@ -259,9 +259,9 @@ detect_pattern(cards, skip_clan_bomb=false):
 ```gdscript
 // 在 remove_cards 之前调用
 if pattern == COMPOUND:
-    var fi = get_compound_formula(cards, custom_valences)
-    if not fi.is_empty() and not fi.get("ratio_ok", false):
-        return -1  // 拒绝出牌
+	var fi = get_compound_formula(cards, custom_valences)
+	if not fi.is_empty() and not fi.get("ratio_ok", false):
+		return -1  // 拒绝出牌
 ```
 
 ### 8.3 玩家化合物流程

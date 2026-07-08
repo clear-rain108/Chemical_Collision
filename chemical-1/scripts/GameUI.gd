@@ -163,9 +163,10 @@ func _format_player_status() -> String:
 	if game_manager == null or game_manager.players.is_empty():
 		return "等待游戏初始化..."
 	var parts: Array = []
+	var cp_idx = game_manager.get_current_player_index()
 	for i in range(game_manager.players.size()):
 		var p = game_manager.players[i]
-		var is_current = (i == game_manager.current_player_index)
+		var is_current = (i == cp_idx)
 		var ai_tag = "(AI)" if p.is_ai else ""
 		var cooling = "❄" if p.clan_bomb_cooling else ""
 		var pass_tag = "⏸" if p.has_passed else ""
@@ -221,7 +222,7 @@ func _update_card_info_label() -> void:
 	if cp == null or cp.is_ai:
 		card_info_label.text = ""
 		return
-	var hint = game_manager.get_available_patterns(game_manager.current_player_index())
+	var hint = game_manager.get_available_patterns(game_manager.get_current_player_index())
 	card_info_label.text = "提示: " + hint
 
 
@@ -379,7 +380,7 @@ func _on_element() -> void:
 		_show_info("不是有效单质！")
 		_on_back()
 		return
-	var result = game_manager.play_cards(game_manager.current_player_index, cards)
+	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards)
 	_handle_result(result)
 
 
@@ -391,7 +392,7 @@ func _on_clan_bomb() -> void:
 		_show_info("不是有效族炸！")
 		_on_back()
 		return
-	var result = game_manager.play_cards(game_manager.current_player_index, cards)
+	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards)
 	_handle_result(result)
 
 
@@ -419,6 +420,7 @@ func _on_select_valence(symbol: String, valence: int) -> void:
 
 func _on_confirm_compound() -> void:
 	var cp = game_manager.get_current_player()
+	var gm_idx = game_manager.get_current_player_index()
 
 	var custom_valences: Dictionary = {}
 	for sel in compound_selections:
@@ -475,7 +477,7 @@ func _on_confirm_compound() -> void:
 		if ccards.size() != na + nb:
 			_show_info("收集卡牌出错！")
 			return
-		var result = game_manager.play_cards(game_manager.current_player_index, ccards, custom_valences)
+		var result = game_manager.play_cards(gm_idx, ccards, custom_valences)
 		_handle_result(result)
 		return
 
@@ -487,7 +489,7 @@ func _on_confirm_compound() -> void:
 	if all_one and total_charge == 0:
 		var ccards: Array = []
 		for _idx in selected_indices: ccards.append(cp.hand[_idx])
-		var result = game_manager.play_cards(game_manager.current_player_index, ccards, custom_valences)
+		var result = game_manager.play_cards(gm_idx, ccards, custom_valences)
 		_handle_result(result)
 		return
 
@@ -506,7 +508,7 @@ func _on_back() -> void:
 
 
 func _on_pass() -> void:
-	game_manager.player_pass(game_manager.current_player_index)
+	game_manager.player_pass(game_manager.get_current_player_index())
 	_step_reset()
 	_refresh_ui()
 
@@ -553,29 +555,30 @@ func _ai_auto_play() -> void:
 	if game_manager == null or game_manager.is_game_over(): return
 	var cp = game_manager.get_current_player()
 	if cp == null or not cp.is_ai or cp.hand.is_empty(): return
+	var gm_idx = game_manager.get_current_player_index()
 	if game_manager.clan_bomb_chain_active:
-		if cp.clan_bomb_cooling: game_manager.player_pass(game_manager.current_player_index)
-		else: _ai_try_clan_bomb(cp)
+		if cp.clan_bomb_cooling: game_manager.player_pass(gm_idx)
+		else: _ai_try_clan_bomb(cp, gm_idx)
 		_refresh_ui()
 		return
-	_ai_try_play(cp)
+	_ai_try_play(cp, gm_idx)
 	_refresh_ui()
 
 
-func _ai_try_clan_bomb(p):
+func _ai_try_clan_bomb(p, gm_idx: int):
 	var bg = _group_by_group(p.hand)
 	for g in bg:
 		if bg[g].size() >= 2:
-			if game_manager.play_cards(game_manager.current_player_index, bg[g].duplicate()) == 0: return
-	game_manager.player_pass(game_manager.current_player_index)
+			if game_manager.play_cards(gm_idx, bg[g].duplicate()) == 0: return
+	game_manager.player_pass(gm_idx)
 
 
-func _ai_try_play(p):
+func _ai_try_play(p, gm_idx: int):
 	if not p.clan_bomb_cooling:
 		var bg = _group_by_group(p.hand)
 		for g in bg:
 			if bg[g].size() >= 2:
-				if game_manager.play_cards(game_manager.current_player_index, bg[g].duplicate()) == 0: return
+				if game_manager.play_cards(gm_idx, bg[g].duplicate()) == 0: return
 
 	for i in range(p.hand.size()):
 		for j in range(i + 1, p.hand.size()):
@@ -591,7 +594,7 @@ func _ai_try_play(p):
 						if val > 0: v = val; break
 					if v == 0: v = -abs(sample.common_valence[0])
 					cv[sym] = v
-				if game_manager.play_cards(game_manager.current_player_index, pair, cv) == 0: return
+				if game_manager.play_cards(gm_idx, pair, cv) == 0: return
 
 	for i in range(p.hand.size()):
 		var c = p.hand[i]
@@ -599,12 +602,12 @@ func _ai_try_play(p):
 			for j in range(p.hand.size()):
 				if i != j and p.hand[j].symbol == c.symbol:
 					var dp = [p.hand[i], p.hand[j]]
-					if game_manager.play_cards(game_manager.current_player_index, dp) == 0: return
+					if game_manager.play_cards(gm_idx, dp) == 0: return
 					break
 
 	for c in p.hand:
-		if game_manager.play_cards(game_manager.current_player_index, [c]) == 0: return
-	game_manager.player_pass(game_manager.current_player_index)
+		if game_manager.play_cards(gm_idx, [c]) == 0: return
+	game_manager.player_pass(gm_idx)
 
 
 func _group_by_group(hand: Array) -> Dictionary:
