@@ -62,6 +62,7 @@ grow_horizontal = 2
 grow_vertical = 2
 
 [node name="HelpTitle" type="Label" parent="HelpPage" unique_id=1577193719]
+visible = false
 layout_mode = 0
 offset_left = 40.0
 offset_top = 20.0
@@ -72,10 +73,10 @@ text = "Help & Rules"
 
 [node name="HelpContent" type="Label" parent="HelpPage" unique_id=2105439584]
 layout_mode = 0
-offset_left = 40.0
-offset_top = 70.0
-offset_right = 900.0
-offset_bottom = 620.0
+offset_left = 14.0
+offset_top = 15.0
+offset_right = 874.0
+offset_bottom = 636.0
 theme_override_font_sizes/font_size = 16
 text = "=== 游戏规则 ===
 - 目标: 率先打光所有手牌

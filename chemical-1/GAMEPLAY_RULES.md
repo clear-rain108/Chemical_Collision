@@ -89,8 +89,8 @@ detect_pattern(cards, skip_clan_bomb=false) 判定优先级:
 const DIATOMIC_SYMBOLS = ["H", "N", "O", "F", "Cl"]
 
 func get_element_display(cards):
-    if cards.size() == 1: return cards[0].symbol
-    if cards.size() == 2: return cards[0].symbol + _to_subscript(2)  // "H₂"
+	if cards.size() == 1: return cards[0].symbol
+	if cards.size() == 2: return cards[0].symbol + _to_subscript(2)  // "H₂"
 ```
 
 ---
@@ -113,10 +113,10 @@ func get_element_display(cards):
 ```
 选牌(step0) → 点击"出牌(选牌型)"
   → "合成化合物"(step1→step2)
-    → 为每种选中元素选择化合价
-    → "确认打出"
-      → 按 GCD 比例精确收集牌张
-      → play_cards(cards, custom_valences)
+	→ 为每种选中元素选择化合价
+	→ "确认打出"
+	  → 按 GCD 比例精确收集牌张
+	  → play_cards(cards, custom_valences)
 ```
 
 ### 5.3 程序实现
@@ -140,9 +140,9 @@ func get_element_display(cards):
 // GameManager.gd 第 148-152 行
 // 在 remove_cards 之前校验
 if pattern == CardPattern.COMPOUND:
-    var fi = UtilsScript.get_compound_formula(cards, custom_valences)
-    if not fi.is_empty() and not fi.get("ratio_ok", false):
-        return -1  // 比例不匹配 → 拒绝出牌，卡牌不动
+	var fi = UtilsScript.get_compound_formula(cards, custom_valences)
+	if not fi.is_empty() and not fi.get("ratio_ok", false):
+		return -1  // 比例不匹配 → 拒绝出牌，卡牌不动
 ```
 
 ### 5.5 精确牌张收集（GameUI.gd _on_confirm_compound）
@@ -185,10 +185,10 @@ if pattern == CardPattern.COMPOUND:
 ```
 玩家 A 出族炸 → owner=A, chain_active=true
   → 顺时针询问 B（跳过 A）
-    → B 出更大的族炸 → owner=B, chain 继续
-    → B 跳过 → 不抽牌，chain 继续
+	→ B 出更大的族炸 → owner=B, chain 继续
+	→ B 跳过 → 不抽牌，chain 继续
   → 所有非 owner 玩家都已 pass
-    → 桌面清空，owner 自由出牌（新一轮）
+	→ 桌面清空，owner 自由出牌（新一轮）
 ```
 
 ---

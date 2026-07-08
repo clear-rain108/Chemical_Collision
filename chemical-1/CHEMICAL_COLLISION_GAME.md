@@ -183,8 +183,8 @@ Main (Control)
 ├── HandLabel             ← "My Hand:"
 ├── HandContainer (HFlowContainer)
 └── ActionPanel
-    ├── PlayButton        ← "Play Cards"
-    └── PassButton        ← "Pass Draw"
+	├── PlayButton        ← "Play Cards"
+	└── PassButton        ← "Pass Draw"
 ```
 
 ### 6.2 交互流程
@@ -218,9 +218,9 @@ Main (Control)
 
 ```gdscript
 enum CardPattern {
-    ELEMENT,     # 单质（1 张，或双原子分子的 2 张同元素）
-    COMPOUND,    # 化合物（多元素化合价匹配）
-    CLAN_BOMB,   # 族炸（同族 ≥2 张不同元素）
+	ELEMENT,     # 单质（1 张，或双原子分子的 2 张同元素）
+	COMPOUND,    # 化合物（多元素化合价匹配）
+	CLAN_BOMB,   # 族炸（同族 ≥2 张不同元素）
 }
 ```
 
@@ -295,32 +295,32 @@ config/icon="res://icon.svg"
 ```
 启动 → Main.tscn → GameUI._ready()
   └── GameManager.init_game(4, 3)
-       ├── CardDatabase 生成 108 张 (18种 × 6)
-       ├── Fisher-Yates 洗牌
-       ├── 创建 4 玩家 (1 人类 + 3 AI)
-       ├── 发牌 4×8 = 32 张
-       └── is_round_starter = true
+	   ├── CardDatabase 生成 108 张 (18种 × 6)
+	   ├── Fisher-Yates 洗牌
+	   ├── 创建 4 玩家 (1 人类 + 3 AI)
+	   ├── 发牌 4×8 = 32 张
+	   └── is_round_starter = true
 
 回合循环:
   _refresh_ui()
-    ├── InfoLabel ← get_all_players_info()
-    ├── TableLabel ← 桌面 (单质X₂/化合物/族炸)
-    ├── _update_hand_buttons()
-    └── _update_action_buttons()
+	├── InfoLabel ← get_all_players_info()
+	├── TableLabel ← 桌面 (单质X₂/化合物/族炸)
+	├── _update_hand_buttons()
+	└── _update_action_buttons()
 
   人类操作:
-    ├── 选中手牌 (黄色 ✓)
-    ├── Play → detect_pattern()
-    │    ├── 非法 → "Only single/diatomic/compound/clan bomb"
-    │    ├── NOT_STRONGER → "Must play bigger or Pass"
-    │    └── OK → play_cards() → _refresh_ui()
-    └── Pass → player_pass() → _refresh_ui()
+	├── 选中手牌 (黄色 ✓)
+	├── Play → detect_pattern()
+	│    ├── 非法 → "Only single/diatomic/compound/clan bomb"
+	│    ├── NOT_STRONGER → "Must play bigger or Pass"
+	│    └── OK → play_cards() → _refresh_ui()
+	└── Pass → player_pass() → _refresh_ui()
 
   AI 操作 (_ai_auto_play):
-    ├── _ai_find_candidates()
-    │    (族炸 > 化合物 > X₂ > 单张)
-    ├── 遍历候选 try play_cards()
-    └── 全不过 → Pass
+	├── _ai_find_candidates()
+	│    (族炸 > 化合物 > X₂ > 单张)
+	├── 遍历候选 try play_cards()
+	└── 全不过 → Pass
 
 game_over:
   └── _show_game_over()
