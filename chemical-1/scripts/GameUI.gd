@@ -1,6 +1,7 @@
 # ============================================================
 # GameUI.gd - 游戏主界面控制脚本
 # 多元素化合物 + 精确牌张收集 + 电荷平衡验证
+# Updated: 2026-07-08 16:20
 # ============================================================
 
 extends Control
@@ -20,12 +21,15 @@ var end_label: Label = null
 var end_button: Button = null
 var help_back_btn: Button = null
 var help_btn: Button = null
+var player_spin: SpinBox = null
+var ai_spin: SpinBox = null
 
 # UI
 var hand_container: Control = null
 var info_label: Label = null
 var table_label: Label = null
 var log_label: Label = null
+var card_info_label: Label = null
 var action_panel: Control = null
 var hint_button: Button = null
 var quit_button: Button = null
@@ -53,6 +57,8 @@ func _setup_pages() -> void:
 
 	if start_page:
 		start_button = start_page.get_node_or_null("StartButton")
+		player_spin = start_page.get_node_or_null("PlayerCountSpin")
+		ai_spin = start_page.get_node_or_null("AiCountSpin")
 		if start_button:
 			start_button.pressed.connect(_on_start_game)
 
@@ -72,6 +78,7 @@ func _setup_pages() -> void:
 		info_label = game_page.get_node_or_null("InfoLabel")
 		table_label = game_page.get_node_or_null("TableLabel")
 		log_label = game_page.get_node_or_null("LogLabel")
+		card_info_label = game_page.get_node_or_null("CardInfoLabel")
 		action_panel = game_page.get_node_or_null("ActionPanel")
 		hint_button = game_page.get_node_or_null("HintButton")
 		quit_button = game_page.get_node_or_null("QuitButton")
@@ -102,11 +109,18 @@ func _on_help_back() -> void:
 
 
 func _on_start_game() -> void:
+	var total = 4
+	var ai = 3
+	if player_spin and ai_spin:
+		total = clampi(int(player_spin.value), GameManagerScript.MIN_PLAYERS, GameManagerScript.MAX_PLAYERS)
+		ai = clampi(int(ai_spin.value), 1, total - 1)
+	if ai >= total:
+		ai = max(1, total - 1)
 	start_page.visible = false
 	game_page.visible = true
 	end_page.visible = false
 	if help_page: help_page.visible = false
-	_init_game()
+	_init_game(total, ai)
 
 
 func _on_quit_game() -> void:
@@ -114,9 +128,16 @@ func _on_quit_game() -> void:
 	_show_end_page("游戏已退出")
 
 
-func _init_game() -> void:
+func _init_game(total: int = 4, ai: int = 3) -> void:
 	game_manager = GameManagerScript.new()
-	game_manager.init_game(4, 3)
+	var ok = game_manager.init_game(total, ai)
+	if not ok:
+		push_error("init_game failed with total=%d ai=%d, retrying defaults" % [total, ai])
+		ok = game_manager.init_game(4, 3)
+		if not ok:
+			push_error("CRITICAL: init_game also failed with defaults!")
+			_show_end_page("初始化失败")
+			return
 	_step_reset()
 	_refresh_ui()
 
@@ -130,11 +151,34 @@ func _refresh_ui() -> void:
 	_update_log_label()
 	_update_action_panel()
 	_update_hand_buttons()
+	_update_card_info_label()
 
 
 func _update_info_label() -> void:
 	if info_label and game_manager:
-		info_label.text = game_manager.get_all_players_info()
+		info_label.text = _format_player_status()
+
+
+func _format_player_status() -> String:
+	if game_manager == null or game_manager.players.is_empty():
+		return "等待游戏初始化..."
+	var parts: Array = []
+	for i in range(game_manager.players.size()):
+		var p = game_manager.players[i]
+		var is_current = (i == game_manager.current_player_index)
+		var ai_tag = "(AI)" if p.is_ai else ""
+		var cooling = "❄" if p.clan_bomb_cooling else ""
+		var pass_tag = "⏸" if p.has_passed else ""
+		var highlight = " ◄" if is_current else ""
+		var label = "%s %s%s%s%s" % [p.player_name, ai_tag, cooling, pass_tag, highlight]
+		parts.append(label)
+
+	if parts.is_empty():
+		return "等待游戏初始化..."
+	var result = "● %s" % parts[0]
+	for j in range(1, parts.size()):
+		result += " → ● %s" % parts[j]
+	return result
 
 
 func _update_table_label() -> void:
@@ -171,6 +215,16 @@ func _update_log_label() -> void:
 	log_label.text = "\n".join(log_lines)
 
 
+func _update_card_info_label() -> void:
+	if not card_info_label or not game_manager: return
+	var cp = game_manager.get_current_player()
+	if cp == null or cp.is_ai:
+		card_info_label.text = ""
+		return
+	var hint = game_manager.get_available_patterns(game_manager.current_player_index())
+	card_info_label.text = "提示: " + hint
+
+
 func _update_action_panel() -> void:
 	if not action_panel or not game_manager: return
 	for child in action_panel.get_children():
@@ -200,12 +254,25 @@ func _mkb(text: String, cb: Callable, dis: bool) -> Button:
 	return b
 
 
-func _on_hint_toggled(pressed: bool) -> void:
-	if pressed and game_manager:
-		var hint = game_manager.get_available_patterns(game_manager.get_current_player_index())
-		if info_label: info_label.text = game_manager.get_all_players_info() + "\n提示: " + hint
-	else:
-		_update_info_label()
+func _on_hint_toggled(_pressed: bool) -> void:
+	_update_card_info_label()
+
+
+# ==== 元素着色规则 ====
+func _get_card_color(card) -> Color:
+	var sym = card.symbol
+	if sym == "H": return Color(0.4, 0.7, 1.0)
+	if sym == "O": return Color(0.0, 0.3, 1.0)
+	if sym == "N": return Color(0.4, 0.2, 0.8)
+	if sym in ["C", "B", "Si", "S"]: return Color(1.0, 0.9, 0.1)
+	if sym == "P": return Color(1.0, 0.85, 0.85)
+	if card.group in ["VIIA"]: return Color(0.0, 0.7, 0.2)
+	match card.element_type:
+		"金属": return Color(0.5, 0.5, 0.5)
+		"非金属": return Color(0.0, 0.7, 0.2)
+		"准金属": return Color(0.0, 0.7, 0.2)
+		"稀有气体": return Color(0.95, 0.95, 0.95)
+	return Color(0.8, 0.8, 0.8)
 
 
 func _update_hand_buttons() -> void:
@@ -236,11 +303,8 @@ func _update_hand_buttons() -> void:
 			btn.tooltip_text = card.get_full_info()
 			btn.custom_minimum_size = Vector2(140, 55)
 			btn.add_theme_font_size_override("font_size", 16)
-			match card.element_type:
-				"金属": btn.add_theme_color_override("font_color", Color(0.5, 0.5, 0.5))
-				"非金属": btn.add_theme_color_override("font_color", Color(0.0, 0.7, 0.2))
-				"准金属": btn.add_theme_color_override("font_color", Color(0.0, 0.7, 0.2))
-				"稀有气体": btn.add_theme_color_override("font_color", Color(0.95, 0.95, 0.95))
+			var col = _get_card_color(card)
+			btn.add_theme_color_override("font_color", col)
 			if i in selected_indices:
 				btn.add_theme_color_override("font_color", Color(1.0, 1.0, 0.0))
 				btn.text = "✓ " + card.get_display_name()
@@ -256,8 +320,8 @@ func _update_valence_buttons() -> void:
 	var cp = game_manager.get_current_player()
 
 	var elem_map: Dictionary = {}
-	for idx in selected_indices:
-		var card = cp.hand[idx]
+	for _idx in selected_indices:
+		var card = cp.hand[_idx]
 		if not elem_map.has(card.symbol):
 			elem_map[card.symbol] = card
 
@@ -265,7 +329,6 @@ func _update_valence_buttons() -> void:
 		action_panel.add_child(_mkb("至少选两种元素 (返回)", _on_back, false))
 		return
 
-	# 每种选中元素 → 显示可选化合价
 	var all_assigned = true
 	for sym in elem_map:
 		var card = elem_map[sym]
@@ -311,7 +374,7 @@ func _on_step_next() -> void:
 func _on_element() -> void:
 	var cp = game_manager.get_current_player()
 	var cards: Array = []
-	for idx in selected_indices: cards.append(cp.hand[idx])
+	for _idx in selected_indices: cards.append(cp.hand[_idx])
 	if UtilsScript.detect_pattern(cards) != UtilsScript.CardPattern.ELEMENT:
 		_show_info("不是有效单质！")
 		_on_back()
@@ -323,7 +386,7 @@ func _on_element() -> void:
 func _on_clan_bomb() -> void:
 	var cp = game_manager.get_current_player()
 	var cards: Array = []
-	for idx in selected_indices: cards.append(cp.hand[idx])
+	for _idx in selected_indices: cards.append(cp.hand[_idx])
 	if UtilsScript.detect_pattern(cards) != UtilsScript.CardPattern.CLAN_BOMB:
 		_show_info("不是有效族炸！")
 		_on_back()
@@ -335,8 +398,8 @@ func _on_clan_bomb() -> void:
 func _on_choose_compound() -> void:
 	var cp = game_manager.get_current_player()
 	var symbols: Array = []
-	for idx in selected_indices:
-		var s = cp.hand[idx].symbol
+	for _idx in selected_indices:
+		var s = cp.hand[_idx].symbol
 		if s not in symbols: symbols.append(s)
 	if symbols.size() < 2:
 		_show_info("化合物至少需要两种不同元素！")
@@ -357,12 +420,10 @@ func _on_select_valence(symbol: String, valence: int) -> void:
 func _on_confirm_compound() -> void:
 	var cp = game_manager.get_current_player()
 
-	# 构建自定义化合价字典
 	var custom_valences: Dictionary = {}
 	for sel in compound_selections:
 		custom_valences[sel.symbol] = sel.valence
 
-	# 电荷平衡检查
 	var has_pos = false
 	var has_neg = false
 	for sel in compound_selections:
@@ -372,13 +433,11 @@ func _on_confirm_compound() -> void:
 		_show_info("需要正价和负价元素！")
 		return
 
-	# 统计每种元素的可用数量
 	var available: Dictionary = {}
-	for idx in selected_indices:
-		var card = cp.hand[idx]
+	for _idx in selected_indices:
+		var card = cp.hand[_idx]
 		available[card.symbol] = available.get(card.symbol, 0) + 1
 
-	# 构建化合价列表
 	var valence_list: Array = []
 	for sel in compound_selections:
 		valence_list.append({
@@ -388,7 +447,6 @@ func _on_confirm_compound() -> void:
 			"avail": available.get(sel.symbol, 0)
 		})
 
-	# 2 元素化合物：GCD 计算最简比
 	if valence_list.size() == 2:
 		var a = valence_list[0]
 		var b = valence_list[1]
@@ -401,10 +459,9 @@ func _on_confirm_compound() -> void:
 		if a.avail < na or b.avail < nb:
 			_show_info("手牌不足！需 %s×%d + %s×%d" % [a.symbol, na, b.symbol, nb])
 			return
-		# 精确收集所需牌张
 		var ccards: Array = []
-		for idx in selected_indices:
-			var card = cp.hand[idx]
+		for _idx in selected_indices:
+			var card = cp.hand[_idx]
 			if card.symbol == a.symbol:
 				var already = 0
 				for cc in ccards:
@@ -422,7 +479,6 @@ func _on_confirm_compound() -> void:
 		_handle_result(result)
 		return
 
-	# 3+ 元素：每种恰好 1 张且电荷平衡
 	var total_charge = 0
 	var all_one = true
 	for e in valence_list:
@@ -430,7 +486,7 @@ func _on_confirm_compound() -> void:
 		total_charge += e.sign * e.v
 	if all_one and total_charge == 0:
 		var ccards: Array = []
-		for idx in selected_indices: ccards.append(cp.hand[idx])
+		for _idx in selected_indices: ccards.append(cp.hand[_idx])
 		var result = game_manager.play_cards(game_manager.current_player_index, ccards, custom_valences)
 		_handle_result(result)
 		return
@@ -476,7 +532,7 @@ func _step_reset() -> void:
 
 func _show_info(text: String) -> void:
 	if info_label and game_manager:
-		info_label.text = game_manager.get_all_players_info() + "\n" + text
+		info_label.text = _format_player_status() + "\n" + text
 
 
 func _show_end_page(custom_text: String) -> void:

@@ -7,7 +7,7 @@ const CardDatabaseScript = preload("res://scripts/CardDatabase.gd")
 const UtilsScript = preload("res://scripts/Utils.gd")
 
 const MIN_PLAYERS = 3
-const MAX_PLAYERS = 6
+const MAX_PLAYERS = 8
 const INITIAL_HAND_SIZE = 8
 
 var database: RefCounted = null
@@ -61,11 +61,13 @@ class PlayerInfo:
 		return ", ".join(names)
 
 
-func init_game(player_count: int = 4, ai_count: int = 3) -> void:
+func init_game(player_count: int = 4, ai_count: int = 3) -> bool:
 	if player_count < MIN_PLAYERS or player_count > MAX_PLAYERS:
-		return
+		push_error("init_game: player_count=%d out of range [%d,%d]" % [player_count, MIN_PLAYERS, MAX_PLAYERS])
+		return false
 	if ai_count >= player_count:
-		return
+		push_error("init_game: ai_count=%d >= player_count=%d" % [ai_count, player_count])
+		return false
 
 	phase = 0
 	players.clear()
@@ -98,6 +100,7 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> void:
 	phase = 1
 	log_messages.append("===== 游戏开始 =====")
 	log_messages.append("当前回合: %s (自由出牌)" % players[current_player_index].player_name)
+	return true
 
 
 func get_current_player() -> PlayerInfo:
