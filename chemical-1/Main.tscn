@@ -11,8 +11,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("1_game_ui")
 
-[node name="StartPage" type="Control" parent="." unique_id=572927877]
-visible = false
+[node name="StartPage" type="Control" parent="." unique_id=1296303840]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -20,42 +19,42 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="StartTitle" type="Label" parent="StartPage" unique_id=1791738316]
+[node name="StartTitle" type="Label" parent="StartPage" unique_id=682625676]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
-anchor_top = 0.2
+anchor_top = 0.15
 anchor_right = 0.5
-anchor_bottom = 0.2
-offset_left = -200.0
-offset_top = -40.0
-offset_right = 200.0
-offset_bottom = 40.0
+anchor_bottom = 0.15
+offset_left = -250.0
+offset_top = -50.0
+offset_right = 250.0
+offset_bottom = 50.0
 grow_horizontal = 2
 theme_override_font_sizes/font_size = 48
-text = "Chemical Collision"
+text = "化学碰撞 Chemical Collision"
 horizontal_alignment = 1
 
-[node name="PlayerCountLabel" type="Label" parent="StartPage" unique_id=1691690736]
+[node name="PlayerCountLabel" type="Label" parent="StartPage" unique_id=1605221064]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
-anchor_top = 0.35
+anchor_top = 0.32
 anchor_right = 0.5
-anchor_bottom = 0.35
-offset_left = -150.0
-offset_top = -15.0
-offset_bottom = 15.0
+anchor_bottom = 0.32
+offset_left = -120.0
+offset_top = -12.0
+offset_bottom = 12.0
 theme_override_font_sizes/font_size = 20
-text = "Total Players:"
+text = "总玩家人数:"
 
-[node name="PlayerCountSpin" type="SpinBox" parent="StartPage" unique_id=1239994991]
+[node name="PlayerCountSpin" type="SpinBox" parent="StartPage" unique_id=1933881350]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
-anchor_top = 0.35
+anchor_top = 0.32
 anchor_right = 0.5
-anchor_bottom = 0.35
+anchor_bottom = 0.32
 offset_left = 10.0
 offset_top = -15.0
 offset_right = 150.0
@@ -64,51 +63,62 @@ min_value = 3.0
 max_value = 8.0
 value = 4.0
 
-[node name="AiCountLabel" type="Label" parent="StartPage" unique_id=162300857]
+[node name="AiCountLabel" type="Label" parent="StartPage" unique_id=1630373601]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
-anchor_top = 0.42
+anchor_top = 0.4
 anchor_right = 0.5
-anchor_bottom = 0.42
-offset_left = -150.0
-offset_top = -15.0
-offset_bottom = 15.0
+anchor_bottom = 0.4
+offset_left = -120.0
+offset_top = -12.0
+offset_bottom = 12.0
 theme_override_font_sizes/font_size = 20
-text = "AI Players:"
+text = "AI 人数:"
 
-[node name="AiCountSpin" type="SpinBox" parent="StartPage" unique_id=2016161417]
+[node name="AiCountSpin" type="SpinBox" parent="StartPage" unique_id=1417295468]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
-anchor_top = 0.42
+anchor_top = 0.4
 anchor_right = 0.5
-anchor_bottom = 0.42
+anchor_bottom = 0.4
 offset_left = 10.0
 offset_top = -15.0
 offset_right = 150.0
 offset_bottom = 15.0
-min_value = 1.0
 max_value = 7.0
 value = 3.0
 
-[node name="StartButton" type="Button" parent="StartPage" unique_id=153875690]
+[node name="StartButton" type="Button" parent="StartPage" unique_id=2029879792]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
-anchor_top = 0.55
+anchor_top = 0.52
 anchor_right = 0.5
-anchor_bottom = 0.55
+anchor_bottom = 0.52
 offset_left = -100.0
 offset_top = -25.0
 offset_right = 100.0
 offset_bottom = 25.0
-grow_horizontal = 2
-grow_vertical = 2
 theme_override_font_sizes/font_size = 24
-text = "Start Game"
+text = "开始游戏"
 
-[node name="HelpPage" type="Control" parent="." unique_id=615680911]
+[node name="ExitButton" type="Button" parent="StartPage" unique_id=1934436830]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.62
+anchor_right = 0.5
+anchor_bottom = 0.62
+offset_left = -100.0
+offset_top = -25.0
+offset_right = 100.0
+offset_bottom = 25.0
+theme_override_font_sizes/font_size = 24
+text = "退出程序"
+
+[node name="HelpPage" type="Control" parent="." unique_id=545279924]
 visible = false
 layout_mode = 1
 anchors_preset = 15
@@ -117,50 +127,58 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="HelpTitle" type="Label" parent="HelpPage" unique_id=601296489]
+[node name="HelpTitle" type="Label" parent="HelpPage" unique_id=1674568136]
 layout_mode = 0
 offset_left = 40.0
 offset_top = 20.0
 offset_right = 800.0
 offset_bottom = 60.0
 theme_override_font_sizes/font_size = 36
-text = "Help & Rules"
+text = "帮助与规则"
 
-[node name="HelpContent" type="Label" parent="HelpPage" unique_id=2091774439]
+[node name="HelpContent" type="Label" parent="HelpPage" unique_id=856691857]
 layout_mode = 0
 offset_left = 40.0
 offset_top = 70.0
 offset_right = 900.0
 offset_bottom = 620.0
 theme_override_font_sizes/font_size = 14
-text = "=== Game Rules ===
-Goal: Play all cards first
-Play must be stronger than table cards (smaller atomic sum = stronger)
-Cannot play? Pass (draw 1 card)
+text = "=== 游戏规则 ===
+目标: 率先打光所有手牌
+出牌必须比桌面牌更大 (原子序数和小=牌大)
+无法出牌时可跳过 (抽1张牌)
 
-=== Card Types ===
-【Element】1 card or 2 diatomic (H₂/N₂/O₂/F₂/Cl₂)
-【Compound】Multi-element valence match, exact ratio
-  Metal as cation, non-metal as anion
-【Clan Bomb】Same group >=2 different elements
-  3-card bomb > 2-card bomb
+=== 牌型 ===
+【单质】1张任意元素 或 2张双原子分子(H₂/N₂/O₂/F₂/Cl₂)
+  例: He, O₂
+【化合物】多元素化合价匹配, 必须恰好对应最简比
+  例: 1Na+1Cl=NaCl, 2Al+3O=Al₂O₃
+  规则: 金属优先正价, 非金属优先负价
+  3+元素需每种恰好1张且电荷平衡
+【族炸】同族≥2张不同元素, 3张>2张
+  例: H+Li=IA族炸, He+Ne+Ar=0族炸(3张)
 
-=== Play Rules ===
-Table has element → play stronger element/clan bomb
-Table has compound → play stronger compound/clan bomb
-Clan bomb → clockwise intercept → winner free play
-Overflow compound (>player count) → immune!"
+=== 接牌规则 ===
+桌面有单质 → 只能出更大的单质或族炸
+桌面有化合物 → 只能出更大的化合物或族炸
+族炸 → 顺时针询问接炸, 无人接→出炸者自由出牌
+溢出化合物(牌数>玩家数) → 免疫接炸
 
-[node name="HelpBackBtn" type="Button" parent="HelpPage" unique_id=603255670]
+=== 接炸规则 ===
+1.打出族炸后, 其他玩家按顺时针询问是否出族炸(需更大)
+2.若无人接炸, 出炸者自由出牌
+3.接炸模式中, 被冷却的玩家不能出族炸(需先打出化合物解锁)"
+
+[node name="HelpBackBtn" type="Button" parent="HelpPage" unique_id=19172791]
 layout_mode = 0
 offset_left = 800.0
 offset_top = 620.0
 offset_right = 920.0
 offset_bottom = 660.0
 theme_override_font_sizes/font_size = 18
-text = "Back"
+text = "返回"
 
-[node name="GamePage" type="Control" parent="." unique_id=1971861210]
+[node name="GamePage" type="Control" parent="." unique_id=1067851078]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -168,85 +186,95 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="TitleLabel" type="Label" parent="GamePage" unique_id=750152704]
+[node name="TitleLabel" type="Label" parent="GamePage" unique_id=973513050]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 10.0
 offset_right = 600.0
 offset_bottom = 45.0
 theme_override_font_sizes/font_size = 28
-text = "Chemical Collision"
+text = "化学碰撞"
 
-[node name="InfoLabel" type="Label" parent="GamePage" unique_id=640170418]
+[node name="InfoLabel" type="Label" parent="GamePage" unique_id=1255070432]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 50.0
 offset_right = 480.0
 offset_bottom = 140.0
 theme_override_font_sizes/font_size = 14
-text = "Initializing..."
+text = "初始化中..."
 
-[node name="TableLabel" type="Label" parent="GamePage" unique_id=1375102995]
+[node name="TableLabel" type="Label" parent="GamePage" unique_id=119699122]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 150.0
 offset_right = 600.0
 offset_bottom = 180.0
 theme_override_font_sizes/font_size = 18
-text = "Table: empty"
+text = "桌面: 空"
 
-[node name="HandLabel" type="Label" parent="GamePage" unique_id=1643139248]
+[node name="HandLabel" type="Label" parent="GamePage" unique_id=1084242871]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 280.0
 offset_right = 200.0
 offset_bottom = 310.0
 theme_override_font_sizes/font_size = 16
-text = "My Hand:"
+text = "我的手牌:"
 
-[node name="HandContainer" type="HFlowContainer" parent="GamePage" unique_id=263986547]
+[node name="HandContainer" type="HFlowContainer" parent="GamePage" unique_id=582537591]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 315.0
 offset_right = 480.0
 offset_bottom = 480.0
 
-[node name="ActionPanel" type="HBoxContainer" parent="GamePage" unique_id=402611240]
+[node name="ActionPanel" type="HBoxContainer" parent="GamePage" unique_id=36028745]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 495.0
 offset_right = 480.0
 offset_bottom = 540.0
 
-[node name="HintButton" type="Button" parent="GamePage" unique_id=614387553]
+[node name="HintButton" type="Button" parent="GamePage" unique_id=1179826737]
 layout_mode = 0
 offset_left = 20.0
 offset_top = 555.0
-offset_right = 240.0
+offset_right = 150.0
 offset_bottom = 590.0
 theme_override_font_sizes/font_size = 13
 toggle_mode = true
-text = "Show Hints"
+text = "显示提示"
 
-[node name="HelpBtn" type="Button" parent="GamePage" unique_id=19838743]
+[node name="HelpBtn" type="Button" parent="GamePage" unique_id=452447435]
 layout_mode = 0
-offset_left = 250.0
+offset_left = 160.0
 offset_top = 555.0
-offset_right = 380.0
+offset_right = 260.0
 offset_bottom = 590.0
 theme_override_font_sizes/font_size = 13
-text = "Help"
+text = "帮助"
 
-[node name="QuitButton" type="Button" parent="GamePage" unique_id=1378320501]
+[node name="QuitButton" type="Button" parent="GamePage" unique_id=180300628]
 layout_mode = 0
-offset_left = 390.0
+offset_left = 270.0
+offset_top = 555.0
+offset_right = 370.0
+offset_bottom = 590.0
+theme_override_font_sizes/font_size = 13
+text = "退出游戏"
+
+[node name="ExitProgramButton" type="Button" parent="GamePage" unique_id=1319816787]
+visible = false
+layout_mode = 0
+offset_left = 380.0
 offset_top = 555.0
 offset_right = 480.0
 offset_bottom = 590.0
 theme_override_font_sizes/font_size = 13
-text = "Quit"
+text = "关闭程序"
 
-[node name="CardInfoLabel" type="Label" parent="GamePage" unique_id=1805826241]
+[node name="CardInfoLabel" type="Label" parent="GamePage" unique_id=244830457]
 layout_mode = 0
 offset_left = 510.0
 offset_top = 340.0
@@ -255,17 +283,17 @@ offset_bottom = 480.0
 theme_override_font_sizes/font_size = 13
 autowrap_mode = 3
 
-[node name="LogLabel" type="Label" parent="GamePage" unique_id=1281152513]
+[node name="LogLabel" type="Label" parent="GamePage" unique_id=12348460]
 layout_mode = 0
-offset_left = 753.0
-offset_top = 10.0
-offset_right = 1143.0
-offset_bottom = 330.0
+offset_left = 707.0
+offset_top = 13.0
+offset_right = 1097.0
+offset_bottom = 333.0
 theme_override_font_sizes/font_size = 14
-text = "Game Log:"
+text = "游戏日志:"
 autowrap_mode = 3
 
-[node name="EndPage" type="Control" parent="." unique_id=1318378252]
+[node name="EndPage" type="Control" parent="." unique_id=676685224]
 visible = false
 layout_mode = 1
 anchors_preset = 15
@@ -274,7 +302,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="EndTitle" type="Label" parent="EndPage" unique_id=1538920737]
+[node name="EndTitle" type="Label" parent="EndPage" unique_id=2051721356]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
@@ -286,10 +314,10 @@ offset_top = -40.0
 offset_right = 300.0
 offset_bottom = 40.0
 theme_override_font_sizes/font_size = 48
-text = "Game Over"
+text = "游戏结束"
 horizontal_alignment = 1
 
-[node name="EndLabel" type="Label" parent="EndPage" unique_id=1771427648]
+[node name="EndLabel" type="Label" parent="EndPage" unique_id=2004665618]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
@@ -303,7 +331,7 @@ offset_bottom = 40.0
 theme_override_font_sizes/font_size = 24
 horizontal_alignment = 1
 
-[node name="EndButton" type="Button" parent="EndPage" unique_id=315323282]
+[node name="EndButton" type="Button" parent="EndPage" unique_id=735034602]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
@@ -314,7 +342,5 @@ offset_left = -100.0
 offset_top = -25.0
 offset_right = 100.0
 offset_bottom = 25.0
-grow_horizontal = 2
-grow_vertical = 2
 theme_override_font_sizes/font_size = 24
-text = "Return"
+text = "返回主页"

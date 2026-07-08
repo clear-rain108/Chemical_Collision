@@ -251,6 +251,7 @@ func next_turn() -> void:
 			current_player_index = next_idx
 			return
 
+	# 所有非 pass 玩家都已经跳过 → 新一轮，从第一个有牌的玩家开始
 	_start_new_round()
 
 
@@ -288,6 +289,8 @@ func _start_new_round() -> void:
 	clan_bomb_owner = -1
 	compound_immune = false
 
+	# 将牌权交给最后一名跳过的玩家的下一名玩家
+	current_player_index = (current_player_index + 1) % players.size()
 	for _i in range(players.size()):
 		var p = players[current_player_index]
 		if p.get_hand_count() > 0:

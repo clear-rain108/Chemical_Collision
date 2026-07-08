@@ -61,6 +61,9 @@ func _setup_pages() -> void:
 		ai_spin = start_page.get_node_or_null("AiCountSpin")
 		if start_button:
 			start_button.pressed.connect(_on_start_game)
+		var exit_btn = start_page.get_node_or_null("ExitButton")
+		if exit_btn:
+			exit_btn.pressed.connect(_on_exit_program)
 
 	if end_page:
 		end_label = end_page.get_node_or_null("EndLabel")
@@ -109,13 +112,13 @@ func _on_help_back() -> void:
 
 
 func _on_start_game() -> void:
-	var total = 4
-	var ai = 3
-	if player_spin and ai_spin:
-		total = clampi(int(player_spin.value), GameManagerScript.MIN_PLAYERS, GameManagerScript.MAX_PLAYERS)
-		ai = clampi(int(ai_spin.value), 1, total - 1)
+	var total = int(player_spin.value) if player_spin else 4
+	var ai = int(ai_spin.value) if ai_spin else 3
+	if total < GameManagerScript.MIN_PLAYERS or total > GameManagerScript.MAX_PLAYERS:
+		total = 4
 	if ai >= total:
-		ai = max(1, total - 1)
+		_show_info_simple("AI 人数不能等于或超过总玩家人数！请重新设置。")
+		return
 	start_page.visible = false
 	game_page.visible = true
 	end_page.visible = false
@@ -123,9 +126,25 @@ func _on_start_game() -> void:
 	_init_game(total, ai)
 
 
+func _connect_node(btn, cb: Callable) -> void:
+	if btn:
+		btn.pressed.connect(cb)
+
+
+func _on_exit_program() -> void:
+	get_tree().quit()
+
+
 func _on_quit_game() -> void:
 	if game_manager: game_manager.phase = 2
 	_show_end_page("游戏已退出")
+
+
+func _show_info_simple(text: String) -> void:
+	if info_label:
+		info_label.text = text
+	else:
+		push_warning(text)
 
 
 func _init_game(total: int = 4, ai: int = 3) -> void:
@@ -255,8 +274,11 @@ func _mkb(text: String, cb: Callable, dis: bool) -> Button:
 	return b
 
 
-func _on_hint_toggled(_pressed: bool) -> void:
-	_update_card_info_label()
+func _on_hint_toggled(pressed: bool) -> void:
+	if pressed:
+		_update_card_info_label()
+	else:
+		card_info_label.text = ""
 
 
 # ==== 元素着色规则 ====
