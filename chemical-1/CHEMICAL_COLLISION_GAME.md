@@ -1,7 +1,7 @@
 # ⚗️ 化学碰撞 (Chemical Collision) — 游戏设计文档
 
-> **版本**: 6.0  
-> **日期**: 2026-07-08  
+> **版本**: 7.0  
+> **日期**: 2026-07-09  
 > **引擎**: Godot 4.x  
 > **语言**: GDScript  
 > **当前状态**: 全功能完成
@@ -22,9 +22,10 @@
 10. [牌权轮转规则](#10-牌权轮转规则)
 11. [比大小规则](#11-比大小规则)
 12. [接牌规则](#12-接牌规则)
-13. [逻辑链路](#13-逻辑链路)
-14. [着色规则](#14-着色规则)
-15. [扩展方向](#15-扩展方向)
+13. [手牌上限规则](#13-手牌上限规则)
+14. [逻辑链路](#14-逻辑链路)
+15. [着色规则](#15-着色规则)
+16. [扩展方向](#16-扩展方向)
 
 ---
 
@@ -36,13 +37,15 @@
 
 | 特性 | 说明 |
 |------|------|
-| 牌库规模 | 108 张牌，前三周期 18 种元素各 6 张 |
+| 牌库规模 | 154 张牌，前四周期 28 种元素（主族 6 张，副族 4 张） |
 | 玩家数量 | 3~8 人（1 人类 + N AI，开始页可配置） |
 | 初始手牌 | 每人 8 张 |
 | 牌型系统 | 3 种：单质 / 化合物 / 族炸 |
 | 出牌规则 | 必须比桌面牌更大（起手者/族炸除外） |
 | 牌权轮转 | 出牌 → 下一名玩家接牌/过 → 总人数-1 人连续过 → 牌权移交 → 新一轮 |
 | 族炸机制 | 同族 ≥2 张不同元素 → 抢夺牌权，接炸链独立处理 |
+| 手牌上限 | min(玩家数 × 4, 18)，达上限时不可跳过抽牌 |
+| 牌库计数 | 实时显示牌库剩余牌数和手牌上限 |
 
 ---
 
@@ -53,13 +56,16 @@ chemical-1/
 ├── project.godot
 ├── Main.tscn                         # 4 页：Start / Game / Help / End
 ├── scripts/
-│   ├── CardData.gd                   # 13 个属性 + 序列化
-│   ├── CardDatabase.gd               # 18 种 × 6 张 = 108 张
+│   ├── CardData.gd                   # 13 个属性 + 16 族常量 + 序列化
+│   ├── CardDatabase.gd               # 28 种元素（主族 6 张 / 副族 4 张）= 154 张
 │   ├── GameManager.gd                # 多人管理 + 牌权轮转 + 接炸链
-│   ├── GameUI.gd                     # 手牌按钮 / AI / 着色 / 圆形状态
+│   ├── GameUI.gd                     # 手牌按钮 / AI / 着色 / 手牌上限 / 牌库计数
 │   └── Utils.gd                      # 牌型判定 / 多元素化合物 / 比大小
-├── CHEMICAL_COLLISION_GAME.md        # 本文档 (v6.0)
-└── GAMEPLAY_RULES.md                 # 玩法规则与程序实现 (v6.0)
+├── CHEMICAL_COLLISION_GAME.md        # 本文档 (v7.0)
+├── GAMEPLAY_RULES.md                 # 玩法规则与程序实现 (v7.0)
+├── ARCHITECTURE.md                   # 程序架构与实现
+├── COLORING_DOCUMENTATION.md         # 元素着色文档 (v2.0)
+└── COMPOUND_MECHANISM_COMPARISON.md  # 化合物机制新旧对比
 ```
 
 ---
@@ -82,13 +88,20 @@ chemical-1/
 
 ## 4. 牌库系统
 
-牌库包含前三周期 18 种元素，每种 6 张，共 108 张。
+牌库包含前四周期 28 种元素，共 154 张。
 
-| 周期 | 元素 |
-|------|------|
-| 1 | H, He |
-| 2 | Li, Be, B, C, N, O, F, Ne |
-| 3 | Na, Mg, Al, Si, P, S, Cl, Ar |
+### 牌数分配
+
+| 分类 | 数量 | 每元素牌数 | 元素列表 |
+|------|------|-----------|----------|
+| 主族 1-3 周期 | 18 种 | 6 张 | H, He, Li, Be, B, C, N, O, F, Ne, Na, Mg, Al, Si, P, S, Cl, Ar |
+| 主族 4 周期 | 3 种 | 6 张 | K, Ca, Br |
+| 副族 4 周期 | 7 种 | 4 张 | Cr, Mn, Fe, Co, Ni, Cu, Zn |
+
+**总牌数**: 21 × 6 + 7 × 4 = 126 + 28 = **154 张**
+
+### 排除元素
+第四周期排除: Sc(钪), Ti(钛), V(钒), Ga(镓), Ge(锗), As(砷), Se(硒), Kr(氪)
 
 ---
 
@@ -113,6 +126,7 @@ play_cards(player_index, cards, custom_valences={}) → int
 player_pass(player_index)
   ├── 接炸模式：跳过不抽牌
   └── 正常模式：抽 1 张 → next_turn()
+  └── 手牌达上限时：UI 层阻止跳过
 ```
 
 ---
@@ -124,16 +138,40 @@ player_pass(player_index)
 ```
 Main (Control)
 ├── StartPage          ← 标题 + SpinBox(3–8 玩家, AI) + 开始游戏 + 退出程序
-├── HelpPage           ← 游戏规则 + 牌型示例 + 返回按钮
+├── HelpPage           ← 横版双栏：左栏游戏规则/牌型，右栏卡牌总览/化学式
+│   ├── HelpBackground ← 浅蓝白背景
+│   ├── HelpTitle      ← "帮助与规则"
+│   ├── HelpLeftColumn ← 规则详解（牌型/比大小/接牌/手牌上限）
+│   ├── HelpRightColumn← 28种元素总览 + 着色对照 + 常用化学式
+│   └── HelpBackBtn    ← 返回
 ├── GamePage           ← 游戏主界面
-│   ├── InfoLabel      ← ● 玩家1 ◄ → ● AI1 ❄ → ● AI2 ⏸ → ...
-│   ├── TableLabel     ← 桌面牌型
-│   ├── HandContainer  ← 手牌按钮（着色规则）
-│   ├── ActionPanel    ← step0/step1/step2 出牌流程
-│   ├── CardInfoLabel  ← 提示文本
+│   ├── GameBackground ← 深蓝背景 Color(0.45,0.62,0.95)
+│   ├── TitleLabel     ← "化学碰撞"（黑色）
+│   ├── DeckCountLabel ← 牌库剩余 + 手牌上限（黑色）
+│   ├── InfoLabel      ← ● 玩家1 ◄ → ● AI1 ❄ → ... + 手牌数（黑色）
+│   ├── TableLabel     ← 桌面牌型（黑色）
+│   ├── HandContainer  ← HFlowContainer 手牌区（6/行自动换行）
+│   ├── ActionPanel    ← step0/step1/step2 出牌流程按钮
+│   ├── CardInfoLabel  ← 提示文本（黑色）
 │   └── LogLabel       ← 游戏日志
 └── EndPage            ← 获胜者 + 返回主页
 ```
+
+### 6.2 着色规则
+
+| 元素 | 颜色 | RGB |
+|------|------|-----|
+| H 氢 | 天蓝色 | (0.4, 0.7, 1.0) |
+| O 氧 | 深蓝色 | (0.0, 0.3, 1.0) |
+| N 氮 | 紫色 | (0.4, 0.2, 0.8) |
+| F 氟, Cl 氯 | 浅绿色 | (0.56, 1.0, 0.56) |
+| Br 溴 | 棕色 | (0.6, 0.4, 0.2) |
+| C,B,Si,S | 亮黄色 | (1.0, 0.9, 0.1) |
+| P 磷 | 浅粉色 | (1.0, 0.85, 0.85) |
+| 全部金属 | 灰色 | (0.5, 0.5, 0.5) |
+| He,Ne,Ar | 近白色 | (0.95, 0.95, 0.95) |
+
+详见 [COLORING_DOCUMENTATION.md](COLORING_DOCUMENTATION.md)
 
 ---
 
@@ -162,6 +200,16 @@ detect_pattern(cards, skip_clan_bomb=false):
 | 金属优先 | 金属作为正价 |
 | 比例校验 | play_cards 中 remove_cards 之前调用 ratio_ok |
 
+### 示例
+
+| 手牌 | 化学式 | 通过 |
+|------|--------|------|
+| Na + Cl | NaCl | ✅ |
+| Al ×2 + O ×3 | Al₂O₃ | ✅ |
+| K + Br | KBr | ✅ |
+| Ca + O | CaO | ✅ |
+| Fe + 2Cl | FeCl₂ | ✅ |
+
 ---
 
 ## 9. 族炸系统
@@ -173,16 +221,16 @@ detect_pattern(cards, skip_clan_bomb=false):
 | 冷却 | 打出族炸后直到打出化合物前不能再出族炸 |
 | 接炸 | 顺时针询问，接炸需出更大的族炸 |
 
-### 接炸链流程
+### 第四周期新增族炸组合
 
-```
-A 出族炸 → owner=A, chain_active=true
-  → 顺时针询问 B (跳过 A)
-	→ B 出更大的族炸 → owner=B
-	→ B 跳过 → 不抽牌
-  → 所有非 owner 已 pass
-  → 桌面清空，owner 自由出牌
-```
+| 手牌 | 族 | 类型 |
+|------|-----|------|
+| K + Na + Li | IA | 3 张族炸 |
+| Ca + Mg + Be | IIA | 3 张族炸 |
+| Cr + Mn | VIB + VIIB | ❌ 不同族号 |
+| Fe + Co + Ni | VIII | 3 张族炸 |
+| Cu + Zn | IB + IIB | ❌ 不同族号 |
+| F + Cl + Br | VIIA | 3 张族炸 |
 
 ---
 
@@ -202,40 +250,17 @@ A 出族炸 → owner=A, chain_active=true
    其自由出牌（新一轮开始，桌面清空）。
 ```
 
-### 实现（GameManager.gd `_start_new_round`）
-
-```gdscript
-func _start_new_round() -> void:
-	table_cards.clear()
-	table_pattern = -1
-	table_player_index = -1
-	is_round_starter = true
-	_reset_all_passes()
-	clan_bomb_chain_active = false
-	clan_bomb_owner = -1
-	compound_immune = false
-
-	# 牌权交给最后一名跳过的玩家的下一名玩家
-	current_player_index = (current_player_index + 1) % players.size()
-	for _i in range(players.size()):
-		var p = players[current_player_index]
-		if p.get_hand_count() > 0:
-			log_messages.append("====== 新一轮！%s 自由出牌 ======")
-			return
-		current_player_index = (current_player_index + 1) % players.size()
-```
-
 ### 牌权轮转示例
 
 ```
-4 人游戏：P1 → P2 → AI1 → AI2
+4 人游戏：P1 → AI1 → AI2 → AI3
 
 桌面：P1 打出 Na
   → AI1 接单质 He（更大）
   → AI2 过（抽 1 张）
-  → P1 过（抽 1 张）
-  → 总人数-1=3 人连续过 → 牌权交给 P1（最后出的下一名玩家）
-  → P1 自由出牌
+  → AI3 过（抽 1 张）
+  → 总人数-1=3 人连续过 → 牌权交给 AI1 的下一名 → AI2
+  → AI2 自由出牌
 ```
 
 ---
@@ -274,18 +299,32 @@ func _start_new_round() -> void:
 
 ---
 
-## 13. 逻辑链路
+## 13. 手牌上限规则
+
+| 参数 | 公式 | 说明 |
+|------|------|------|
+| 手牌上限 | `min(玩家数 × 4, 18)` | 防止无限抽牌 |
+| 4 人局 | 16 张 | 4 × 4 |
+| 5 人局 | 18 张 | 5 × 4 = 20 → 截断 |
+| 6+ 人局 | 18 张 | 硬上限 |
+
+手牌达上限时，跳过按钮触发提示："手牌已达上限 (X张)，无法跳过抽牌！请出牌。"
+
+---
+
+## 14. 逻辑链路
 
 ```
 Start Page → 选择人数 → Start Game
   ↓
-GameManager.init_game(total, ai) → 108 张牌洗牌 → 发牌
+GameManager.init_game(total, ai) → 154 张牌洗牌 → 发牌
   ↓
 回合循环:
-  _refresh_ui() → 圆形状态 + 桌面信息 + 手牌按钮
+  _refresh_ui() → 牌权状态 + 手牌数 + 桌面 + 手牌 + 牌库计数
   人类操作 → step0 选牌 → step1 选牌型 → step2 化合价(化合物)
   AI 操作 → _ai_try_play() → 候选遍历 play_cards()
   play_cards() → detect_pattern + 比大小 + 化合物比例校验
+  手牌上限检查 → ≥上限时阻止跳过
   牌权轮转 → next_turn() → 接牌/过 → 总人数-1 连续过 → 新一轮
   族炸 → 接炸链 → 无人接 → 出炸者自由出牌
   手牌 = 0 → GAME_OVER → End Page
@@ -293,21 +332,27 @@ GameManager.init_game(total, ai) → 108 张牌洗牌 → 发牌
 
 ---
 
-## 14. 着色规则
+## 15. 着色规则
 
-| 元素/组 | 颜色 |
-|---------|------|
-| H | 浅蓝 |
-| O | 蓝色 |
-| N | 蓝紫 |
-| C, B, Si, S | 黄色 |
-| P | 红白 |
-| 卤族 (F, Cl) | 绿色 |
-| 其余金属 | 灰色 |
-| 其余非金属/准金属 | 绿色 |
-| 稀有气体 | 白色 |
+详见独立的着色文档: [COLORING_DOCUMENTATION.md](COLORING_DOCUMENTATION.md)
+
+**重点**:
+- F, Cl → 浅绿色 `Color(0.56, 1.0, 0.56)`
+- Br → 棕色 `Color(0.6, 0.4, 0.2)`
+- 所有过渡金属 → 灰色 `Color(0.5, 0.5, 0.5)`
+- 着色优先级：精确符号 > 族匹配 > 类型匹配
 
 ---
 
-**文档版本**: 6.0  
-**最后更新**: 2026-07-08
+## 16. 扩展方向
+
+- 第五周期及放射性元素
+- 络合物/配位化合物牌型
+- 多人联网对战
+- 自定义卡组构筑
+- 反应热/催化剂等卡牌效果
+
+---
+
+**文档版本**: 7.0  
+**最后更新**: 2026-07-09

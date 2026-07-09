@@ -1,16 +1,23 @@
 # ============================================================
 # CardDatabase.gd - 牌库生成与洗牌
-# 迭代 2：前三周期 18 种元素，每种 6 张 = 108 张
+# 迭代 3：前四周期 28 种元素（主族 6 张，副族 4 张）
 # ============================================================
 
 const CardDataScript = preload("res://scripts/CardData.gd")
 
-# 前三周期 18 种元素基础数据
+# 副族标识（这些元素只生成 4 张）
+const SUBGROUP_SYMBOLS = ["Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn"]
+const MAIN_COPIES = 6
+const SUB_COPIES = 4
+
+# 前四周期 28 种元素基础数据
 static func get_element_data() -> Array:
 	return [
+		# === 第一周期 ===
 		# 符号, 中文名, 英文名, 原子序数, 族, 周期, 类型, 单质形态, 最外层电子, 常见化合价, 电负性, 原子质量, 描述
 		["H", "氢", "Hydrogen", 1, CardDataScript.GROUP_IA, 1, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_GAS, 1, [1, -1], 2.20, 1.008, "宇宙中最丰富的元素"],
 		["He", "氦", "Helium", 2, CardDataScript.GROUP_0, 1, CardDataScript.TYPE_NOBLE_GAS, CardDataScript.FORM_GAS, 2, [0], 0.0, 4.003, "最轻的稀有气体"],
+		# === 第二周期 ===
 		["Li", "锂", "Lithium", 3, CardDataScript.GROUP_IA, 2, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 1, [1], 0.98, 6.941, "最轻的金属"],
 		["Be", "铍", "Beryllium", 4, CardDataScript.GROUP_IIA, 2, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 2, [2], 1.57, 9.012, "轻质高强度金属"],
 		["B", "硼", "Boron", 5, CardDataScript.GROUP_IIIA, 2, CardDataScript.TYPE_METALLOID, CardDataScript.FORM_SOLID, 3, [3], 2.04, 10.811, "硬度仅次于金刚石"],
@@ -19,6 +26,7 @@ static func get_element_data() -> Array:
 		["O", "氧", "Oxygen", 8, CardDataScript.GROUP_VIA, 2, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_GAS, 6, [-2], 3.44, 15.999, "维持生命必需的气体"],
 		["F", "氟", "Fluorine", 9, CardDataScript.GROUP_VIIA, 2, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_GAS, 7, [-1], 3.98, 18.998, "最活泼的非金属"],
 		["Ne", "氖", "Neon", 10, CardDataScript.GROUP_0, 2, CardDataScript.TYPE_NOBLE_GAS, CardDataScript.FORM_GAS, 8, [0], 0.0, 20.180, "霓虹灯中发光的气体"],
+		# === 第三周期 ===
 		["Na", "钠", "Sodium", 11, CardDataScript.GROUP_IA, 3, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 1, [1], 0.93, 22.990, "活泼的碱金属"],
 		["Mg", "镁", "Magnesium", 12, CardDataScript.GROUP_IIA, 3, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 2, [2], 1.31, 24.305, "叶绿素的核心元素"],
 		["Al", "铝", "Aluminium", 13, CardDataScript.GROUP_IIIA, 3, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 3, [3], 1.61, 26.982, "地壳中含量最丰富的金属"],
@@ -27,21 +35,31 @@ static func get_element_data() -> Array:
 		["S", "硫", "Sulfur", 16, CardDataScript.GROUP_VIA, 3, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_SOLID, 6, [-2, 4, 6], 2.58, 32.066, "火山口常见的黄色物质"],
 		["Cl", "氯", "Chlorine", 17, CardDataScript.GROUP_VIIA, 3, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_GAS, 7, [-1, 1, 3, 5, 7], 3.16, 35.453, "消毒和漂白的重要元素"],
 		["Ar", "氩", "Argon", 18, CardDataScript.GROUP_0, 3, CardDataScript.TYPE_NOBLE_GAS, CardDataScript.FORM_GAS, 8, [0], 0.0, 39.948, "大气中第三多的气体"],
+		# === 第四周期（排除 Sc,Ti,V,Ga,Ge,As,Se,Kr） ===
+		["K", "钾", "Potassium", 19, CardDataScript.GROUP_IA, 4, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 1, [1], 0.82, 39.098, "植物生长必需元素"],
+		["Ca", "钙", "Calcium", 20, CardDataScript.GROUP_IIA, 4, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 2, [2], 1.00, 40.078, "骨骼和牙齿的主要成分"],
+		["Cr", "铬", "Chromium", 24, CardDataScript.GROUP_VIB, 4, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 1, [2, 3, 6], 1.66, 51.996, "不锈钢的关键成分"],
+		["Mn", "锰", "Manganese", 25, CardDataScript.GROUP_VIIB, 4, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 2, [2, 4, 7], 1.55, 54.938, "炼钢中的重要添加剂"],
+		["Fe", "铁", "Iron", 26, CardDataScript.GROUP_VIII, 4, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 2, [2, 3], 1.83, 55.845, "地壳中最丰富的过渡金属"],
+		["Co", "钴", "Cobalt", 27, CardDataScript.GROUP_VIII, 4, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 2, [2, 3], 1.88, 58.933, "电池和磁性合金的重要元素"],
+		["Ni", "镍", "Nickel", 28, CardDataScript.GROUP_VIII, 4, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 2, [2, 3], 1.91, 58.693, "硬币和不锈钢的组成元素"],
+		["Cu", "铜", "Copper", 29, CardDataScript.GROUP_IB, 4, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 1, [1, 2], 1.90, 63.546, "优良的电导体"],
+		["Zn", "锌", "Zinc", 30, CardDataScript.GROUP_IIB, 4, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 2, [2], 1.65, 65.380, "镀锌防腐的重要金属"],
+		["Br", "溴", "Bromine", 35, CardDataScript.GROUP_VIIA, 4, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_LIQUID, 7, [-1, 1, 5], 2.96, 79.904, "唯一常温下液态的非金属"],
 	]
 
-
-const COPIES_PER_ELEMENT = 6
-const TOTAL_CARDS = 108  # 18 × 6
 
 var deck: Array = []   # 当前牌库
 
 
-# 生成牌库（18 种元素 × 6 张 = 108 张）
+# 生成牌库（主族 6 张，副族 4 张）
 func generate_deck() -> void:
 	deck.clear()
 	var elem_data = get_element_data()
 	for elem in elem_data:
-		for _copy in range(COPIES_PER_ELEMENT):
+		var sym = elem[0]
+		var copies = SUB_COPIES if sym in SUBGROUP_SYMBOLS else MAIN_COPIES
+		for _copy in range(copies):
 			var card = CardDataScript.new(
 				elem[0], elem[1], elem[2], elem[3], elem[4],
 				elem[5], elem[6], elem[7], elem[8], elem[9],

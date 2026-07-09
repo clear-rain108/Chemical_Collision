@@ -27,6 +27,7 @@ var ai_spin: SpinBox = null
 # UI
 var hand_container: Control = null
 var info_label: Label = null
+var deck_count_label: Label = null
 var table_label: Label = null
 var log_label: Label = null
 var card_info_label: Label = null
@@ -86,6 +87,7 @@ func _setup_pages() -> void:
 		hint_button = game_page.get_node_or_null("HintButton")
 		quit_button = game_page.get_node_or_null("QuitButton")
 		help_btn = game_page.get_node_or_null("HelpBtn")
+		deck_count_label = game_page.get_node_or_null("DeckCountLabel")
 		if hint_button:
 			hint_button.toggled.connect(_on_hint_toggled)
 		if quit_button:
@@ -171,6 +173,7 @@ func _refresh_ui() -> void:
 	_update_action_panel()
 	_update_hand_buttons()
 	_update_card_info_label()
+	_update_deck_count()
 
 
 func _update_info_label() -> void:
@@ -198,6 +201,11 @@ func _format_player_status() -> String:
 	var result = "● %s" % parts[0]
 	for j in range(1, parts.size()):
 		result += " → ● %s" % parts[j]
+	# 手牌数显示
+	var counts: Array = []
+	for i in range(game_manager.players.size()):
+		counts.append("%s: %d张" % [game_manager.players[i].player_name, game_manager.players[i].get_hand_count()])
+	result += "\n手牌: " + " | ".join(counts)
 	return result
 
 
@@ -287,6 +295,9 @@ func _get_card_color(card) -> Color:
 	if sym == "H": return Color(0.4, 0.7, 1.0)
 	if sym == "O": return Color(0.0, 0.3, 1.0)
 	if sym == "N": return Color(0.4, 0.2, 0.8)
+	if sym == "F": return Color(0.56, 1.0, 0.56)  # 浅绿色
+	if sym == "Cl": return Color(0.56, 1.0, 0.56)  # 浅绿色
+	if sym == "Br": return Color(0.6, 0.4, 0.2)  # 棕色
 	if sym in ["C", "B", "Si", "S"]: return Color(1.0, 0.9, 0.1)
 	if sym == "P": return Color(1.0, 0.85, 0.85)
 	if card.group in ["VIIA"]: return Color(0.0, 0.7, 0.2)
@@ -530,6 +541,11 @@ func _on_back() -> void:
 
 
 func _on_pass() -> void:
+	var cp = game_manager.get_current_player()
+	var hand_limit = min(game_manager.players.size() * 4, 18)
+	if cp.get_hand_count() >= hand_limit:
+		_show_info("手牌已达上限 (%d张)，无法跳过抽牌！请出牌。" % hand_limit)
+		return
 	game_manager.player_pass(game_manager.get_current_player_index())
 	_step_reset()
 	_refresh_ui()
@@ -638,6 +654,18 @@ func _group_by_group(hand: Array) -> Dictionary:
 		if not r.has(c.group): r[c.group] = []
 		r[c.group].append(c)
 	return r
+
+
+func _update_deck_count() -> void:
+	if not deck_count_label or not game_manager: return
+	var db = game_manager.database
+	if db:
+		deck_count_label.text = "牌库剩余: %d张" % db.get_remaining_count()
+	else:
+		deck_count_label.text = "牌库剩余: —"
+	if game_manager:
+		var hand_limit = min(game_manager.players.size() * 4, 18)
+		deck_count_label.text += "  手牌上限: %d张" % hand_limit
 
 
 func _gcd(a: int, b: int) -> int:

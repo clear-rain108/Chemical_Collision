@@ -127,64 +127,198 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="HelpTitle" type="Label" parent="HelpPage" unique_id=1674568136]
-layout_mode = 0
-offset_left = 40.0
-offset_top = 20.0
-offset_right = 800.0
-offset_bottom = 60.0
-theme_override_font_sizes/font_size = 36
-text = "帮助与规则"
-
-[node name="HelpContent" type="Label" parent="HelpPage" unique_id=856691857]
-layout_mode = 0
-offset_left = 40.0
-offset_top = 70.0
-offset_right = 900.0
-offset_bottom = 620.0
-theme_override_font_sizes/font_size = 14
-text = "=== 游戏规则 ===
-目标: 率先打光所有手牌
-出牌必须比桌面牌更大 (原子序数和小=牌大)
-无法出牌时可跳过 (抽1张牌)
-
-=== 牌型 ===
-【单质】1张任意元素 或 2张双原子分子(H₂/N₂/O₂/F₂/Cl₂)
-  例: He, O₂
-【化合物】多元素化合价匹配, 必须恰好对应最简比
-  例: 1Na+1Cl=NaCl, 2Al+3O=Al₂O₃
-  规则: 金属优先正价, 非金属优先负价
-  3+元素需每种恰好1张且电荷平衡
-【族炸】同族≥2张不同元素, 3张>2张
-  例: H+Li=IA族炸, He+Ne+Ar=0族炸(3张)
-
-=== 接牌规则 ===
-桌面有单质 → 只能出更大的单质或族炸
-桌面有化合物 → 只能出更大的化合物或族炸
-族炸 → 顺时针询问接炸, 无人接→出炸者自由出牌
-溢出化合物(牌数>玩家数) → 免疫接炸
-
-=== 接炸规则 ===
-1.打出族炸后, 其他玩家按顺时针询问是否出族炸(需更大)
-2.若无人接炸, 出炸者自由出牌
-3.接炸模式中, 被冷却的玩家不能出族炸(需先打出化合物解锁)"
-
-[node name="HelpBackBtn" type="Button" parent="HelpPage" unique_id=19172791]
-layout_mode = 0
-offset_left = 800.0
-offset_top = 620.0
-offset_right = 920.0
-offset_bottom = 660.0
-theme_override_font_sizes/font_size = 18
-text = "返回"
-
-[node name="GamePage" type="Control" parent="." unique_id=1067851078]
+[node name="HelpBackground" type="ColorRect" parent="HelpPage" unique_id=1928475611]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
+color = Color(0.92, 0.95, 0.98, 1.0)
+
+[node name="HelpTitle" type="Label" parent="HelpPage" unique_id=1674568136]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 10.0
+offset_right = 600.0
+offset_bottom = 50.0
+theme_override_font_sizes/font_size = 32
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+text = "帮助与规则"
+
+[node name="HelpLeftColumn" type="Label" parent="HelpPage" unique_id=1293847561]
+layout_mode = 0
+offset_left = 20.0
+offset_top = 55.0
+offset_right = 580.0
+offset_bottom = 660.0
+theme_override_font_sizes/font_size = 13
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+autowrap_mode = 3
+text = "══════════ 游戏规则 ══════════
+
+■ 游戏目标
+率先打光所有手牌即为胜利。
+
+■ 出牌顺序
+顺时针轮转出牌，每次出牌必须比桌面牌更大。
+无法出牌时可「跳过」（抽1张牌，手牌达上限时不可跳过）。
+当 N-1 人连续跳过时，牌权移交下一人，新一轮自由出牌。
+
+■ 牌权状态图标
+  ◄ = 当前牌权持有者
+  ❄ = 族炸冷却中（需打出化合物解除）
+  ⏸ = 已跳过本轮
+
+══════════ 三种牌型 ══════════
+
+【单质 ELEMENT】
+  · 1 张任意元素卡牌
+  · 或 2 张同元素双原子分子 (H₂/N₂/O₂/F₂/Cl₂)
+  · 例: He | O₂ | Fe | Br
+
+【化合物 COMPOUND】
+  · ≥2 种不同元素，化合价可配平
+  · 2 元素按 GCD 最简比确认张数
+  · 金属优先正价，非金属优先负价
+  · 3+ 元素需每种恰好 1 张且总电荷=0
+  · 例: 1Na+1Cl=NaCl | 2Al+3O=Al₂O₃ | KBr
+
+【族炸 CLAN BOMB】
+  · 同族 ≥2 张不同元素
+  · 3 张 > 2 张（数量多者大）
+  · 打出后进入族炸冷却（❄），需打出化合物解除
+  · 例: H+Li=IA族炸(2张)
+        He+Ne+Ar=0族炸(3张)
+        Cr+Mn=VIB/VIIB (不同族号不算)
+        Fe+Co+Ni=VIII族炸(3张)
+
+══════════ 比大小规则 ══════════
+
+族炸 > 化合物 > 单质
+同牌型：原子序数和 → 小 = 大
+平局：原子质量和 → 大 = 弱
+
+════════ 接牌与接炸规则 ════════
+
+· 桌面空 → 自由出牌
+· 桌面单质 → 接更大单质 或 族炸
+· 桌面化合物 → 接更大化合物 或 族炸
+  溢出化合物（牌数>玩家数）→ 免疫
+· 族炸 → 顺时针询问接炸
+  只能出更大族炸，无人接→出炸者自由出牌
+
+══════════ 手牌上限 ══════════
+
+手牌上限 = min(玩家数×4, 18)
+手牌达上限时不能跳过抽牌"
+
+[node name="HelpRightColumn" type="Label" parent="HelpPage" unique_id=2103485692]
+layout_mode = 0
+offset_left = 600.0
+offset_top = 55.0
+offset_right = 1160.0
+offset_bottom = 660.0
+theme_override_font_sizes/font_size = 12
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+autowrap_mode = 3
+text = "══════════ 卡牌元素总览 ══════════
+
+牌库: 前四周期 28 种元素 × 154 张
+主族(IA~VIIA,0)各6张 | 副族各4张
+
+■ 第一周期 (各6张)
+  1  H 氢  IA  非金属  天蓝色
+  2  He 氦  0   稀有气体 近白色
+
+■ 第二周期 (各6张)
+  3  Li 锂  IA  金属  灰色
+  4  Be 铍  IIA 金属  灰色
+  5  B  硼  IIIA 准金属 亮黄色
+  6  C  碳  IVA 非金属 亮黄色
+  7  N  氮  VA  非金属 紫色
+  8  O  氧  VIA 非金属 深蓝色
+  9  F  氟  VIIA 非金属 浅绿色
+  10 Ne 氖  0   稀有气体 近白色
+
+■ 第三周期 (各6张)
+  11 Na 钠  IA  金属  灰色
+  12 Mg 镁  IIA 金属  灰色
+  13 Al 铝  IIIA 金属  灰色
+  14 Si 硅  IVA 准金属 亮黄色
+  15 P  磷  VA  非金属 浅粉色
+  16 S  硫  VIA 非金属 亮黄色
+  17 Cl 氯  VIIA 非金属 浅绿色
+  18 Ar 氩  0   稀有气体 近白色
+
+■ 第四周期 (主族6张/副族4张)
+  19 K  钾  IA    金属  灰色  (6张)
+  20 Ca 钙  IIA   金属  灰色  (6张)
+  24 Cr 铬  VIB   金属  灰色  (4张)
+  25 Mn 锰  VIIB  金属  灰色  (4张)
+  26 Fe 铁  VIII  金属  灰色  (4张)
+  27 Co 钴  VIII  金属  灰色  (4张)
+  28 Ni 镍  VIII  金属  灰色  (4张)
+  29 Cu 铜  IB    金属  灰色  (4张)
+  30 Zn 锌  IIB   金属  灰色  (4张)
+  35 Br 溴  VIIA  非金属 棕色  (6张)
+
+═══════ 元素着色对照 ═══════
+
+  天蓝色 ■ H 氢
+  深蓝色 ■ O 氧
+  紫色   ■ N 氮
+  浅绿色 ■ F 氟, Cl 氯
+  棕色   ■ Br 溴
+  亮黄色 ■ B,C,Si,S
+  浅粉色 ■ P 磷
+  灰色   ■ 全部金属
+  近白色 ■ He,Ne,Ar 稀有气体
+
+══════════ 常用化学式 ══════════
+
+  1Na + 1Cl  → NaCl
+  2Al + 3O   → Al₂O₃
+  1K  + 1Br  → KBr
+  1Ca + 1O   → CaO
+  1Mg + 1O   → MgO
+  1Fe + 2Cl  → FeCl₂
+  1Fe + 1O   → FeO
+
+══════════ 操作流程 ══════════
+
+  人类: 选牌→选牌型→确认打出
+  AI:   自动决策(1.5秒延迟)
+
+  族炸: 打出→冷却❄→需化合物解冻
+  跳过: 抽1张→标记⏸→轮转牌权"
+
+[node name="HelpBackBtn" type="Button" parent="HelpPage" unique_id=19172791]
+layout_mode = 0
+offset_left = 1060.0
+offset_top = 665.0
+offset_right = 1160.0
+offset_bottom = 700.0
+theme_override_font_sizes/font_size = 18
+text = "返回"
+
+[node name="GamePage" type="Control" parent="." unique_id=1067851078]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="GameBackground" type="ColorRect" parent="GamePage" unique_id=2109445610]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.45, 0.62, 0.95, 1.0)
 
 [node name="TitleLabel" type="Label" parent="GamePage" unique_id=973513050]
 layout_mode = 0
@@ -193,6 +327,7 @@ offset_top = 10.0
 offset_right = 600.0
 offset_bottom = 45.0
 theme_override_font_sizes/font_size = 28
+theme_override_colors/font_color = Color(0, 0, 0, 1)
 text = "化学碰撞"
 
 [node name="InfoLabel" type="Label" parent="GamePage" unique_id=1255070432]
@@ -202,6 +337,7 @@ offset_top = 50.0
 offset_right = 480.0
 offset_bottom = 140.0
 theme_override_font_sizes/font_size = 14
+theme_override_colors/font_color = Color(0, 0, 0, 1)
 text = "初始化中..."
 
 [node name="TableLabel" type="Label" parent="GamePage" unique_id=119699122]
@@ -211,22 +347,24 @@ offset_top = 150.0
 offset_right = 600.0
 offset_bottom = 180.0
 theme_override_font_sizes/font_size = 18
+theme_override_colors/font_color = Color(0, 0, 0, 1)
 text = "桌面: 空"
 
 [node name="HandLabel" type="Label" parent="GamePage" unique_id=1084242871]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 280.0
+offset_top = 230.0
 offset_right = 200.0
-offset_bottom = 310.0
+offset_bottom = 260.0
 theme_override_font_sizes/font_size = 16
+theme_override_colors/font_color = Color(0, 0, 0, 1)
 text = "我的手牌:"
 
 [node name="HandContainer" type="HFlowContainer" parent="GamePage" unique_id=582537591]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 315.0
-offset_right = 480.0
+offset_top = 265.0
+offset_right = 920.0
 offset_bottom = 480.0
 
 [node name="ActionPanel" type="HBoxContainer" parent="GamePage" unique_id=36028745]
@@ -277,18 +415,29 @@ text = "关闭程序"
 [node name="CardInfoLabel" type="Label" parent="GamePage" unique_id=244830457]
 layout_mode = 0
 offset_left = 510.0
-offset_top = 340.0
+offset_top = 555.0
 offset_right = 900.0
-offset_bottom = 480.0
+offset_bottom = 600.0
 theme_override_font_sizes/font_size = 13
+theme_override_colors/font_color = Color(0, 0, 0, 1)
 autowrap_mode = 3
+
+[node name="DeckCountLabel" type="Label" parent="GamePage" unique_id=1639428801]
+layout_mode = 0
+offset_left = 800.0
+offset_top = 10.0
+offset_right = 1000.0
+offset_bottom = 35.0
+theme_override_font_sizes/font_size = 16
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+text = "牌库剩余: —"
 
 [node name="LogLabel" type="Label" parent="GamePage" unique_id=12348460]
 layout_mode = 0
-offset_left = 707.0
-offset_top = 13.0
-offset_right = 1097.0
-offset_bottom = 333.0
+offset_left = 756.0
+offset_top = 37.0
+offset_right = 1146.0
+offset_bottom = 357.0
 theme_override_font_sizes/font_size = 14
 text = "游戏日志:"
 autowrap_mode = 3
