@@ -102,11 +102,11 @@ const HIGH_COPIES = 8
 
 ```gdscript
 func _is_halogen_only(symbols: Array) -> bool:
-    var halogen = ["F", "Cl", "Br"]
-    for sym in symbols:
-        if sym not in halogen:
-            return false
-    return true
+	var halogen = ["F", "Cl", "Br"]
+	for sym in symbols:
+		if sym not in halogen:
+			return false
+	return true
 ```
 
 选中全部为卤族元素时阻止进入化合价选择步骤，提示"卤族元素(F/Cl/Br)之间不可互相化合！请加入金属或其他非金属元素。"
@@ -159,23 +159,23 @@ Main (Control)
 
 ```
 for elem in elem_data:
-    sym = elem[0]
-    copies = SUB_COPIES
-    if sym in HALOGEN_SYMBOLS:
-        copies = HALOGEN_COPIES       # 10
-    elif sym in HIGH_COUNT_SYMBOLS:
-        copies = HIGH_COPIES          # 8
-    elif sym not in SUBGROUP_SYMBOLS:
-        copies = MAIN_COPIES          # 6
-    // 副族保持 SUB_COPIES = 4
+	sym = elem[0]
+	copies = SUB_COPIES
+	if sym in HALOGEN_SYMBOLS:
+		copies = HALOGEN_COPIES       # 10
+	elif sym in HIGH_COUNT_SYMBOLS:
+		copies = HIGH_COPIES          # 8
+	elif sym not in SUBGROUP_SYMBOLS:
+		copies = MAIN_COPIES          # 6
+	// 副族保持 SUB_COPIES = 4
 ```
 
 ### 7.2 卤族互化检测（GameUI.gd _on_choose_compound）
 
 ```
 选中牌型 → 提取不重复元素符号 → _is_halogen_only(symbols)?
-    → Yes: 提示阻止
-    → No: 继续进入化合价选择
+	→ Yes: 提示阻止
+	→ No: 继续进入化合价选择
 ```
 
 ---
