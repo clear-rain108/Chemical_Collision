@@ -15,11 +15,15 @@ var game_manager: RefCounted = null
 var start_page: Control = null
 var game_page: Control = null
 var end_page: Control = null
-var help_page: Control = null
+var help_page_rules: Control = null
+var help_page_cards: Control = null
 var start_button: Button = null
 var end_label: Label = null
 var end_button: Button = null
-var help_back_btn: Button = null
+var help_rules_back_btn: Button = null
+var help_rules_to_cards_btn: Button = null
+var help_cards_back_btn: Button = null
+var help_cards_to_rules_btn: Button = null
 var help_btn: Button = null
 var player_spin: SpinBox = null
 var ai_spin: SpinBox = null
@@ -54,7 +58,8 @@ func _setup_pages() -> void:
 	start_page = get_node_or_null("StartPage")
 	game_page = get_node_or_null("GamePage")
 	end_page = get_node_or_null("EndPage")
-	help_page = get_node_or_null("HelpPage")
+	help_page_rules = get_node_or_null("HelpPage_Rules")
+	help_page_cards = get_node_or_null("HelpPage_Cards")
 
 	if start_page:
 		start_button = start_page.get_node_or_null("StartButton")
@@ -72,10 +77,21 @@ func _setup_pages() -> void:
 		if end_button:
 			end_button.pressed.connect(_show_start_page)
 
-	if help_page:
-		help_back_btn = help_page.get_node_or_null("HelpBackBtn")
-		if help_back_btn:
-			help_back_btn.pressed.connect(_on_help_back)
+	if help_page_rules:
+		help_rules_back_btn = help_page_rules.get_node_or_null("HelpRulesBackBtn")
+		help_rules_to_cards_btn = help_page_rules.get_node_or_null("HelpRulesToCardsBtn")
+		if help_rules_back_btn:
+			help_rules_back_btn.pressed.connect(_on_help_back)
+		if help_rules_to_cards_btn:
+			help_rules_to_cards_btn.pressed.connect(_on_help_show_cards)
+
+	if help_page_cards:
+		help_cards_back_btn = help_page_cards.get_node_or_null("HelpCardsBackBtn")
+		help_cards_to_rules_btn = help_page_cards.get_node_or_null("HelpCardsToRulesBtn")
+		if help_cards_back_btn:
+			help_cards_back_btn.pressed.connect(_on_help_back)
+		if help_cards_to_rules_btn:
+			help_cards_to_rules_btn.pressed.connect(_on_help_show_rules)
 
 	if game_page:
 		hand_container = game_page.get_node_or_null("HandContainer")
@@ -100,17 +116,29 @@ func _show_start_page() -> void:
 	if start_page: start_page.visible = true
 	if game_page: game_page.visible = false
 	if end_page: end_page.visible = false
-	if help_page: help_page.visible = false
+	if help_page_rules: help_page_rules.visible = false
+	if help_page_cards: help_page_cards.visible = false
 
 
 func _on_show_help() -> void:
-	if help_page: help_page.visible = true
+	if help_page_rules: help_page_rules.visible = true
 	if game_page: game_page.visible = false
 
 
 func _on_help_back() -> void:
-	if help_page: help_page.visible = false
+	if help_page_rules: help_page_rules.visible = false
+	if help_page_cards: help_page_cards.visible = false
 	if game_page: game_page.visible = true
+
+
+func _on_help_show_cards() -> void:
+	if help_page_rules: help_page_rules.visible = false
+	if help_page_cards: help_page_cards.visible = true
+
+
+func _on_help_show_rules() -> void:
+	if help_page_cards: help_page_cards.visible = false
+	if help_page_rules: help_page_rules.visible = true
 
 
 func _on_start_game() -> void:
@@ -124,7 +152,8 @@ func _on_start_game() -> void:
 	start_page.visible = false
 	game_page.visible = true
 	end_page.visible = false
-	if help_page: help_page.visible = false
+	if help_page_rules: help_page_rules.visible = false
+	if help_page_cards: help_page_cards.visible = false
 	_init_game(total, ai)
 
 
@@ -262,7 +291,11 @@ func _update_action_panel() -> void:
 
 	if step_mode == 0:
 		action_panel.add_child(_mkb("出牌(选牌型)", _on_step_next, selected_indices.is_empty()))
-		action_panel.add_child(_mkb("跳过", _on_pass, false))
+		var hand_limit = min(game_manager.players.size() * 4, 18)
+		if cp.get_hand_count() >= hand_limit:
+			action_panel.add_child(_mkb("弃牌跳过(上限)", _on_pass, false))
+		else:
+			action_panel.add_child(_mkb("跳过", _on_pass, false))
 	elif step_mode == 1:
 		action_panel.add_child(_mkb("作为单质打出", _on_element, false))
 		action_panel.add_child(_mkb("合成化合物", _on_choose_compound, false))
@@ -270,6 +303,9 @@ func _update_action_panel() -> void:
 		action_panel.add_child(_mkb("返回", _on_back, false))
 	elif step_mode == 2:
 		_update_valence_buttons()
+	elif step_mode == 3:
+		action_panel.add_child(_mkb("确认弃置", _on_pass, selected_indices.size() != 1))
+		action_panel.add_child(_mkb("取消", _on_back, false))
 
 
 func _mkb(text: String, cb: Callable, dis: bool) -> Button:
@@ -373,10 +409,8 @@ func _update_valence_buttons() -> void:
 				break
 		if already == null:
 			all_assigned = false
-		for v in card.common_valence:
-			if already != null and already.valence == v:
-				break
-			action_panel.add_child(_mkb("%s (%+d)" % [sym, v], _on_select_valence.bind(sym, v), false))
+			for v in card.common_valence:
+				action_panel.add_child(_mkb("%s (%+d)" % [sym, v], _on_select_valence.bind(sym, v), false))
 
 	if not all_assigned:
 		action_panel.add_child(_mkb("返回", _on_back, false))
@@ -393,7 +427,7 @@ func _update_valence_buttons() -> void:
 
 
 func _on_card_clicked(index: int) -> void:
-	if step_mode != 0: return
+	if step_mode != 0 and step_mode != 3: return
 	if index in selected_indices: selected_indices.erase(index)
 	else: selected_indices.append(index)
 	_update_hand_buttons()
@@ -437,6 +471,11 @@ func _on_choose_compound() -> void:
 		if s not in symbols: symbols.append(s)
 	if symbols.size() < 2:
 		_show_info("化合物至少需要两种不同元素！")
+		_on_back()
+		return
+	# 禁止卤族元素互化
+	if _is_halogen_only(symbols):
+		_show_info("卤族元素(F/Cl/Br)之间不可互相化合！请加入金属或其他非金属元素。")
 		_on_back()
 		return
 	step_mode = 2
@@ -544,9 +583,38 @@ func _on_pass() -> void:
 	var cp = game_manager.get_current_player()
 	var hand_limit = min(game_manager.players.size() * 4, 18)
 	if cp.get_hand_count() >= hand_limit:
-		_show_info("手牌已达上限 (%d张)，无法跳过抽牌！请出牌。" % hand_limit)
+		# 上限弃牌模式：需要选1张牌弃置，不能直接跳过
+		_on_discard_mode()
 		return
 	game_manager.player_pass(game_manager.get_current_player_index())
+	_step_reset()
+	_refresh_ui()
+
+
+func _on_discard_mode() -> void:
+	var cp = game_manager.get_current_player()
+	var hand_limit = min(game_manager.players.size() * 4, 18)
+	if cp.get_hand_count() < hand_limit:
+		# 已解除上限，正常操作
+		step_mode = 0
+		selected_indices.clear()
+		_update_action_panel()
+		_update_hand_buttons()
+		return
+	if step_mode != 3:
+		step_mode = 3  # 弃牌模式
+		selected_indices.clear()
+		_show_info("手牌已达上限 (%d张)，请选择1张牌弃置。" % hand_limit)
+		_update_action_panel()
+		_update_hand_buttons()
+		return
+	# step_mode == 3: 确认弃牌
+	if selected_indices.size() != 1:
+		_show_info("请选择恰好1张牌弃置！")
+		return
+	var card = cp.hand[selected_indices[0]]
+	game_manager.player_discard_and_pass(game_manager.get_current_player_index(), card)
+	step_mode = 0
 	_step_reset()
 	_refresh_ui()
 
@@ -666,6 +734,15 @@ func _update_deck_count() -> void:
 	if game_manager:
 		var hand_limit = min(game_manager.players.size() * 4, 18)
 		deck_count_label.text += "  手牌上限: %d张" % hand_limit
+
+
+# 检查选中的元素是否全为卤族 (VIIA)
+func _is_halogen_only(symbols: Array) -> bool:
+	var halogen = ["F", "Cl", "Br"]
+	for sym in symbols:
+		if sym not in halogen:
+			return false
+	return true
 
 
 func _gcd(a: int, b: int) -> int:

@@ -7,8 +7,13 @@ const CardDataScript = preload("res://scripts/CardData.gd")
 
 # 副族标识（这些元素只生成 4 张）
 const SUBGROUP_SYMBOLS = ["Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn"]
+# 特殊张数元素
+const HALOGEN_SYMBOLS = ["F", "Cl", "Br"]    # 卤族 10 张
+const HIGH_COUNT_SYMBOLS = ["O", "S", "H"]    # 高张数 8 张
 const MAIN_COPIES = 6
 const SUB_COPIES = 4
+const HALOGEN_COPIES = 10
+const HIGH_COPIES = 8
 
 # 前四周期 28 种元素基础数据
 static func get_element_data() -> Array:
@@ -52,13 +57,19 @@ static func get_element_data() -> Array:
 var deck: Array = []   # 当前牌库
 
 
-# 生成牌库（主族 6 张，副族 4 张）
+# 生成牌库（卤族 10 张，H/O/S 8 张，主族 6 张，副族 4 张）
 func generate_deck() -> void:
 	deck.clear()
 	var elem_data = get_element_data()
 	for elem in elem_data:
 		var sym = elem[0]
-		var copies = SUB_COPIES if sym in SUBGROUP_SYMBOLS else MAIN_COPIES
+		var copies = SUB_COPIES
+		if sym in HALOGEN_SYMBOLS:
+			copies = HALOGEN_COPIES
+		elif sym in HIGH_COUNT_SYMBOLS:
+			copies = HIGH_COPIES
+		elif sym not in SUBGROUP_SYMBOLS:
+			copies = MAIN_COPIES
 		for _copy in range(copies):
 			var card = CardDataScript.new(
 				elem[0], elem[1], elem[2], elem[3], elem[4],
