@@ -38,6 +38,7 @@ var card_info_label: Label = null
 var action_panel: Control = null
 var hint_button: Button = null
 var quit_button: Button = null
+var tutorial_label: Label = null
 
 # 状态
 var selected_indices: Array = []
@@ -64,6 +65,12 @@ func _setup_pages() -> void:
 	if start_page:
 		start_button = start_page.get_node_or_null("StartButton")
 		player_spin = start_page.get_node_or_null("PlayerCountSpin")
+		var tut1_btn = start_page.get_node_or_null("Tutorial1Btn")
+		var tut2_btn = start_page.get_node_or_null("Tutorial2Btn")
+		if tut1_btn:
+			tut1_btn.pressed.connect(_on_start_tutorial.bind(1))
+		if tut2_btn:
+			tut2_btn.pressed.connect(_on_start_tutorial.bind(2))
 		ai_spin = start_page.get_node_or_null("AiCountSpin")
 		if start_button:
 			start_button.pressed.connect(_on_start_game)
@@ -103,6 +110,7 @@ func _setup_pages() -> void:
 		hint_button = game_page.get_node_or_null("HintButton")
 		quit_button = game_page.get_node_or_null("QuitButton")
 		help_btn = game_page.get_node_or_null("HelpBtn")
+		tutorial_label = game_page.get_node_or_null("TutorialLabel")
 		deck_count_label = game_page.get_node_or_null("DeckCountLabel")
 		if hint_button:
 			hint_button.toggled.connect(_on_hint_toggled)
@@ -157,6 +165,21 @@ func _on_start_game() -> void:
 	_init_game(total, ai)
 
 
+func _on_start_tutorial(level: int) -> void:
+	game_manager = GameManagerScript.new()
+	var ok = game_manager.init_tutorial(level)
+	if not ok:
+		_show_info_simple("教程初始化失败！")
+		return
+	start_page.visible = false
+	game_page.visible = true
+	end_page.visible = false
+	if help_page_rules: help_page_rules.visible = false
+	if help_page_cards: help_page_cards.visible = false
+	_step_reset()
+	_refresh_ui()
+
+
 func _connect_node(btn, cb: Callable) -> void:
 	if btn:
 		btn.pressed.connect(cb)
@@ -203,6 +226,7 @@ func _refresh_ui() -> void:
 	_update_hand_buttons()
 	_update_card_info_label()
 	_update_deck_count()
+	_update_tutorial_label()
 
 
 func _update_info_label() -> void:
@@ -368,19 +392,102 @@ func _update_hand_buttons() -> void:
 		cp.sort_hand_by_atomic_number()
 		for i in range(cp.hand.size()):
 			var card = cp.hand[i]
-			var btn = Button.new()
-			btn.text = card.get_display_name()
-			btn.tooltip_text = card.get_full_info()
-			btn.custom_minimum_size = Vector2(140, 55)
-			btn.add_theme_font_size_override("font_size", 16)
-			var col = _get_card_color(card)
-			btn.add_theme_color_override("font_color", col)
-			if i in selected_indices:
-				btn.add_theme_color_override("font_color", Color(1.0, 1.0, 0.0))
-				btn.text = "✓ " + card.get_display_name()
-			btn.pressed.connect(_on_card_clicked.bind(i))
+			var btn = _build_card_button(card, i)
 			hand_container.add_child(btn)
 			hand_buttons.append(btn)
+
+
+func _build_card_button(card, idx: int) -> Button:
+	var btn = Button.new()
+	btn.custom_minimum_size = Vector2(95, 118)
+	btn.tooltip_text = card.get_full_info()
+	# 白底圆角牌面
+	var style_normal = StyleBoxFlat.new()
+	style_normal.bg_color = Color(0.97, 0.97, 0.98, 1.0)
+	style_normal.border_width_left = 2
+	style_normal.border_width_right = 2
+	style_normal.border_width_top = 2
+	style_normal.border_width_bottom = 2
+	style_normal.border_color = Color(0.7, 0.7, 0.75, 1.0)
+	style_normal.corner_radius_top_left = 6
+	style_normal.corner_radius_top_right = 6
+	style_normal.corner_radius_bottom_left = 6
+	style_normal.corner_radius_bottom_right = 6
+	btn.add_theme_stylebox_override("normal", style_normal)
+	# 悬浮
+	var style_hover = style_normal.duplicate()
+	style_hover.bg_color = Color(0.9, 0.93, 0.98, 1.0)
+	style_hover.border_color = Color(0.3, 0.5, 0.8, 1.0)
+	btn.add_theme_stylebox_override("hover", style_hover)
+	# 选中
+	if idx in selected_indices:
+		var style_sel = style_normal.duplicate()
+		style_sel.bg_color = Color(1.0, 1.0, 0.8, 1.0)
+		style_sel.border_color = Color(1.0, 0.7, 0.0, 1.0)
+		style_sel.border_width_left = 3
+		style_sel.border_width_right = 3
+		style_sel.border_width_top = 3
+		style_sel.border_width_bottom = 3
+		btn.add_theme_stylebox_override("normal", style_sel)
+
+	# 原子序数 (左上)
+	var l_num = Label.new()
+	l_num.text = str(card.atomic_number)
+	l_num.add_theme_font_size_override("font_size", 11)
+	l_num.add_theme_color_override("font_color", Color(0.3, 0.3, 0.3, 1))
+	l_num.position = Vector2(4, 2)
+	btn.add_child(l_num)
+	# 族 (右上)
+	var l_group = Label.new()
+	l_group.text = card.group
+	l_group.add_theme_font_size_override("font_size", 9)
+	l_group.add_theme_color_override("font_color", Color(0.4, 0.4, 0.5, 1))
+	l_group.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	l_group.size = Vector2(48, 14)
+	l_group.position = Vector2(43, 3)
+	btn.add_child(l_group)
+	# 符号 (中上)
+	var l_sym = Label.new()
+	l_sym.text = card.symbol
+	l_sym.add_theme_font_size_override("font_size", 20)
+	l_sym.add_theme_color_override("font_color", _get_card_color(card))
+	l_sym.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l_sym.size = Vector2(85, 22)
+	l_sym.position = Vector2(5, 22)
+	btn.add_child(l_sym)
+	# 中文名 (中)
+	var l_name = Label.new()
+	l_name.text = card.name_cn
+	l_name.add_theme_font_size_override("font_size", 11)
+	l_name.add_theme_color_override("font_color", Color(0.1, 0.1, 0.1, 1))
+	l_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l_name.size = Vector2(85, 15)
+	l_name.position = Vector2(5, 48)
+	btn.add_child(l_name)
+	# 化合价 (中下)
+	var val_str = ""
+	for v in card.common_valence:
+		if val_str != "": val_str += " "
+		if v > 0: val_str += "+%d" % v
+		else: val_str += "%d" % v
+	var l_val = Label.new()
+	l_val.text = val_str
+	l_val.add_theme_font_size_override("font_size", 10)
+	l_val.add_theme_color_override("font_color", Color(0.5, 0.2, 0.2, 1))
+	l_val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l_val.size = Vector2(85, 13)
+	l_val.position = Vector2(5, 65)
+	btn.add_child(l_val)
+	# 相对原子质量 (左下)
+	var l_mass = Label.new()
+	l_mass.text = "%.1f" % card.atomic_weight
+	l_mass.add_theme_font_size_override("font_size", 9)
+	l_mass.add_theme_color_override("font_color", Color(0.4, 0.4, 0.4, 1))
+	l_mass.position = Vector2(3, 102)
+	btn.add_child(l_mass)
+
+	btn.pressed.connect(_on_card_clicked.bind(idx))
+	return btn
 
 
 func _update_valence_buttons() -> void:
@@ -722,6 +829,19 @@ func _group_by_group(hand: Array) -> Dictionary:
 		if not r.has(c.group): r[c.group] = []
 		r[c.group].append(c)
 	return r
+
+
+func _update_tutorial_label() -> void:
+	if not tutorial_label or not game_manager: return
+	if game_manager.tutorial_level > 0:
+		tutorial_label.visible = true
+		var display = game_manager.get_tutorial_display()
+		# 清除一次性成功提示
+		if game_manager.tutorial_success != "":
+			game_manager.tutorial_success = ""
+		tutorial_label.text = display
+	else:
+		tutorial_label.visible = false
 
 
 func _update_deck_count() -> void:

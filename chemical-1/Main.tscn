@@ -26,7 +26,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.45, 0.62, 0.95, 1)
+color = Color(0.78, 0.88, 0.98, 1)
 
 [node name="StartTitle" type="Label" parent="StartPage" unique_id=682625676]
 layout_mode = 1
@@ -130,6 +130,87 @@ offset_bottom = 25.0
 theme_override_font_sizes/font_size = 24
 text = "退出程序"
 
+[node name="TutorialLabel" type="Label" parent="StartPage" unique_id=587913647]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.72
+anchor_right = 0.5
+anchor_bottom = 0.72
+offset_left = -250.0
+offset_top = -15.0
+offset_right = 250.0
+offset_bottom = 15.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 18
+text = "─ 教学引导 ─"
+horizontal_alignment = 1
+
+[node name="Tutorial1Btn" type="Button" parent="StartPage" unique_id=12247811]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.8
+anchor_right = 0.5
+anchor_bottom = 0.8
+offset_left = -140.0
+offset_top = -25.0
+offset_right = 140.0
+offset_bottom = 25.0
+grow_horizontal = 2
+theme_override_font_sizes/font_size = 20
+text = "第一关：基础入门"
+
+[node name="Tutorial1Desc" type="Label" parent="StartPage" unique_id=2143737716]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.86
+anchor_right = 0.5
+anchor_bottom = 0.86
+offset_left = -250.0
+offset_top = -12.0
+offset_right = 250.0
+offset_bottom = 12.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 13
+text = "熟悉原子牌、单质与化合物、牌大小比较（禁止族炸）"
+horizontal_alignment = 1
+
+[node name="Tutorial2Btn" type="Button" parent="StartPage" unique_id=1436681958]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.91
+anchor_right = 0.5
+anchor_bottom = 0.91
+offset_left = -140.0
+offset_top = -25.0
+offset_right = 140.0
+offset_bottom = 25.0
+grow_horizontal = 2
+theme_override_font_sizes/font_size = 20
+text = "第二关：族炸进阶"
+
+[node name="Tutorial2Desc" type="Label" parent="StartPage" unique_id=1306241294]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.97
+anchor_right = 0.5
+anchor_bottom = 0.97
+offset_left = -250.0
+offset_top = -12.0
+offset_right = 250.0
+offset_bottom = 12.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 13
+text = "熟悉族炸接炸、溢出化合物、手牌上限与UI界面"
+horizontal_alignment = 1
+
 [node name="EndPage" type="Control" parent="." unique_id=676685224]
 visible = false
 layout_mode = 1
@@ -146,7 +227,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.45, 0.62, 0.95, 1)
+color = Color(0.78, 0.88, 0.98, 1)
 
 [node name="EndTitle" type="Label" parent="EndPage" unique_id=2051721356]
 layout_mode = 1
@@ -215,7 +296,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.45, 0.62, 0.95, 1)
+color = Color(0.78, 0.88, 0.98, 1)
 
 [node name="HelpRulesTitle" type="Label" parent="HelpPage_Rules" unique_id=961850435]
 layout_mode = 0
@@ -419,7 +500,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.45, 0.62, 0.95, 1)
+color = Color(0.78, 0.88, 0.98, 1)
 
 [node name="HelpCardsTitle" type="Label" parent="HelpPage_Cards" unique_id=1683842665]
 layout_mode = 0
@@ -593,7 +674,6 @@ theme_override_font_sizes/font_size = 15
 text = "← 查看规则介绍"
 
 [node name="GamePage" type="Control" parent="." unique_id=1067851078]
-visible = false
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -608,7 +688,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.45, 0.62, 0.95, 1)
+color = Color(0.78, 0.88, 0.98, 1)
 
 [node name="TitleLabel" type="Label" parent="GamePage" unique_id=973513050]
 layout_mode = 0
@@ -643,7 +723,7 @@ text = "桌面: 空"
 [node name="HandLabel" type="Label" parent="GamePage" unique_id=1084242871]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 230.0
+offset_top = 200.0
 offset_right = 200.0
 offset_bottom = 260.0
 theme_override_colors/font_color = Color(0, 0, 0, 1)
@@ -653,42 +733,42 @@ text = "我的手牌:"
 [node name="HandContainer" type="HFlowContainer" parent="GamePage" unique_id=582537591]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 265.0
+offset_top = 237.0
 offset_right = 920.0
-offset_bottom = 480.0
+offset_bottom = 610.0
 
 [node name="ActionPanel" type="HBoxContainer" parent="GamePage" unique_id=36028745]
 layout_mode = 0
-offset_left = 20.0
-offset_top = 495.0
-offset_right = 480.0
-offset_bottom = 540.0
+offset_left = 8.0
+offset_top = 599.0
+offset_right = 468.0
+offset_bottom = 644.0
 
 [node name="HintButton" type="Button" parent="GamePage" unique_id=1179826737]
 layout_mode = 0
-offset_left = 20.0
-offset_top = 555.0
-offset_right = 150.0
-offset_bottom = 590.0
+offset_left = 423.0
+offset_top = 567.0
+offset_right = 553.0
+offset_bottom = 597.0
 theme_override_font_sizes/font_size = 13
 toggle_mode = true
 text = "显示提示"
 
 [node name="HelpBtn" type="Button" parent="GamePage" unique_id=452447435]
 layout_mode = 0
-offset_left = 160.0
-offset_top = 555.0
-offset_right = 260.0
-offset_bottom = 590.0
+offset_left = 561.0
+offset_top = 568.0
+offset_right = 661.0
+offset_bottom = 598.0
 theme_override_font_sizes/font_size = 13
 text = "帮助"
 
 [node name="QuitButton" type="Button" parent="GamePage" unique_id=180300628]
 layout_mode = 0
-offset_left = 270.0
-offset_top = 555.0
-offset_right = 370.0
-offset_bottom = 590.0
+offset_left = 670.0
+offset_top = 569.0
+offset_right = 770.0
+offset_bottom = 599.0
 theme_override_font_sizes/font_size = 13
 text = "退出游戏"
 
@@ -704,12 +784,22 @@ text = "关闭程序"
 
 [node name="CardInfoLabel" type="Label" parent="GamePage" unique_id=244830457]
 layout_mode = 0
-offset_left = 510.0
-offset_top = 555.0
-offset_right = 900.0
-offset_bottom = 600.0
+offset_left = 424.0
+offset_top = 519.0
+offset_right = 814.0
+offset_bottom = 549.0
 theme_override_colors/font_color = Color(0, 0, 0, 1)
 theme_override_font_sizes/font_size = 13
+autowrap_mode = 3
+
+[node name="TutorialLabel" type="Label" parent="GamePage" unique_id=898111835]
+layout_mode = 0
+offset_left = 225.0
+offset_top = 185.0
+offset_right = 1125.0
+offset_bottom = 225.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 14
 autowrap_mode = 3
 
 [node name="DeckCountLabel" type="Label" parent="GamePage" unique_id=1639428801]

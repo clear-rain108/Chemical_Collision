@@ -1,6 +1,6 @@
 # ============================================================
 # GameManager.gd - 多人发牌与玩家管理
-# 族炸接炸链 + 冷却 + 同牌型接牌
+# 族炸接炸链 + 冷却 + 同牌型接牌 + 教程关卡
 # ============================================================
 
 const CardDatabaseScript = preload("res://scripts/CardDatabase.gd")
@@ -24,6 +24,11 @@ var compound_immune: bool = false  # 溢出化合物免疫族炸
 
 var clan_bomb_chain_active: bool = false
 var clan_bomb_owner: int = -1
+var clan_bomb_disabled: bool = false    # 禁用族炸（第一关）
+var tutorial_level: int = 0             # 0=自由模式, 1=第一关, 2=第二关
+var tutorial_step: int = 0              # 当前教程步骤
+var tutorial_guidance: String = ""      # 当前引导文本
+var tutorial_success: String = ""       # 成功提示（一次性显示）
 
 class PlayerInfo:
 	var player_name: String = ""
@@ -80,6 +85,11 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> bool:
 	compound_immune = false
 	clan_bomb_chain_active = false
 	clan_bomb_owner = -1
+	clan_bomb_disabled = false
+	tutorial_level = 0
+	tutorial_step = 0
+	tutorial_guidance = ""
+	tutorial_success = ""
 	log_messages.clear()
 
 	database = CardDatabaseScript.new()
@@ -125,6 +135,8 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 
 	# === 族炸判定 ===
 	if pattern == UtilsScript.CardPattern.CLAN_BOMB:
+		if clan_bomb_disabled:
+			return -3  # 本局禁止族炸
 		if not clan_bomb_chain_active and player.clan_bomb_cooling:
 			return -3
 		# 溢出化合物免疫族炸
@@ -184,11 +196,11 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 		player.clan_bomb_cooling = true
 		clan_bomb_chain_active = true
 		clan_bomb_owner = player_index
+		_check_tutorial_progress(pattern, not player.is_ai)
 		for i in range(players.size()):
 			if i != player_index:
 				players[i].has_passed = false
 		is_round_starter = false
-		# Bug3 修复: 族炸后检查手牌是否清空
 		if player.get_hand_count() == 0:
 			phase = 2
 			winner_index = player_index
@@ -197,7 +209,6 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 
 	if pattern == UtilsScript.CardPattern.COMPOUND:
 		player.clan_bomb_cooling = false
-		# 溢出检查：牌数 >= 玩家数 → 免疫（含族炸）
 		if cards.size() >= players.size():
 			compound_immune = true
 			log_messages.append("⚠ 溢出化合物！牌数≥%d人，免疫接牌（包括族炸）" % players.size())
@@ -213,6 +224,7 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 		log_messages.append("===== 游戏结束！获胜者: %s =====" % player.player_name)
 		return 0
 
+	_check_tutorial_progress(pattern, not player.is_ai)
 	next_turn()
 	return 0
 
@@ -236,7 +248,6 @@ func player_pass(player_index: int) -> void:
 	next_turn()
 
 
-# 上限弃牌：移除指定手牌（不抽牌），标记 passed
 func player_discard_and_pass(player_index: int, card_to_discard) -> void:
 	if player_index < 0 or player_index >= players.size():
 		return
@@ -265,7 +276,6 @@ func next_turn() -> void:
 			current_player_index = next_idx
 			return
 
-	# 所有非 pass 玩家都已经跳过 → 新一轮，从第一个有牌的玩家开始
 	_start_new_round()
 
 
@@ -303,7 +313,6 @@ func _start_new_round() -> void:
 	clan_bomb_owner = -1
 	compound_immune = false
 
-	# 将牌权交给最后一名跳过的玩家的下一名玩家
 	current_player_index = (current_player_index + 1) % players.size()
 	for _i in range(players.size()):
 		var p = players[current_player_index]
@@ -334,6 +343,78 @@ func _get_unpassed_players() -> Array:
 		if p.get_hand_count() > 0 and not p.has_passed:
 			result.append(p)
 	return result
+
+
+# 初始化教程关卡（预设手牌，不洗牌）
+func init_tutorial(level: int) -> bool:
+	phase = 0
+	players.clear()
+	table_cards.clear()
+	table_player_index = -1
+	table_pattern = -1
+	winner_index = -1
+	current_player_index = 0
+	is_round_starter = true
+	compound_immune = false
+	clan_bomb_chain_active = false
+	clan_bomb_owner = -1
+	clan_bomb_disabled = false
+	log_messages.clear()
+
+	database = CardDatabaseScript.new()
+	database.generate_deck()
+
+	tutorial_level = level
+	if level == 1:
+		clan_bomb_disabled = true
+		players.append(PlayerInfo.new("玩家", false))
+		players.append(PlayerInfo.new("AI 1", true))
+		players.append(PlayerInfo.new("AI 2", true))
+		_set_preset_hand(players[0], ["Na","Cl","Ca","O","He","Li","F","Mg","S","Ne"])
+		_set_preset_hand(players[1], ["K","Br","B","C","Al","Si","N","P"])
+		_set_preset_hand(players[2], ["H","Be","Ar","Cr","Mn","Fe","Co","Ni"])
+	elif level == 2:
+		players.append(PlayerInfo.new("玩家", false))
+		players.append(PlayerInfo.new("AI 1", true))
+		players.append(PlayerInfo.new("AI 2", true))
+		players.append(PlayerInfo.new("AI 3", true))
+		_set_preset_hand(players[0], ["H","Li","Na","Cl","K","O","Ca","F","He","Ne"])
+		_set_preset_hand(players[1], ["Mg","S","Al","P","B","Si","C","N","Br","Be"])
+		_set_preset_hand(players[2], ["Ar","Cr","Mn","Fe","Co","Ni","Cu","Zn"])
+		_set_preset_hand(players[3], ["He","Ne","O","F","Cl","Ar","K","Ca"])
+	else:
+		return false
+
+	tutorial_step = 1
+	tutorial_success = ""
+	_update_tutorial_guidance()
+
+	phase = 1
+	log_messages.append("===== 教程关卡 %d 开始 =====" % level)
+	log_messages.append("当前回合: %s (自由出牌)" % players[current_player_index].player_name)
+	return true
+
+
+func _set_preset_hand(player: PlayerInfo, symbols: Array) -> void:
+	for sym in symbols:
+		var card = _find_card_by_symbol(sym)
+		if card != null:
+			player.add_card(card)
+	player.sort_hand_by_atomic_number()
+
+
+func _find_card_by_symbol(sym: String):
+	for card in database.deck:
+		if card.symbol == sym:
+			database.deck.erase(card)
+			# Recréer une nouvelle carte au lieu de duplicate()
+			return CardDatabaseScript.CardDataScript.new(
+				card.symbol, card.name_cn, card.name_en, card.atomic_number,
+				card.group, card.period, card.element_type, card.single_form,
+				card.valence_electrons, card.common_valence,
+				card.electronegativity, card.atomic_weight, card.description
+			)
+	return null
 
 
 func _get_alive_players() -> Array:
@@ -385,19 +466,91 @@ func get_available_patterns(player_idx: int) -> String:
 		return "仅可出: 更大的族炸 / 跳过"
 	if is_round_starter or table_cards.is_empty():
 		var s = "自由出牌: 单质+化合物"
-		if not p.clan_bomb_cooling:
+		if not p.clan_bomb_cooling and not clan_bomb_disabled:
 			s += "+族炸"
+		elif clan_bomb_disabled:
+			s += " (族炸已禁用)"
+		else:
+			s += ""
 		s += " / 跳过"
 		return s
 	if p.clan_bomb_cooling:
 		return "需要打出更大的牌 / 跳过"
 	if table_pattern == UtilsScript.CardPattern.ELEMENT:
-		return "桌面是单质，只能出更大的单质/族炸 / 跳过"
+		var s = "桌面是单质，只能出更大的单质"
+		if not clan_bomb_disabled:
+			s += "/族炸"
+		s += " / 跳过"
+		return s
 	if table_pattern == UtilsScript.CardPattern.COMPOUND:
 		if compound_immune:
 			return "桌面化合物免疫！无法接牌（包括族炸），只能跳过"
-		return "桌面是化合物，只能出更大的化合物/族炸 / 跳过"
+		var s = "桌面是化合物，只能出更大的化合物"
+		if not clan_bomb_disabled:
+			s += "/族炸"
+		s += " / 跳过"
+		return s
 	return "需要打出更大的牌 / 跳过"
+
+
+# 更新教程引导文本
+func _update_tutorial_guidance() -> void:
+	if tutorial_level == 1:
+		match tutorial_step:
+			1: tutorial_guidance = "【第1步】观察手牌：每张牌显示元素符号+中文名。鼠标悬停可查看原子序数、族、化合价、相对质量。\n点击选中一张牌，再点「出牌(选牌型)」→「作为单质打出」试试！"
+			2: tutorial_guidance = "【第2步】很好！现在试试合成化合物：选中两种不同元素(如Na和Cl)，点「合成化合物」→为每种选化合价→确认打出。\n金属优先正价，非金属优先负价。"
+			3: tutorial_guidance = "【第3步】继续练习！尝试不同的单质和化合物组合。\n记住：原子序数和越小，牌力越大。桌面牌必须被你出的牌压过。"
+			_: tutorial_guidance = "【练习中】继续出牌直到打光手牌！随时可跳过抽牌。"
+	elif tutorial_level == 2:
+		match tutorial_step:
+			1: tutorial_guidance = "【第1步】熟悉族炸：选中同族≥2张不同元素(如H+Li都是IA族)，点「作为族炸打出」。\n族炸可以抢牌权，比普通牌更强！"
+			2: tutorial_guidance = "【第2步】族炸打出后进入冷却❄，必须出一个化合物来解除冷却。\n选中两种元素合成化合物，像Na+Cl=NaCl。"
+			3: tutorial_guidance = "【第3步】试试接炸！当AI打出族炸后，你如果也有同族牌可出更大族炸接炸。\n也可以跳过让AI接炸。"
+			4: tutorial_guidance = "【第4步】注意手牌上限！手牌达到上限时不能跳过，需选择1张弃置。\n继续练习直到打完所有手牌！"
+			_: tutorial_guidance = "【练习中】继续游戏！利用族炸+化合物完成对局。"
+
+
+# 检查教程进度（在 play_cards 成功后调用）
+func _check_tutorial_progress(pattern: int, player_is_human: bool) -> void:
+	if not player_is_human or tutorial_level == 0:
+		return
+	tutorial_success = ""
+	var advanced = false
+	if tutorial_level == 1:
+		if tutorial_step == 1 and pattern == UtilsScript.CardPattern.ELEMENT:
+			tutorial_success = "✓ 正确！你打出了一张单质。"
+			advanced = true
+		elif tutorial_step == 2 and pattern == UtilsScript.CardPattern.COMPOUND:
+			tutorial_success = "✓ 正确！你成功合成了一个化合物。"
+			advanced = true
+		elif tutorial_step == 3 and pattern == UtilsScript.CardPattern.COMPOUND:
+			tutorial_success = "✓ 很好！继续练习。"
+			advanced = true
+	elif tutorial_level == 2:
+		if tutorial_step == 1 and pattern == UtilsScript.CardPattern.CLAN_BOMB:
+			tutorial_success = "✓ 正确！你打出了族炸，抢到了牌权！注意你进入了冷却❄。"
+			advanced = true
+		elif tutorial_step == 2 and pattern == UtilsScript.CardPattern.COMPOUND:
+			tutorial_success = "✓ 正确！打出化合物解除了族炸冷却。"
+			advanced = true
+		elif tutorial_step == 3 and pattern == UtilsScript.CardPattern.CLAN_BOMB:
+			tutorial_success = "✓ 正确！你成功接炸了！"
+			advanced = true
+		elif tutorial_step == 4:
+			tutorial_success = "继续练习！"
+			advanced = true
+
+	if advanced and tutorial_step < 5:
+		tutorial_step += 1
+		_update_tutorial_guidance()
+
+
+# 获取教程引导文本（供 UI 显示）
+func get_tutorial_display() -> String:
+	var text = tutorial_guidance
+	if tutorial_success != "":
+		text += "\n" + tutorial_success
+	return text
 
 
 func flush_logs() -> Array:
