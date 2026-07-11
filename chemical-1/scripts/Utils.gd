@@ -5,7 +5,9 @@
 
 const CardDataScript = preload("res://scripts/CardData.gd")
 
-# 牌型枚举
+# ============================================================
+# 一、牌型枚举与常量
+# ============================================================
 enum CardPattern {
 	ELEMENT,      # 单质（1 张，或双原子分子的 2 张同元素）
 	COMPOUND,     # 化合物（多元素化合价匹配）
@@ -16,6 +18,9 @@ enum CardPattern {
 const DIATOMIC_SYMBOLS = ["H", "N", "O", "F", "Cl"]
 
 
+# ============================================================
+# 二、牌型检测（优先级：单质 → 双原子 → 族炸 → 化合物）
+# ============================================================
 # 判定一组牌的牌型
 # skip_clan_bomb: 指定"化合物"路径时设为 true，跳过族炸检测
 static func detect_pattern(cards: Array, skip_clan_bomb: bool = false) -> int:
@@ -26,7 +31,7 @@ static func detect_pattern(cards: Array, skip_clan_bomb: bool = false) -> int:
 	if cards.size() == 1:
 		return CardPattern.ELEMENT
 
-	# 2 张同元素 → 双原子分子单质 / 族炸检查
+	# 2 张同元素 → 双原子分子单质 / 非法
 	if cards.size() == 2 and _is_same_element(cards):
 		if cards[0].symbol in DIATOMIC_SYMBOLS:
 			return CardPattern.ELEMENT   # 双原子分子单质
@@ -58,7 +63,9 @@ static func _is_same_element(cards: Array) -> bool:
 	return true
 
 
-# 检查是否为族炸（同族 ≥2 张不同元素）
+# ============================================================
+# 三、族炸检测（同族 ≥2 张不同元素）
+# ============================================================
 static func _is_clan_bomb(cards: Array) -> bool:
 	if cards.size() < 2:
 		return false
@@ -76,24 +83,25 @@ static func _is_clan_bomb(cards: Array) -> bool:
 	return symbols_seen.size() >= 2
 
 
-# 检查是否为化合物（多元素化合价匹配）
+# ============================================================
+# 四、化合物检测与配平
+# ============================================================
+# 检查是否为化合物（多元素化合价匹配，排除稀有气体）
 static func _is_compound(cards: Array) -> bool:
 	if cards.size() < 2:
 		return false
 
-	# 检查是否有稀有气体（通常不形成化合物）
 	for c in cards:
 		if c.element_type == CardDataScript.TYPE_NOBLE_GAS:
 			return false
 
-	# 计算化合价代数和是否能配平
 	if _can_balance_valence(cards):
 		return true
 
 	return false
 
 
-# 检查化合价是否能配平
+# 检查化合价是否能配平（是否存在一正一负）
 static func _can_balance_valence(cards: Array) -> bool:
 	var has_positive = false
 	var has_negative = false
@@ -108,7 +116,7 @@ static func _can_balance_valence(cards: Array) -> bool:
 	return has_positive and has_negative
 
 
-# 获取化合价配平比例
+# 获取化合价配平比例与化学式
 # custom_valences: {symbol: valence} 当用户指定化合价时使用
 static func get_compound_formula(cards: Array, custom_valences: Dictionary = {}) -> Dictionary:
 	if not _is_compound(cards):
@@ -121,17 +129,12 @@ static func get_compound_formula(cards: Array, custom_valences: Dictionary = {})
 			elem_counts[c.symbol] = 0
 		elem_counts[c.symbol] += 1
 
-	# 多元素化合物形成规则 (支持 2+ 元素)
-	# - custom_valences 中的元素决定正/负价划分
-	# - 所有正价元素在前，所有负价元素在后
-	# - 2 元素: GCD 计算最简比
-	# - 3+ 元素: 玩家必须提供准确的原子数 (charge balance: Σ count×valence = 0)
-
+	# 正/负价分类
 	var pos_list: Array = []    # [{symbol, valence, count}]
 	var neg_list: Array = []
 
 	if custom_valences.size() >= 2:
-		# 使用自定义化合价
+		# 使用用户自定义化合价
 		for sym in custom_valences:
 			var v = custom_valences[sym]
 			var cnt = elem_counts.get(sym, 0)
@@ -140,7 +143,7 @@ static func get_compound_formula(cards: Array, custom_valences: Dictionary = {})
 			else:
 				neg_list.append({"symbol": sym, "valence": abs(v), "count": cnt})
 	else:
-		# 自动检测：按 is_metal 分类
+		# 自动检测：金属优先正价，非金属优先负价
 		for sym in elem_counts:
 			var sample = null
 			for c in cards:
@@ -157,12 +160,13 @@ static func get_compound_formula(cards: Array, custom_valences: Dictionary = {})
 
 	if pos_list.is_empty() or neg_list.is_empty(): return {}
 
+	# 电荷平衡验证
 	var total_pos = 0; var total_neg = 0
 	for e in pos_list: total_pos += e.count * e.valence
 	for e in neg_list: total_neg += e.count * e.valence
 	var ratio_ok = (total_pos == total_neg and total_pos > 0)
 
-	# 构建化学式
+	# 构建化学式（含 Unicode 下标）
 	var formula = ""
 	for e in pos_list: formula += e.symbol + ("" if e.count == 1 else _to_subscript(e.count))
 	for e in neg_list: formula += e.symbol + ("" if e.count == 1 else _to_subscript(e.count))
@@ -185,7 +189,10 @@ static func _gcd(a: int, b: int) -> int:
 	return a
 
 
-# 获取单质的显示名称（含 Unicode 下标）
+# ============================================================
+# 五、单质显示
+# ============================================================
+# 获取单质的显示名称（含 Unicode 下标，如 H₂）
 static func get_element_display(cards: Array) -> String:
 	if cards.size() == 1:
 		return cards[0].symbol
@@ -206,8 +213,11 @@ static func _to_subscript(n: int) -> String:
 	return result
 
 
+# ============================================================
+# 六、比大小规则（族炸 > 化合物 > 单质 → 原子序数和小=大）
+# ============================================================
 # 比较两组牌的大小
-# 序数越小牌越大 — 返回 1 表示 cards_a 更大，-1 表示 cards_b 更大，0 表示相等
+# 返回 1 表示 cards_a 更大，-1 表示 cards_b 更大，0 表示相等
 static func compare_cards(cards_a: Array, cards_b: Array) -> int:
 	var pattern_a = detect_pattern(cards_a)
 	var pattern_b = detect_pattern(cards_b)
@@ -224,7 +234,6 @@ static func compare_cards(cards_a: Array, cards_b: Array) -> int:
 	# 都是族炸：3张 > 2张不论序数大小；同数量比原子序数和（小→大）
 	if pattern_a == CardPattern.CLAN_BOMB and pattern_b == CardPattern.CLAN_BOMB:
 		if cards_a.size() != cards_b.size():
-			# 3 张一定大于 2 张，不论族序数
 			if cards_a.size() >= 3:
 				return 1
 			if cards_b.size() >= 3:
@@ -252,7 +261,7 @@ static func compare_cards(cards_a: Array, cards_b: Array) -> int:
 	return _compare_by_total_atomic(cards_a, cards_b)
 
 
-# 原子序数和越小牌越大（逆转比较）。平局时比相对原子质量（质量大→牌小）
+# 原子序数和越小牌越大。平局时比相对原子质量（质量大→牌小）
 static func _compare_by_total_atomic(cards_a: Array, cards_b: Array) -> int:
 	var sum_a = 0; var sum_b = 0
 	var mass_a: float = 0.0; var mass_b: float = 0.0
@@ -270,6 +279,9 @@ static func _compare_by_total_atomic(cards_a: Array, cards_b: Array) -> int:
 	return 0
 
 
+# ============================================================
+# 七、辅助方法
+# ============================================================
 # 牌型名称
 static func get_pattern_name(pattern: int) -> String:
 	match pattern:

@@ -1,9 +1,11 @@
 # ============================================================
 # CardData.gd - 卡牌数据结构（含单质形态）
-# 迭代 1：定义单张卡牌的所有属性
+# 定义单张化学元素卡牌的所有属性
 # ============================================================
 
-# 族定义（周期表族）
+# ============================================================
+# 一、族常量定义（16个周期表族）
+# ============================================================
 const GROUP_IA = "IA"       # 碱金属
 const GROUP_IIA = "IIA"     # 碱土金属
 const GROUP_IIIA = "IIIA"   # 硼族
@@ -21,18 +23,25 @@ const GROUP_VIB = "VIB"     # 铬族
 const GROUP_VIIB = "VIIB"   # 锰族
 const GROUP_VIII = "VIII"   # 铁族/铂族
 
-# 类型常量
+# ============================================================
+# 二、元素类型常量
+# ============================================================
 const TYPE_METAL = "金属"
 const TYPE_NONMETAL = "非金属"
 const TYPE_METALLOID = "准金属"
 const TYPE_NOBLE_GAS = "稀有气体"
 
-# 单质形态常量
+# ============================================================
+# 三、单质形态常量
+# ============================================================
 const FORM_SOLID = "固体"
 const FORM_LIQUID = "液体"
 const FORM_GAS = "气体"
 const FORM_SYNTHETIC = "人造"
 
+# ============================================================
+# 四、卡牌属性字段
+# ============================================================
 var symbol: String = ""             # 元素符号，如 "H"
 var name_cn: String = ""            # 中文名称，如 "氢"
 var name_en: String = ""            # 英文名称，如 "Hydrogen"
@@ -48,6 +57,9 @@ var atomic_weight: float = 0.0      # 相对原子质量
 var description: String = ""        # 描述文本
 
 
+# ============================================================
+# 五、构造函数
+# ============================================================
 func _init(sym: String = "", namecn: String = "", nameen: String = "",
 		anum: int = 0, grp: String = "", per: int = 0, etype: String = "",
 		sform: String = "", valence_e: int = 0, c_valence: Array = [],
@@ -67,12 +79,15 @@ func _init(sym: String = "", namecn: String = "", nameen: String = "",
 	description = desc
 
 
+# ============================================================
+# 六、显示方法
+# ============================================================
 # 获取卡牌显示文本（符号 + 中文名）
 func get_display_name() -> String:
 	return "%s %s" % [symbol, name_cn]
 
 
-# 获取完整信息文本（5 个简化为字段）
+# 获取完整信息文本（英文名/原子序数/族/化合价/质量）
 func get_full_info() -> String:
 	var valence_str = " ".join(common_valence) if common_valence.size() > 0 else "N/A"
 	return """%s
@@ -82,16 +97,18 @@ func get_full_info() -> String:
   Mass: %.2f""" % [name_en, atomic_number, group, valence_str, atomic_weight]
 
 
+# ============================================================
+# 七、逻辑判断方法
+# ============================================================
 # 判断是否为同族
 func is_same_group(other) -> bool:
 	return other != null and group != "" and group == other.group
 
 
-# 检查化合价是否匹配
+# 检查化合价是否匹配（是否存在一正一负可配平）
 func can_bond_with(other) -> bool:
 	if other == null:
 		return false
-	# 检查是否存在正值与负值匹配
 	for v1 in common_valence:
 		for v2 in other.common_valence:
 			if v1 > 0 and v2 < 0:
@@ -101,6 +118,9 @@ func can_bond_with(other) -> bool:
 	return false
 
 
+# ============================================================
+# 八、序列化方法
+# ============================================================
 # JSON 序列化
 func to_dict() -> Dictionary:
 	return {

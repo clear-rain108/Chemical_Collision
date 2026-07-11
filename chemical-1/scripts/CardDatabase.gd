@@ -1,10 +1,13 @@
 # ============================================================
 # CardDatabase.gd - 牌库生成与洗牌
-# 迭代 3：前四周期 28 种元素（主族 6 张，副族 4 张）
+# 前四周期 28 种元素（卤族10张，H/O/S 8张，主族6张，副族4张）
 # ============================================================
 
 const CardDataScript = preload("res://scripts/CardData.gd")
 
+# ============================================================
+# 一、张数分级常量
+# ============================================================
 # 副族标识（这些元素只生成 4 张）
 const SUBGROUP_SYMBOLS = ["Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn"]
 # 特殊张数元素
@@ -15,7 +18,9 @@ const SUB_COPIES = 4
 const HALOGEN_COPIES = 10
 const HIGH_COPIES = 8
 
-# 前四周期 28 种元素基础数据
+# ============================================================
+# 二、元素基础数据（28种）
+# ============================================================
 static func get_element_data() -> Array:
 	return [
 		# === 第一周期 ===
@@ -57,7 +62,9 @@ static func get_element_data() -> Array:
 var deck: Array = []   # 当前牌库
 
 
-# 生成牌库（卤族 10 张，H/O/S 8 张，主族 6 张，副族 4 张）
+# ============================================================
+# 三、牌库生成（按张数分级）
+# ============================================================
 func generate_deck() -> void:
 	deck.clear()
 	var elem_data = get_element_data()
@@ -79,7 +86,9 @@ func generate_deck() -> void:
 			deck.append(card)
 
 
-# 洗牌（Fisher-Yates 洗牌算法）
+# ============================================================
+# 四、洗牌与抽牌（Fisher-Yates 算法）
+# ============================================================
 func shuffle() -> void:
 	var n = deck.size()
 	for i in range(n - 1, 0, -1):
@@ -89,14 +98,12 @@ func shuffle() -> void:
 		deck[j] = temp
 
 
-# 从牌库顶部抽一张牌
 func draw_card():
 	if deck.is_empty():
 		return null
 	return deck.pop_back()
 
 
-# 从牌库抽指定数量
 func draw_cards(count: int) -> Array:
 	var drawn: Array = []
 	for _i in range(count):
@@ -107,6 +114,8 @@ func draw_cards(count: int) -> Array:
 	return drawn
 
 
-# 获取牌库剩余数量
+# ============================================================
+# 五、查询方法
+# ============================================================
 func get_remaining_count() -> int:
 	return deck.size()

@@ -1,7 +1,7 @@
 # 化学碰撞 — 程序架构与实现文档
 
-> **版本**: 8.0  
-> **日期**: 2026-07-09  
+> **版本**: 12.0  
+> **日期**: 2026-07-11  
 > **引擎**: Godot 4.x / GDScript
 
 ---
@@ -10,12 +10,14 @@
 
 1. [项目概览](#1-项目概览)
 2. [文件结构](#2-文件结构)
-3. [数据层](#3-数据层)
-4. [逻辑层](#4-逻辑层)
-5. [表现层](#5-表现层)
-6. [场景结构](#6-场景结构)
-7. [数据流](#7-数据流)
-8. [关键算法](#8-关键算法)
+3. [数据层 - CardData.gd](#3-数据层---carddatagd)
+4. [数据层 - CardDatabase.gd](#4-数据层---carddatabasegd)
+5. [逻辑层 - Utils.gd](#5-逻辑层---utilsgd)
+6. [逻辑层 - GameManager.gd](#6-逻辑层---gamemanagergd)
+7. [表现层 - GameUI.gd](#7-表现层---gameuigd)
+8. [场景结构 - Main.tscn](#8-场景结构---maintscn)
+9. [数据流](#9-数据流)
+10. [关键算法](#10-关键算法)
 
 ---
 
@@ -27,8 +29,8 @@
 ┌─────────────────────────────────────────┐
 │                      表现层              │
 │  Main.tscn  GameUI.gd                   │
-│  5页UI  着色与状态渲染  按钮交互         │
-│  手牌上限检查  牌库计数  卤族互化检查     │
+│  6页UI  着色与牌面渲染  按钮交互         │
+│  手牌上限检查  牌库计数  教程引导        │
 ├─────────────────────────────────────────┤
 │                      逻辑层              │
 │  GameManager.gd  →  规则引擎 & 牌权轮转  │
@@ -47,138 +49,240 @@
 ```
 chemical-1/
 ├── project.godot                      ← 引擎配置
-├── Main.tscn                          ← 5 页场景（Start/Help_Rules/Help_Cards/Game/End）
+├── Main.tscn                          ← 6 页场景
 ├── scripts/
-│   ├── CardData.gd                    ← 13 属性 + 16 族常量
-│   ├── CardDatabase.gd                ← 28 种元素（卤族10/HOS各8/主族6/副族4）= 172 张
-│   ├── GameManager.gd                 ← 规则引擎（牌权轮转、接炸链、化合物校验）
-│   ├── GameUI.gd                      ← UI 控制器（着色、步骤流、AI、手牌上限、卤族互化、牌库计数）
-│   └── Utils.gd                       ← 工具函数（detect_pattern、get_compound_formula、compare_cards）
-├── CHEMICAL_COLLISION_GAME.md         ← 游戏设计文档 (v8.0)
-├── GAMEPLAY_RULES.md                  ← 玩法规则与程序实现 (v8.0)
-├── ARCHITECTURE.md                    ← 本文档 (v8.0)
-├── COLORING_DOCUMENTATION.md          ← 元素着色文档 (v2.0)
-└── COMPOUND_MECHANISM_COMPARISON.md   ← 化合物机制新旧对比
+│   ├── CardData.gd                    ← 数据模型：13属性+16族常量+序列化
+│   ├── CardDatabase.gd                ← 牌库：28种元素(卤族10/高8/主6/副4)=172张
+│   ├── GameManager.gd                 ← 规则引擎：play_cards/牌权/接炸/上限弃牌/教程
+│   ├── GameUI.gd                      ← UI控制器：牌面渲染/步骤流/AI/着色/教程
+│   └── Utils.gd                       ← 工具函数：detect_pattern/compound/compare
+├── CHEMICAL_COLLISION_GAME.md         ← 游戏设计文档
+├── GAMEPLAY_RULES.md                  ← 玩法规则文档
+├── ARCHITECTURE.md                    ← 本文档
+├── COLORING_DOCUMENTATION.md          ← 元素着色文档
+├── COMPOUND_MECHANISM_COMPARISON.md   ← 化合物机制对比
+└── AI_PLAYER_AUDIT.md                ← AI与玩家逻辑对照审计
 ```
 
 ---
 
-## 3. 数据层
+## 3. 数据层 - CardData.gd
 
-### 3.1 CardDatabase.gd — 牌库
+**职责**: 定义单张化学元素卡牌的数据结构。
 
-**牌张数分级**（新增常量）:
+### 模块结构
 
-```gdscript
-const HALOGEN_SYMBOLS = ["F", "Cl", "Br"]    # 卤族 10 张
-const HIGH_COUNT_SYMBOLS = ["O", "S", "H"]    # 高张数 8 张
-const MAIN_COPIES = 6                          # 主族 6 张
-const SUB_COPIES = 4                           # 副族 4 张
-const HALOGEN_COPIES = 10
-const HIGH_COPIES = 8
-```
-
-**牌数分配**:
-| 张数 | 数量 | 元素 |
+| 模块 | 行号 | 说明 |
 |------|------|------|
-| 10 张 | 3 种 | F, Cl, Br |
-| 8 张 | 3 种 | H, O, S |
-| 6 张 | 15 种 | He, Li, Be, B, C, N, Ne, Na, Mg, Al, Si, P, Ar, K, Ca |
-| 4 张 | 7 种 | Cr, Mn, Fe, Co, Ni, Cu, Zn |
-
-**总牌数**: 172 张
-
-### 3.2 CardData.gd — 卡牌数据模型
-
-16 族常量已覆盖第四周期副族：IA / IIA / IIIA / IVA / VA / VIA / VIIA / 0 / IB / IIB / IIIB / IVB / VB / VIB / VIIB / VIII
+| 族常量（16个）| L7-22 | IA~VIII + 稀有气体 |
+| 元素类型常量 | L24-28 | 金属/非金属/准金属/稀有气体 |
+| 单质形态常量 | L30-34 | 固体/液体/气体/人造 |
+| 属性字段（13个）| L38-50 | symbol, name_cn, atomic_number, group... |
+| 构造函数 | L54-68 | 13参数初始化 |
+| 显示方法 | L72-84 | get_display_name(), get_full_info() |
+| 逻辑判断 | L87-102 | is_same_group(), can_bond_with() |
+| 序列化 | L105-139 | to_dict(), from_dict() |
 
 ---
 
-## 4. 逻辑层
+## 4. 数据层 - CardDatabase.gd
 
-### 4.1 新增：卤族互化检查
+**职责**: 牌库生成（172张）与 Fisher-Yates 洗牌。
 
-位置：`GameUI.gd` `_on_choose_compound()` 步骤 1
+### 张数分级
 
-```gdscript
-func _is_halogen_only(symbols: Array) -> bool:
-	var halogen = ["F", "Cl", "Br"]
-	for sym in symbols:
-		if sym not in halogen:
-			return false
-	return true
-```
+| 常量 | 元素 | 张数 |
+|------|------|------|
+| HALOGEN_SYMBOLS | F, Cl, Br | 10 |
+| HIGH_COUNT_SYMBOLS | H, O, S | 8 |
+| SUBGROUP_SYMBOLS | Cr~Zn (7种) | 4 |
+| 其余主族 (15种) | — | 6 |
 
-选中全部为卤族元素时阻止进入化合价选择步骤，提示"卤族元素(F/Cl/Br)之间不可互相化合！请加入金属或其他非金属元素。"
+### 模块结构
 
----
-
-## 5. 表现层
-
-### 5.1 双帮助页导航
-
-**HelpPage_Rules**（游戏规则介绍）:
-- 内容：游戏规则、牌型、比大小、接牌、手牌上限
-- 按钮：`[返回]` → 回到游戏页 | `[查看卡牌介绍 →]` → 跳转 HelpPage_Cards
-
-**HelpPage_Cards**（卡牌介绍）:
-- 内容：元素总览、着色对照、常用化学式、不可化合组合
-- 按钮：`[返回]` → 回到游戏页 | `[← 查看规则介绍]` → 跳转 HelpPage_Rules
-
-两个页面都使用 `HelpPage_Rules` / `HelpPage_Cards` 节点名，返回按钮位于可视区间左下方 (20-120px)。
+| 模块 | 行号 | 说明 |
+|------|------|------|
+| 张数常量 | L9-16 | 四级张数定义 |
+| 元素数据 | L19-54 | 28种元素原始数据（13字段/元素）|
+| 牌库生成 | L60-79 | generate_deck() 按 sym 动态计算 copies |
+| 洗牌与抽牌 | L83-106 | Fisher-Yates shuffle, draw_card, draw_cards |
+| 查询 | L110-111 | get_remaining_count() |
 
 ---
 
-## 6. 场景结构
+## 5. 逻辑层 - Utils.gd
+
+**职责**: 牌型判定、化合物配平、比大小。所有方法均为 `static`。
+
+### 牌型检测优先级
 
 ```
-Main (Control)
-├── StartPage
-├── HelpPage_Rules       ← 游戏规则介绍页
-│   ├── [返回] 按钮       ← _on_help_back()
-│   └── [查看卡牌介绍→]   ← _on_help_show_cards()
-├── HelpPage_Cards       ← 卡牌介绍页
-│   ├── [返回] 按钮       ← _on_help_back()
-│   └── [← 查看规则介绍]   ← _on_help_show_rules()
-├── GamePage             ← 深蓝背景，黑色文本
-│   ├── GameBackground   ← Color(0.45,0.62,0.95)
-│   ├── DeckCountLabel   ← 牌库剩余 + 手牌上限
-│   ├── InfoLabel        ← 牌权状态 + 手牌数
-│   ├── TableLabel       ← 桌面牌型
-│   ├── HandContainer    ← HFlowContainer (6张/行)
-│   ├── ActionPanel      ← 操作按钮
-│   └── CardInfoLabel    ← 提示文本
+detect_pattern(cards, skip_clan_bomb=false):
+  1. 1张 → ELEMENT
+  2. 2张同元素 & H/N/O/F/Cl → ELEMENT (X₂)
+  3. !skip_clan_bomb & 同族≥2不同元素 → CLAN_BOMB
+  4. ≥2张 & 化合价可配平 → COMPOUND
+  5. 否则 → -1
+```
+
+### 模块结构
+
+| 模块 | 行号 | 说明 |
+|------|------|------|
+| 枚举与常量 | L8-17 | CardPattern enum, DIATOMIC_SYMBOLS |
+| 牌型检测 | L20-58 | detect_pattern, _is_same_element |
+| 族炸检测 | L62-77 | _is_clan_bomb |
+| 化合物检测 | L81-176 | _is_compound, _can_balance_valence, get_compound_formula |
+| 单质显示 | L181-205 | get_element_display, _to_subscript |
+| 比大小 | L210-270 | compare_cards, _compare_by_total_atomic |
+| 辅助 | L274-279 | get_pattern_name |
+
+---
+
+## 6. 逻辑层 - GameManager.gd
+
+**职责**: 回合管理、出牌校验、族炸接炸链、教程关卡、上限弃牌。
+
+### PlayerInfo 内部类
+
+```
+属性: player_name, hand, is_ai, has_passed, clan_bomb_cooling
+方法: get_hand_count(), add_card(), remove_cards(), sort_hand_by_atomic_number()
+```
+
+### 核心变量
+
+| 变量 | 说明 |
+|------|------|
+| clan_bomb_chain_active | 族炸接炸链激活 |
+| clan_bomb_owner | 接炸链引爆者索引 |
+| clan_bomb_disabled | 禁用族炸（第一关） |
+| tutorial_level | 0=自由模式, 1=第一关, 2=第二关 |
+| tutorial_step | 当前教程步骤 |
+| compound_immune | 溢出化合物免疫族炸 |
+| _get_hand_limit() | min(players×4, 18) |
+
+### 核心函数流程
+
+```
+init_game(total, ai) → bool
+play_cards(idx, cards, cv) → int
+  ├─ detect_pattern → 族炸/非族炸判定
+  ├─ 族炸: 冷却/免疫/接炸比较 → next_turn()（牌权移交）
+  ├─ 化合物: 比例校验 → 溢出检查
+  └─ 非族炸: 牌型匹配 → 比大小
+player_pass(idx) → 上限检查 → 抽牌 → next_turn()
+player_discard_and_pass(idx, card) → 上限弃牌
+next_turn() → 族炸链? _intercept_next() : 找下一位未pass玩家
+_init_tutorial(level) → 预设手牌 + 教程步骤初始化
+_check_tutorial_progress(pattern, human) → 进度检查
+```
+
+---
+
+## 7. 表现层 - GameUI.gd
+
+**职责**: 页面管理、牌面渲染、步骤流、AI、着色、教程显示。
+
+### 页面管理
+
+| 页面节点 | 说明 |
+|----------|------|
+| StartPage | 开始页（模式选择+教学引导入口） |
+| TutorialPage | 教学引导页（关卡选择） |
+| HelpPage_Rules | 规则介绍（4栏横排） |
+| HelpPage_Cards | 卡牌图鉴（4栏横排） |
+| GamePage | 游戏主界面（牌面+操作） |
+| EndPage | 结束页 |
+
+### 手牌渲染
+
+`_build_card_button()` — 95×118px 白底圆角牌面：
+- 左上：原子序数 | 右上：族 | 中上：元素符号(着色) | 中：中文名 | 中下：化合价(±标注) | 左下：相对原子质量
+
+### 出牌步骤流
+
+```
+step0: 选牌 → "出牌(选牌型)" + "跳过/弃牌跳过"
+step1: 族炸链中: "作为族炸打出" + "返回"
+       否则: "作为单质" + "合成化合物" + "作为族炸" + "返回"
+step2: 化合价选择 → "确认打出"
+step3: 上限弃牌 → "确认弃置" + "取消"
+```
+
+### 元素着色
+
+优先级：精确符号 > 族匹配(VIIA) > 类型匹配(金属/非金属/准金属/稀有气体)
+
+### AI 策略
+
+```
+_ai_auto_play():
+  族炸链中 → 冷却跳过 / 出族炸
+  否则 → _ai_try_play():
+    ├─ 族炸尝试（同族≥2张）
+    ├─ 化合物配对 O(n²)（跳过卤族互化对）
+    ├─ 双原子分子配对
+    ├─ 单质单张
+    └─ 全部失败 → player_pass()
+```
+
+---
+
+## 8. 场景结构 - Main.tscn
+
+```
+Main (Control) ← GameUI.gd
+├── StartPage          ← 标题 + SpinBox + 开始游戏 + 退出 + [教学引导]
+├── TutorialPage       ← 教学引导页：关卡1/关卡2 + 返回
+├── HelpPage_Rules     ← 规则介绍（4栏）
+├── HelpPage_Cards     ← 卡牌图鉴（4栏）
+├── GamePage           ← 游戏主界面
+│   ├── GameBackground ← Color(0.78,0.88,0.98)
+│   ├── TitleLabel / InfoLabel / TableLabel / DeckCountLabel
+│   ├── HandLabel / HandContainer (HFlow)
+│   ├── ActionPanel (HBox) / CardInfoLabel / TutorialLabel
+│   └── HintButton / HelpBtn / QuitButton
 └── EndPage
 ```
 
 ---
 
-## 7. 关键算法
-
-### 7.1 牌张数动态计算（CardDatabase.gd generate_deck）
+## 9. 数据流
 
 ```
-for elem in elem_data:
-	sym = elem[0]
-	copies = SUB_COPIES
-	if sym in HALOGEN_SYMBOLS:
-		copies = HALOGEN_COPIES       # 10
-	elif sym in HIGH_COUNT_SYMBOLS:
-		copies = HIGH_COPIES          # 8
-	elif sym not in SUBGROUP_SYMBOLS:
-		copies = MAIN_COPIES          # 6
-	// 副族保持 SUB_COPIES = 4
-```
+Start Page → 选择模式（自由/第一关/第二关）
+  ↓
+GameManager.init_game / init_tutorial
+  ├── 172张牌洗牌 / 预设手牌
+  └── phase=1
 
-### 7.2 卤族互化检测（GameUI.gd _on_choose_compound）
-
-```
-选中牌型 → 提取不重复元素符号 → _is_halogen_only(symbols)?
-	→ Yes: 提示阻止
-	→ No: 继续进入化合价选择
+回合循环:
+  _refresh_ui() → 状态/桌面/手牌/牌库计数/教程
+  人类: 选牌→选牌型→卤族互化→化合价→play_cards
+  AI: 1.5s延迟→_ai_try_play→play_cards
+  pass: 上限→弃牌模式 / 正常→抽1张→next_turn
+  族炸: clan_bomb_chain_active→next_turn→_intercept_next
+  溢出: compound_immune→免疫族炸
+  手牌=0 → GAME_OVER
 ```
 
 ---
 
-**文档版本**: 8.0  
-**最后更新**: 2026-07-09
+## 10. 关键算法
+
+| 算法 | 位置 | 复杂度 |
+|------|------|--------|
+| detect_pattern | Utils.gd L21-47 | O(n) |
+| _is_clan_bomb | Utils.gd L62-77 | O(n) |
+| get_compound_formula | Utils.gd L113-176 | O(n) |
+| compare_cards | Utils.gd L213-252 | O(n) |
+| generate_deck | CardDatabase.gd L61-79 | O(28×copies) |
+| shuffle | CardDatabase.gd L83-89 | O(n) Fisher-Yates |
+| _ai_try_play | GameUI.gd | O(n²) 化合物配对 |
+| _intercept_next | GameManager.gd | O(n) 顺时针查找 |
+
+---
+
+**文档版本**: 12.0  
+**最后更新**: 2026-07-11
