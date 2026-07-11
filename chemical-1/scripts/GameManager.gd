@@ -155,9 +155,6 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 			if table_pattern == UtilsScript.CardPattern.ELEMENT and pattern != UtilsScript.CardPattern.ELEMENT:
 				return -4  # 单质后只能接单质或族炸
 			if table_pattern == UtilsScript.CardPattern.COMPOUND and pattern != UtilsScript.CardPattern.COMPOUND:
-				# 但如果 compound_immune，不允许任何接牌
-				if compound_immune:
-					return -4  # 免疫化合物无法被接
 				return -4  # 化合物后只能接化合物或族炸
 			if table_cards.size() > 0:
 				var cmp = UtilsScript.compare_cards(cards, table_cards)
@@ -205,13 +202,15 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 			phase = 2
 			winner_index = player_index
 			log_messages.append("===== 游戏结束！获胜者: %s =====" % player.player_name)
+			return 0
+		next_turn()
 		return 0
 
 	if pattern == UtilsScript.CardPattern.COMPOUND:
 		player.clan_bomb_cooling = false
 		if cards.size() >= players.size():
 			compound_immune = true
-			log_messages.append("⚠ 溢出化合物！牌数≥%d人，免疫接牌（包括族炸）" % players.size())
+			log_messages.append("⚠ 溢出化合物！牌数≥%d人，免疫族炸" % players.size())
 
 	clan_bomb_chain_active = false
 	clan_bomb_owner = -1
@@ -233,19 +232,30 @@ func player_pass(player_index: int) -> void:
 	if player_index < 0 or player_index >= players.size():
 		return
 	var player = players[player_index]
+	var hand_limit = _get_hand_limit()
+	player.has_passed = true
 
-	if clan_bomb_chain_active:
-		player.has_passed = true
-		log_messages.append("%s 不接炸" % player.player_name)
+	# 上限弃牌：不抽牌，UI 层负责选牌弃置
+	if player.get_hand_count() >= hand_limit:
+		if clan_bomb_chain_active:
+			log_messages.append("%s 手牌达上限，不接炸" % player.player_name)
+		else:
+			log_messages.append("%s 手牌达上限，跳过" % player.player_name)
 	else:
-		player.has_passed = true
 		var drawn = database.draw_cards(1)
 		if drawn.size() > 0:
 			player.add_card(drawn[0])
 			player.sort_hand_by_atomic_number()
-		log_messages.append("%s 跳过回合" % player.player_name)
+		if clan_bomb_chain_active:
+			log_messages.append("%s 不接炸，抽1张并跳过" % player.player_name)
+		else:
+			log_messages.append("%s 跳过回合" % player.player_name)
 
 	next_turn()
+
+
+func _get_hand_limit() -> int:
+	return min(players.size() * 4, 18)
 
 
 func player_discard_and_pass(player_index: int, card_to_discard) -> void:
@@ -463,7 +473,7 @@ func get_available_patterns(player_idx: int) -> String:
 	if clan_bomb_chain_active:
 		if player_idx == clan_bomb_owner:
 			return "等待他人接炸..."
-		return "仅可出: 更大的族炸 / 跳过"
+		return "仅可出: 更大的族炸 / 跳过(抽1张)"
 	if is_round_starter or table_cards.is_empty():
 		var s = "自由出牌: 单质+化合物"
 		if not p.clan_bomb_cooling and not clan_bomb_disabled:
@@ -484,7 +494,7 @@ func get_available_patterns(player_idx: int) -> String:
 		return s
 	if table_pattern == UtilsScript.CardPattern.COMPOUND:
 		if compound_immune:
-			return "桌面化合物免疫！无法接牌（包括族炸），只能跳过"
+			return "桌面溢出化合物(免疫族炸)，只能出更大的化合物 / 跳过"
 		var s = "桌面是化合物，只能出更大的化合物"
 		if not clan_bomb_disabled:
 			s += "/族炸"

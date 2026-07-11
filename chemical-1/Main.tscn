@@ -130,86 +130,20 @@ offset_bottom = 25.0
 theme_override_font_sizes/font_size = 24
 text = "退出程序"
 
-[node name="TutorialLabel" type="Label" parent="StartPage" unique_id=587913647]
+[node name="TutorialBtn" type="Button" parent="StartPage"]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
-anchor_top = 0.72
+anchor_top = 0.73
 anchor_right = 0.5
-anchor_bottom = 0.72
-offset_left = -250.0
-offset_top = -15.0
-offset_right = 250.0
-offset_bottom = 15.0
-grow_horizontal = 2
-theme_override_colors/font_color = Color(0, 0, 0, 1)
-theme_override_font_sizes/font_size = 18
-text = "─ 教学引导 ─"
-horizontal_alignment = 1
-
-[node name="Tutorial1Btn" type="Button" parent="StartPage" unique_id=12247811]
-layout_mode = 1
-anchors_preset = -1
-anchor_left = 0.5
-anchor_top = 0.8
-anchor_right = 0.5
-anchor_bottom = 0.8
-offset_left = -140.0
+anchor_bottom = 0.73
+offset_left = -120.0
 offset_top = -25.0
-offset_right = 140.0
+offset_right = 120.0
 offset_bottom = 25.0
 grow_horizontal = 2
-theme_override_font_sizes/font_size = 20
-text = "第一关：基础入门"
-
-[node name="Tutorial1Desc" type="Label" parent="StartPage" unique_id=2143737716]
-layout_mode = 1
-anchors_preset = -1
-anchor_left = 0.5
-anchor_top = 0.86
-anchor_right = 0.5
-anchor_bottom = 0.86
-offset_left = -250.0
-offset_top = -12.0
-offset_right = 250.0
-offset_bottom = 12.0
-grow_horizontal = 2
-theme_override_colors/font_color = Color(0, 0, 0, 1)
-theme_override_font_sizes/font_size = 13
-text = "熟悉原子牌、单质与化合物、牌大小比较（禁止族炸）"
-horizontal_alignment = 1
-
-[node name="Tutorial2Btn" type="Button" parent="StartPage" unique_id=1436681958]
-layout_mode = 1
-anchors_preset = -1
-anchor_left = 0.5
-anchor_top = 0.91
-anchor_right = 0.5
-anchor_bottom = 0.91
-offset_left = -140.0
-offset_top = -25.0
-offset_right = 140.0
-offset_bottom = 25.0
-grow_horizontal = 2
-theme_override_font_sizes/font_size = 20
-text = "第二关：族炸进阶"
-
-[node name="Tutorial2Desc" type="Label" parent="StartPage" unique_id=1306241294]
-layout_mode = 1
-anchors_preset = -1
-anchor_left = 0.5
-anchor_top = 0.97
-anchor_right = 0.5
-anchor_bottom = 0.97
-offset_left = -250.0
-offset_top = -12.0
-offset_right = 250.0
-offset_bottom = 12.0
-grow_horizontal = 2
-theme_override_colors/font_color = Color(0, 0, 0, 1)
-theme_override_font_sizes/font_size = 13
-text = "熟悉族炸接炸、溢出化合物、手牌上限与UI界面"
-horizontal_alignment = 1
+theme_override_font_sizes/font_size = 24
+text = "教学引导"
 
 [node name="EndPage" type="Control" parent="." unique_id=676685224]
 visible = false
@@ -273,6 +207,120 @@ offset_right = 100.0
 offset_bottom = 25.0
 theme_override_font_sizes/font_size = 24
 text = "返回主页"
+
+[node name="TutorialPage" type="Control" parent="."]
+visible = false
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="TutorialBg" type="ColorRect" parent="TutorialPage"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.78, 0.88, 0.98, 1)
+
+[node name="TutorialTitle" type="Label" parent="TutorialPage"]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.2
+anchor_right = 0.5
+anchor_bottom = 0.2
+offset_left = -300.0
+offset_top = -30.0
+offset_right = 300.0
+offset_bottom = 30.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 40
+text = "─ 教学引导 ─"
+horizontal_alignment = 1
+
+[node name="Tutorial1Btn" type="Button" parent="TutorialPage"]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.38
+anchor_right = 0.5
+anchor_bottom = 0.38
+offset_left = -160.0
+offset_top = -30.0
+offset_right = 160.0
+offset_bottom = 30.0
+grow_horizontal = 2
+theme_override_font_sizes/font_size = 24
+text = "第一关：基础入门"
+
+[node name="Tutorial1Desc" type="Label" parent="TutorialPage"]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.46
+anchor_right = 0.5
+anchor_bottom = 0.46
+offset_left = -300.0
+offset_top = -12.0
+offset_right = 300.0
+offset_bottom = 12.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 14
+text = "3人局 (1玩家+2AI) | 熟悉原子牌、单质与化合物、牌大小比较 | 禁止族炸"
+horizontal_alignment = 1
+
+[node name="Tutorial2Btn" type="Button" parent="TutorialPage"]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.58
+anchor_right = 0.5
+anchor_bottom = 0.58
+offset_left = -160.0
+offset_top = -30.0
+offset_right = 160.0
+offset_bottom = 30.0
+grow_horizontal = 2
+theme_override_font_sizes/font_size = 24
+text = "第二关：族炸进阶"
+
+[node name="Tutorial2Desc" type="Label" parent="TutorialPage"]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.66
+anchor_right = 0.5
+anchor_bottom = 0.66
+offset_left = -300.0
+offset_top = -12.0
+offset_right = 300.0
+offset_bottom = 12.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 14
+text = "4人局 (1玩家+3AI) | 熟悉族炸接炸、溢出化合物、手牌上限与UI界面"
+horizontal_alignment = 1
+
+[node name="TutorialBackBtn" type="Button" parent="TutorialPage"]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.78
+anchor_right = 0.5
+anchor_bottom = 0.78
+offset_left = -80.0
+offset_top = -20.0
+offset_right = 80.0
+offset_bottom = 20.0
+grow_horizontal = 2
+theme_override_font_sizes/font_size = 22
+text = "返回"
 
 [node name="HelpPage_Rules" type="Control" parent="." unique_id=743955943]
 visible = false
@@ -381,7 +429,7 @@ text = "□ 牌型三：族炸 CLAN BOMB
 族炸打出→顺时针询问所有
 其他玩家是否接更大族炸
 接炸者成为新owner
-跳过者不抽牌，标记⏸
+跳过者抽1张牌，标记⏸（可达上限弃牌）
 接炸期间只能出族炸！
 所有非owner已pass→
 桌面清空，owner自由出牌"
@@ -674,6 +722,7 @@ theme_override_font_sizes/font_size = 15
 text = "← 查看规则介绍"
 
 [node name="GamePage" type="Control" parent="." unique_id=1067851078]
+visible = false
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0

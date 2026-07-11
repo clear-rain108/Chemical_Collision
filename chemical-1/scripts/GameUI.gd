@@ -65,18 +65,25 @@ func _setup_pages() -> void:
 	if start_page:
 		start_button = start_page.get_node_or_null("StartButton")
 		player_spin = start_page.get_node_or_null("PlayerCountSpin")
-		var tut1_btn = start_page.get_node_or_null("Tutorial1Btn")
-		var tut2_btn = start_page.get_node_or_null("Tutorial2Btn")
-		if tut1_btn:
-			tut1_btn.pressed.connect(_on_start_tutorial.bind(1))
-		if tut2_btn:
-			tut2_btn.pressed.connect(_on_start_tutorial.bind(2))
+		var tut_btn = start_page.get_node_or_null("TutorialBtn")
+		if tut_btn:
+			tut_btn.pressed.connect(_on_show_tutorial_page)
 		ai_spin = start_page.get_node_or_null("AiCountSpin")
 		if start_button:
 			start_button.pressed.connect(_on_start_game)
 		var exit_btn = start_page.get_node_or_null("ExitButton")
 		if exit_btn:
 			exit_btn.pressed.connect(_on_exit_program)
+
+	# 教学引导页按钮绑定
+	var tut_page = get_node_or_null("TutorialPage")
+	if tut_page:
+		var tut1 = tut_page.get_node_or_null("Tutorial1Btn")
+		var tut2 = tut_page.get_node_or_null("Tutorial2Btn")
+		var tut_back = tut_page.get_node_or_null("TutorialBackBtn")
+		if tut1: tut1.pressed.connect(_on_start_tutorial.bind(1))
+		if tut2: tut2.pressed.connect(_on_start_tutorial.bind(2))
+		if tut_back: tut_back.pressed.connect(_on_tutorial_back)
 
 	if end_page:
 		end_label = end_page.get_node_or_null("EndLabel")
@@ -124,13 +131,27 @@ func _show_start_page() -> void:
 	if start_page: start_page.visible = true
 	if game_page: game_page.visible = false
 	if end_page: end_page.visible = false
+	var tut_page = get_node_or_null("TutorialPage")
 	if help_page_rules: help_page_rules.visible = false
 	if help_page_cards: help_page_cards.visible = false
+	if tut_page: tut_page.visible = false
 
 
 func _on_show_help() -> void:
 	if help_page_rules: help_page_rules.visible = true
 	if game_page: game_page.visible = false
+
+
+func _on_show_tutorial_page() -> void:
+	var tut_page = get_node_or_null("TutorialPage")
+	if tut_page: tut_page.visible = true
+	if start_page: start_page.visible = false
+
+
+func _on_tutorial_back() -> void:
+	var tut_page = get_node_or_null("TutorialPage")
+	if tut_page: tut_page.visible = false
+	if start_page: start_page.visible = true
 
 
 func _on_help_back() -> void:
@@ -321,10 +342,14 @@ func _update_action_panel() -> void:
 		else:
 			action_panel.add_child(_mkb("跳过", _on_pass, false))
 	elif step_mode == 1:
-		action_panel.add_child(_mkb("作为单质打出", _on_element, false))
-		action_panel.add_child(_mkb("合成化合物", _on_choose_compound, false))
-		action_panel.add_child(_mkb("作为族炸打出", _on_clan_bomb, false))
-		action_panel.add_child(_mkb("返回", _on_back, false))
+		if game_manager.clan_bomb_chain_active and game_manager.get_current_player_index() != game_manager.clan_bomb_owner:
+			action_panel.add_child(_mkb("作为族炸打出", _on_clan_bomb, false))
+			action_panel.add_child(_mkb("返回", _on_back, false))
+		else:
+			action_panel.add_child(_mkb("作为单质打出", _on_element, false))
+			action_panel.add_child(_mkb("合成化合物", _on_choose_compound, false))
+			action_panel.add_child(_mkb("作为族炸打出", _on_clan_bomb, false))
+			action_panel.add_child(_mkb("返回", _on_back, false))
 	elif step_mode == 2:
 		_update_valence_buttons()
 	elif step_mode == 3:
@@ -796,6 +821,9 @@ func _ai_try_play(p, gm_idx: int):
 	for i in range(p.hand.size()):
 		for j in range(i + 1, p.hand.size()):
 			var pair = [p.hand[i], p.hand[j]]
+			# AI 禁止卤族互化
+			if _is_ai_halogen_pair(pair):
+				continue
 			var fi = UtilsScript.get_compound_formula(pair)
 			if not fi.is_empty() and fi.get("ratio_ok", false):
 				var cv: Dictionary = {}
@@ -857,6 +885,13 @@ func _update_deck_count() -> void:
 
 
 # 检查选中的元素是否全为卤族 (VIIA)
+func _is_ai_halogen_pair(pair: Array) -> bool:
+	var halogen = ["F", "Cl", "Br"]
+	if pair[0].symbol != pair[1].symbol and pair[0].symbol in halogen and pair[1].symbol in halogen:
+		return true
+	return false
+
+
 func _is_halogen_only(symbols: Array) -> bool:
 	var halogen = ["F", "Cl", "Br"]
 	for sym in symbols:
