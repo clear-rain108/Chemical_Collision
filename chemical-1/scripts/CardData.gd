@@ -87,14 +87,15 @@ func get_display_name() -> String:
 	return "%s %s" % [symbol, name_cn]
 
 
-# 获取完整信息文本（英文名/原子序数/族/化合价/质量）
+# 获取完整信息文本（中文名/原子序数/族/化合价/质量）- 汉化版
 func get_full_info() -> String:
 	var valence_str = " ".join(common_valence) if common_valence.size() > 0 else "N/A"
-	return """%s
-  Atomic #: %d
-  Group: %s
-  Valence: %s
-  Mass: %.2f""" % [name_en, atomic_number, group, valence_str, atomic_weight]
+	return """%s (%s)
+  原子序数: %d
+  族: %s
+  类型: %s
+  化合价: %s
+  相对原子质量: %.2f""" % [name_en, name_cn, atomic_number, group, element_type, valence_str, atomic_weight]
 
 
 # ============================================================

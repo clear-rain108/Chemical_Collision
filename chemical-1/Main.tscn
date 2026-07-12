@@ -130,7 +130,7 @@ offset_bottom = 25.0
 theme_override_font_sizes/font_size = 24
 text = "退出程序"
 
-[node name="TutorialBtn" type="Button" parent="StartPage"]
+[node name="TutorialBtn" type="Button" parent="StartPage" unique_id=1178798361]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
@@ -208,7 +208,7 @@ offset_bottom = 25.0
 theme_override_font_sizes/font_size = 24
 text = "返回主页"
 
-[node name="TutorialPage" type="Control" parent="."]
+[node name="TutorialPage" type="Control" parent="." unique_id=1007493921]
 visible = false
 layout_mode = 1
 anchors_preset = 15
@@ -217,7 +217,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="TutorialBg" type="ColorRect" parent="TutorialPage"]
+[node name="TutorialBg" type="ColorRect" parent="TutorialPage" unique_id=2011429767]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -226,7 +226,7 @@ grow_horizontal = 2
 grow_vertical = 2
 color = Color(0.78, 0.88, 0.98, 1)
 
-[node name="TutorialTitle" type="Label" parent="TutorialPage"]
+[node name="TutorialTitle" type="Label" parent="TutorialPage" unique_id=1094856710]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
@@ -243,13 +243,45 @@ theme_override_font_sizes/font_size = 40
 text = "─ 教学引导 ─"
 horizontal_alignment = 1
 
-[node name="Tutorial1Btn" type="Button" parent="TutorialPage"]
+[node name="Tutorial0Btn" type="Button" parent="TutorialPage" unique_id=2069786359]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
-anchor_top = 0.38
+anchor_top = 0.28
 anchor_right = 0.5
-anchor_bottom = 0.38
+anchor_bottom = 0.28
+offset_left = -160.0
+offset_top = -30.0
+offset_right = 160.0
+offset_bottom = 30.0
+grow_horizontal = 2
+theme_override_font_sizes/font_size = 24
+text = "第零关：游戏入门"
+
+[node name="Tutorial0Desc" type="Label" parent="TutorialPage" unique_id=422416743]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.34
+anchor_right = 0.5
+anchor_bottom = 0.34
+offset_left = -350.0
+offset_top = -12.0
+offset_right = 350.0
+offset_bottom = 12.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 14
+text = "3人局 (1玩家+2AI) | 熟悉游戏界面、了解基础流程与核心规则 | 限前3周期牌库"
+horizontal_alignment = 1
+
+[node name="Tutorial1Btn" type="Button" parent="TutorialPage" unique_id=1416386738]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.44
+anchor_right = 0.5
+anchor_bottom = 0.44
 offset_left = -160.0
 offset_top = -30.0
 offset_right = 160.0
@@ -258,13 +290,13 @@ grow_horizontal = 2
 theme_override_font_sizes/font_size = 24
 text = "第一关：基础入门"
 
-[node name="Tutorial1Desc" type="Label" parent="TutorialPage"]
+[node name="Tutorial1Desc" type="Label" parent="TutorialPage" unique_id=268744296]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
-anchor_top = 0.46
+anchor_top = 0.5
 anchor_right = 0.5
-anchor_bottom = 0.46
+anchor_bottom = 0.5
 offset_left = -300.0
 offset_top = -12.0
 offset_right = 300.0
@@ -275,13 +307,13 @@ theme_override_font_sizes/font_size = 14
 text = "3人局 (1玩家+2AI) | 熟悉原子牌、单质与化合物、牌大小比较 | 禁止族炸"
 horizontal_alignment = 1
 
-[node name="Tutorial2Btn" type="Button" parent="TutorialPage"]
+[node name="Tutorial2Btn" type="Button" parent="TutorialPage" unique_id=1987839560]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
-anchor_top = 0.58
+anchor_top = 0.6
 anchor_right = 0.5
-anchor_bottom = 0.58
+anchor_bottom = 0.6
 offset_left = -160.0
 offset_top = -30.0
 offset_right = 160.0
@@ -290,7 +322,7 @@ grow_horizontal = 2
 theme_override_font_sizes/font_size = 24
 text = "第二关：族炸进阶"
 
-[node name="Tutorial2Desc" type="Label" parent="TutorialPage"]
+[node name="Tutorial2Desc" type="Label" parent="TutorialPage" unique_id=730180018]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
@@ -307,7 +339,7 @@ theme_override_font_sizes/font_size = 14
 text = "4人局 (1玩家+3AI) | 熟悉族炸接炸、溢出化合物、手牌上限与UI界面"
 horizontal_alignment = 1
 
-[node name="TutorialBackBtn" type="Button" parent="TutorialPage"]
+[node name="TutorialBackBtn" type="Button" parent="TutorialPage" unique_id=957627739]
 layout_mode = 1
 anchors_preset = -1
 anchor_left = 0.5
