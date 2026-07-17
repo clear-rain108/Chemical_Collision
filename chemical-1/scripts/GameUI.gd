@@ -1,6 +1,7 @@
 # ============================================================
 # GameUI.gd - 游戏主界面控制脚本
 # 页面管理 / 牌面渲染 / 出牌步骤流 / AI策略 / 着色 / 教程
+# 补充规则：有机物合成按钮 / 顺序指定牌型弹窗
 # ============================================================
 
 extends Control
@@ -17,13 +18,19 @@ var game_page: Control = null
 var end_page: Control = null
 var help_page_rules: Control = null
 var help_page_cards: Control = null
+var help_page_supp: Control = null
 var start_button: Button = null
 var end_label: Label = null
 var end_button: Button = null
 var help_rules_back_btn: Button = null
 var help_rules_to_cards_btn: Button = null
+var help_rules_to_supp_btn: Button = null
 var help_cards_back_btn: Button = null
 var help_cards_to_rules_btn: Button = null
+var help_cards_to_supp_btn: Button = null
+var help_supp_back_btn: Button = null
+var help_supp_to_rules_btn: Button = null
+var help_supp_to_cards_btn: Button = null
 var help_btn: Button = null
 var player_spin: SpinBox = null
 var ai_spin: SpinBox = null
@@ -58,10 +65,10 @@ var ai_triggered: bool = false          # AI 自动操作防重复
 # ============================================================
 var level0_overlay: Control = null
 var level0_active: bool = false
-var level0_step: int = 0                # 覆盖层内步骤
-var level0_ui_highlight_steps: Array = []  # UI 介绍步骤数据
-var level0_flow_steps: Array = []       # 流程介绍步骤数据
-var level0_flow_index: int = 0          # 流程介绍当前索引
+var level0_step: int = 0
+var level0_ui_highlight_steps: Array = []
+var level0_flow_steps: Array = []
+var level0_flow_index: int = 0
 
 
 # ============================================================
@@ -79,6 +86,7 @@ func _setup_pages() -> void:
 	end_page = get_node_or_null("EndPage")
 	help_page_rules = get_node_or_null("HelpPage_Rules")
 	help_page_cards = get_node_or_null("HelpPage_Cards")
+	help_page_supp = get_node_or_null("HelpPage_Supp")
 
 	if start_page:
 		start_button = start_page.get_node_or_null("StartButton")
@@ -105,6 +113,14 @@ func _setup_pages() -> void:
 		if tut2: tut2.pressed.connect(_on_start_tutorial.bind(2))
 		if tut_back: tut_back.pressed.connect(_on_tutorial_back)
 
+	# 补充规则勾选框（两个独立勾选框）
+	var organic_cb = start_page.get_node_or_null("OrganicCheckBox") if start_page else null
+	if organic_cb:
+		organic_cb.toggled.connect(_on_organic_toggled)
+	var seq_cb = start_page.get_node_or_null("SequenceCheckBox") if start_page else null
+	if seq_cb:
+		seq_cb.toggled.connect(_on_sequence_toggled)
+
 	if end_page:
 		end_label = end_page.get_node_or_null("EndLabel")
 		end_button = end_page.get_node_or_null("EndButton")
@@ -126,6 +142,36 @@ func _setup_pages() -> void:
 			help_cards_back_btn.pressed.connect(_on_help_back)
 		if help_cards_to_rules_btn:
 			help_cards_to_rules_btn.pressed.connect(_on_help_show_rules)
+
+	# 补充规则帮助页按钮绑定
+	if help_page_supp:
+		help_supp_back_btn = help_page_supp.get_node_or_null("HelpSuppBackBtn")
+		help_supp_to_rules_btn = help_page_supp.get_node_or_null("HelpSuppToRulesBtn")
+		help_supp_to_cards_btn = help_page_supp.get_node_or_null("HelpSuppToCardsBtn")
+		if help_supp_back_btn:
+			help_supp_back_btn.pressed.connect(_on_help_back)
+		if help_supp_to_rules_btn:
+			help_supp_to_rules_btn.pressed.connect(_on_help_show_rules)
+		if help_supp_to_cards_btn:
+			help_supp_to_cards_btn.pressed.connect(_on_help_show_cards)
+	# 规则页和卡牌页跳转补充规则页按钮
+	if help_page_rules:
+		help_rules_to_supp_btn = help_page_rules.get_node_or_null("HelpRulesToSuppBtn")
+		if help_rules_to_supp_btn:
+			help_rules_to_supp_btn.pressed.connect(_on_help_show_supp)
+	if help_page_cards:
+		help_cards_to_supp_btn = help_page_cards.get_node_or_null("HelpCardsToSuppBtn")
+		if help_cards_to_supp_btn:
+			help_cards_to_supp_btn.pressed.connect(_on_help_show_supp)
+	# 开始页补充规则按钮
+	var supp_help_btn = start_page.get_node_or_null("SupplementaryHelpBtn") if start_page else null
+	if supp_help_btn:
+		supp_help_btn.pressed.connect(_on_help_show_supp)
+
+	# 游戏页帮助按钮也指向补充规则
+	if help_page_supp:
+		# help_btn 已在上面绑定 _on_show_help，保留原有行为
+		pass
 
 	if game_page:
 		hand_container = game_page.get_node_or_null("HandContainer")
@@ -158,6 +204,8 @@ func _show_start_page() -> void:
 	if help_page_rules: help_page_rules.visible = false
 	if help_page_cards: help_page_cards.visible = false
 	if tut_page: tut_page.visible = false
+	if help_page_supp: help_page_supp.visible = false
+	_ensure_end_button_connected(_show_start_page)
 
 func _on_show_help() -> void:
 	if help_page_rules: help_page_rules.visible = true
@@ -167,29 +215,56 @@ func _on_show_tutorial_page() -> void:
 	var tut_page = get_node_or_null("TutorialPage")
 	if tut_page: tut_page.visible = true
 	if start_page: start_page.visible = false
+	if end_page: end_page.visible = false
 
 func _on_tutorial_back() -> void:
 	var tut_page = get_node_or_null("TutorialPage")
 	if tut_page: tut_page.visible = false
 	if start_page: start_page.visible = true
+	if end_page: end_page.visible = false
 
 func _on_help_back() -> void:
 	if help_page_rules: help_page_rules.visible = false
 	if help_page_cards: help_page_cards.visible = false
-	if game_page: game_page.visible = true
+	if help_page_supp: help_page_supp.visible = false
+	if start_page and start_page.visible:
+		pass   # 从开始页打开帮助，返回开始页
+	elif game_page and game_page.visible:
+		game_page.visible = true  # 游戏中的帮助，返回游戏页
+	else:
+		if game_page: game_page.visible = true
 
 func _on_help_show_cards() -> void:
 	if help_page_rules: help_page_rules.visible = false
 	if help_page_cards: help_page_cards.visible = true
+	if help_page_supp: help_page_supp.visible = false
+
+func _on_help_show_supp() -> void:
+	if help_page_cards: help_page_cards.visible = false
+	if help_page_rules: help_page_rules.visible = false
+	if help_page_supp: help_page_supp.visible = true
 
 func _on_help_show_rules() -> void:
 	if help_page_cards: help_page_cards.visible = false
 	if help_page_rules: help_page_rules.visible = true
+	if help_page_supp: help_page_supp.visible = false
 
 
 # ============================================================
 # 六、游戏启动
 # ============================================================
+func _on_organic_toggled(pressed: bool) -> void:
+	if pressed:
+		_show_info_simple("已启用有机物胜利规则")
+	else:
+		_show_info_simple("已禁用有机物胜利规则")
+
+func _on_sequence_toggled(pressed: bool) -> void:
+	if pressed:
+		_show_info_simple("已启用顺序牌型规则")
+	else:
+		_show_info_simple("已禁用顺序牌型规则")
+
 func _on_start_game() -> void:
 	var total = int(player_spin.value) if player_spin else 4
 	var ai = int(ai_spin.value) if ai_spin else 3
@@ -220,7 +295,6 @@ func _on_start_tutorial(level: int) -> void:
 	_step_reset()
 
 	if level == 0:
-		# 第零关：先走 Phase 1 (UI 介绍)
 		_level0_start_phase1()
 	else:
 		_refresh_ui()
@@ -246,6 +320,13 @@ func _show_info_simple(text: String) -> void:
 
 func _init_game(total: int = 4, ai: int = 3) -> void:
 	game_manager = GameManagerScript.new()
+	# 读取开始页的补充规则勾选框状态（两个独立勾选框）
+	var organic_cb = start_page.get_node_or_null("OrganicCheckBox") if start_page else null
+	if organic_cb:
+		game_manager.organic_rules_enabled = organic_cb.button_pressed
+	var seq_cb_node = start_page.get_node_or_null("SequenceCheckBox") if start_page else null
+	if seq_cb_node:
+		game_manager.sequence_rules_enabled = seq_cb_node.button_pressed
 	var ok = game_manager.init_game(total, ai)
 	if not ok:
 		push_error("init_game failed with total=%d ai=%d, retrying defaults" % [total, ai])
@@ -266,7 +347,6 @@ func _level0_start_phase1() -> void:
 	level0_active = true
 	level0_step = 0
 
-	# 构建 UI 标注步骤（按顺序：玩家顺序/手牌数 → 桌面牌 → 手牌区 → 出牌区 → 其他细节）
 	level0_ui_highlight_steps = [
 		{
 			"title": "玩家顺序和手牌数",
@@ -314,27 +394,20 @@ func _level0_start_phase1() -> void:
 	_level0_show_ui_step(0)
 
 
-# -------- 显示 UI 标注步骤 --------
 func _level0_show_ui_step(idx: int) -> void:
-	# 先刷新基础 UI
 	_refresh_ui()
 
 	if idx >= level0_ui_highlight_steps.size():
-		# Phase 1 结束，进入 Phase 2
 		_level0_start_phase2()
 		return
 
 	var step_data = level0_ui_highlight_steps[idx]
 	level0_step = idx
-
-	# 创建覆盖层
 	_level0_ensure_overlay()
 
-	# 清空覆盖层
 	for child in level0_overlay.get_children():
 		child.queue_free()
 
-	# 半透明遮罩（除高亮区外）- 使用 anchors 覆盖全屏
 	var bg = ColorRect.new()
 	bg.color = Color(0, 0, 0, 0.55)
 	bg.anchor_left = 0
@@ -344,7 +417,6 @@ func _level0_show_ui_step(idx: int) -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_STOP
 	level0_overlay.add_child(bg)
 
-	# 高亮矩形（"挖洞"效果通过绘制透明矩形边框实现）
 	var hl_border = ColorRect.new()
 	hl_border.color = Color(1, 1, 0, 0)
 	hl_border.position = step_data.pos
@@ -352,26 +424,20 @@ func _level0_show_ui_step(idx: int) -> void:
 	hl_border.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	level0_overlay.add_child(hl_border)
 
-	# 高亮方框（黄色粗边框）
 	var hl_outline = _level0_make_outline_rect(step_data.pos, step_data.size, Color(1, 0.85, 0, 1), 4)
 	level0_overlay.add_child(hl_outline)
 
-	# 文本提示框（560x270，根据高亮位置自适应避免遮挡）
 	var tbx = 20
 	var tby = 350
 	var tbw = 560
 	var tbh = 270
-	# 检查高亮区域是否与提示框重叠，若重叠则移动提示框
 	var hl_bottom = step_data.pos.y + step_data.size.y
 	if hl_bottom > tby + 40 or (step_data.pos.x < tbx + tbw and step_data.pos.x + step_data.size.x > tbx):
 		if step_data.pos.x > 600:
-			# 高亮在右侧，提示框移到左侧
 			tbx = 20
 		elif step_data.pos.y > 450:
-			# 高亮在底部，提示框移到上方
 			tby = 50
 		else:
-			# 高亮在中间（如手牌区），提示框移到右侧
 			tbx = 620
 			tby = 50
 	var tip_bg = ColorRect.new()
@@ -400,7 +466,6 @@ func _level0_show_ui_step(idx: int) -> void:
 	tip_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	level0_overlay.add_child(tip_desc)
 
-	# 步骤指示器
 	var step_indicator = Label.new()
 	step_indicator.text = "%d / %d" % [idx + 1, level0_ui_highlight_steps.size()]
 	step_indicator.add_theme_font_size_override("font_size", 13)
@@ -409,7 +474,6 @@ func _level0_show_ui_step(idx: int) -> void:
 	step_indicator.size = Vector2(80, 20)
 	level0_overlay.add_child(step_indicator)
 
-	# "下一步"按钮
 	var next_btn = Button.new()
 	next_btn.text = "下一步 →" if idx < level0_ui_highlight_steps.size() - 1 else "继续 →"
 	next_btn.custom_minimum_size = Vector2(150, 42)
@@ -425,25 +489,21 @@ func _level0_make_outline_rect(pos: Vector2, size: Vector2, color: Color, width:
 	c.position = pos
 	c.size = size
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	# 上边
 	var top = ColorRect.new()
 	top.color = color
 	top.position = Vector2(0, 0)
 	top.size = Vector2(size.x, width)
 	c.add_child(top)
-	# 下边
 	var bottom = ColorRect.new()
 	bottom.color = color
 	bottom.position = Vector2(0, size.y - width)
 	bottom.size = Vector2(size.x, width)
 	c.add_child(bottom)
-	# 左边
 	var left = ColorRect.new()
 	left.color = color
 	left.position = Vector2(0, 0)
 	left.size = Vector2(width, size.y)
 	c.add_child(left)
-	# 右边
 	var right = ColorRect.new()
 	right.color = color
 	right.position = Vector2(size.x - width, 0)
@@ -486,27 +546,22 @@ func _level0_start_phase2() -> void:
 
 
 func _level0_show_flow_step(idx: int) -> void:
-	# 刷新基础UI
 	_refresh_ui()
 
-	# 清除旧覆盖层
 	if level0_overlay:
 		level0_overlay.queue_free()
 		level0_overlay = null
 
 	if idx >= level0_flow_steps.size():
-		# 流程介绍结束，进入牌局 Phase 3
 		_level0_start_phase3()
 		return
 
 	level0_flow_index = idx
 	_level0_ensure_overlay()
 
-	# 清除旧内容
 	for child in level0_overlay.get_children():
 		child.queue_free()
 
-	# 半透明背景 - 使用 anchors 覆盖全屏
 	var bg = ColorRect.new()
 	bg.color = Color(0, 0, 0, 0.55)
 	bg.anchor_left = 0
@@ -516,7 +571,6 @@ func _level0_show_flow_step(idx: int) -> void:
 	bg.mouse_filter = Control.MOUSE_FILTER_STOP
 	level0_overlay.add_child(bg)
 
-	# 对话框
 	var dialog_bg = ColorRect.new()
 	dialog_bg.color = Color(0.95, 0.95, 1, 0.97)
 	dialog_bg.position = Vector2(100, 250)
@@ -526,7 +580,6 @@ func _level0_show_flow_step(idx: int) -> void:
 	var dialog_border = _level0_make_outline_rect(Vector2(100, 250), Vector2(900, 180), Color(0.3, 0.5, 0.8, 1), 3)
 	level0_overlay.add_child(dialog_border)
 
-	# 标题
 	var title = Label.new()
 	title.text = "游戏流程介绍 %d/3" % (idx + 1)
 	title.add_theme_font_size_override("font_size", 20)
@@ -535,7 +588,6 @@ func _level0_show_flow_step(idx: int) -> void:
 	title.size = Vector2(840, 28)
 	level0_overlay.add_child(title)
 
-	# 内容
 	var content = Label.new()
 	content.text = level0_flow_steps[idx]
 	content.add_theme_font_size_override("font_size", 16)
@@ -545,7 +597,6 @@ func _level0_show_flow_step(idx: int) -> void:
 	content.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	level0_overlay.add_child(content)
 
-	# 按钮
 	var btn_text = "下一步 →" if idx < level0_flow_steps.size() - 1 else "开始对局！"
 	var next_btn = Button.new()
 	next_btn.text = btn_text
@@ -568,7 +619,6 @@ func _level0_flow_next_step() -> void:
 func _level0_start_phase3() -> void:
 	game_manager.tutorial_level0_phase = 3
 
-	# 清除覆盖层
 	if level0_overlay:
 		level0_overlay.queue_free()
 		level0_overlay = null
@@ -576,15 +626,12 @@ func _level0_start_phase3() -> void:
 	level0_active = false
 	_refresh_ui()
 
-	# 创建持久规则提示标签
 	_level0_create_rule_tips()
 
-	# 显示牌局开场提示
 	var intro_tip = _level0_make_tip_box("对局开始！请尝试出牌吧。\nAI默认只出单质和化合物。", 3.0)
 	game_page.add_child(intro_tip)
 
 
-# -------- 第零关规则提示标签（右上角持久显示） --------
 var level0_rule_tip_label: Label = null
 
 func _level0_create_rule_tips() -> void:
@@ -606,7 +653,6 @@ func _level0_update_rule_tips() -> void:
 	if not level0_rule_tip_label or not game_manager or game_manager.tutorial_level0_phase != 3:
 		return
 
-	# 根据玩家操作状态高亮对应规则
 	var rules_info = "── 规则提醒 ──\n\n"
 	var tip = game_manager.level0_rule_tip
 
@@ -630,7 +676,6 @@ func _level0_update_rule_tips() -> void:
 	level0_rule_tip_label.text = rules_info
 
 
-# -------- 临时提示方框 (自动消失) --------
 func _level0_make_tip_box(text: String, duration: float = 2.5) -> Control:
 	var box = Control.new()
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -654,7 +699,6 @@ func _level0_make_tip_box(text: String, duration: float = 2.5) -> Control:
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(lbl)
 
-	# 自动消失
 	var timer = get_tree().create_timer(duration)
 	timer.timeout.connect(box.queue_free)
 
@@ -679,7 +723,6 @@ func _refresh_ui() -> void:
 	_level0_update_rule_tips()
 
 
-# -------- 牌权状态显示（含手牌数） --------
 func _update_info_label() -> void:
 	if info_label and game_manager:
 		info_label.text = _format_player_status()
@@ -706,16 +749,22 @@ func _format_player_status() -> String:
 	for i in range(game_manager.players.size()):
 		counts.append("%s: %d张" % [game_manager.players[i].player_name, game_manager.players[i].get_hand_count()])
 	result += "\n手牌: " + " | ".join(counts)
+	# 补充规则状态
+	if game_manager.organic_rules_enabled or game_manager.sequence_rules_enabled:
+		var rules_list: Array = []
+		if game_manager.organic_rules_enabled: rules_list.append("有机物胜利")
+		if game_manager.sequence_rules_enabled: rules_list.append("顺序牌型")
+		result += "\n【补充规则】" + " + ".join(rules_list)
+	if not game_manager.direction_clockwise:
+		result += "\n方向: ← 逆时针"
 	return result
 
 
-var table_card_buttons: Array = []  # 桌面区迷你卡牌按钮
+var table_card_buttons: Array = []
 
-# -------- 桌面信息显示（含迷你卡牌） --------
 func _update_table_label() -> void:
 	if not table_label or not game_manager: return
 
-	# 清除旧桌面迷你卡牌
 	for btn in table_card_buttons:
 		if is_instance_valid(btn): btn.queue_free()
 	table_card_buttons.clear()
@@ -734,8 +783,6 @@ func _update_table_label() -> void:
 		if game_manager.clan_bomb_chain_active: txt += " ⚠接炸中"
 		table_label.text = txt
 
-		# 渲染桌面迷你卡牌 (72×90px，比手牌略小)
-		# 位于桌面右侧、手牌区上方，避免与手牌重叠
 		for i in range(cards.size()):
 			var mini = _build_mini_card_button(cards[i])
 			mini.position = Vector2(500 + i * 80, 105)
@@ -745,7 +792,6 @@ func _update_table_label() -> void:
 		table_label.text = "桌面: 空"
 
 
-# -------- 构建桌面迷你卡牌 (72×90px) --------
 func _build_mini_card_button(card) -> Button:
 	var btn = Button.new()
 	btn.custom_minimum_size = Vector2(72, 90)
@@ -769,7 +815,6 @@ func _build_mini_card_button(card) -> Button:
 	style_hover.border_color = Color(0.3, 0.5, 0.8, 1.0)
 	btn.add_theme_stylebox_override("hover", style_hover)
 
-	# 原子序数 (左上，8px)
 	var l_num = Label.new()
 	l_num.text = str(card.atomic_number)
 	l_num.add_theme_font_size_override("font_size", 8)
@@ -777,7 +822,6 @@ func _build_mini_card_button(card) -> Button:
 	l_num.position = Vector2(3, 1)
 	btn.add_child(l_num)
 
-	# 族 (右上，7px)
 	var l_group = Label.new()
 	l_group.text = card.group
 	l_group.add_theme_font_size_override("font_size", 7)
@@ -787,7 +831,6 @@ func _build_mini_card_button(card) -> Button:
 	l_group.position = Vector2(37, 2)
 	btn.add_child(l_group)
 
-	# 符号 (中上，15px着色)
 	var l_sym = Label.new()
 	l_sym.text = card.symbol
 	l_sym.add_theme_font_size_override("font_size", 15)
@@ -797,7 +840,6 @@ func _build_mini_card_button(card) -> Button:
 	l_sym.position = Vector2(4, 18)
 	btn.add_child(l_sym)
 
-	# 中文名 (中，9px)
 	var l_name = Label.new()
 	l_name.text = card.name_cn
 	l_name.add_theme_font_size_override("font_size", 9)
@@ -807,7 +849,6 @@ func _build_mini_card_button(card) -> Button:
 	l_name.position = Vector2(4, 38)
 	btn.add_child(l_name)
 
-	# 化合价 (中下，8px)
 	var val_str = ""
 	for v in card.common_valence:
 		if val_str != "": val_str += " "
@@ -822,7 +863,6 @@ func _build_mini_card_button(card) -> Button:
 	l_val.position = Vector2(4, 52)
 	btn.add_child(l_val)
 
-	# 相对原子质量 (左下，7px)
 	var l_mass = Label.new()
 	l_mass.text = "%.1f" % card.atomic_weight
 	l_mass.add_theme_font_size_override("font_size", 7)
@@ -833,7 +873,6 @@ func _build_mini_card_button(card) -> Button:
 	return btn
 
 
-# -------- 游戏日志 --------
 func _update_log_label() -> void:
 	if not log_label or not game_manager: return
 	var new_logs = game_manager.flush_logs()
@@ -845,7 +884,6 @@ func _update_log_label() -> void:
 	log_label.text = "\n".join(log_lines)
 
 
-# -------- 可出牌型提示 --------
 func _update_card_info_label() -> void:
 	if not card_info_label or not game_manager: return
 	var cp = game_manager.get_current_player()
@@ -856,7 +894,6 @@ func _update_card_info_label() -> void:
 	card_info_label.text = "提示: " + hint
 
 
-# -------- 牌库计数 + 手牌上限 --------
 func _update_deck_count() -> void:
 	if not deck_count_label or not game_manager: return
 	var db = game_manager.database
@@ -867,7 +904,6 @@ func _update_deck_count() -> void:
 		deck_count_label.text += "  手牌上限: %d张" % hand_limit
 
 
-# -------- 教程引导文本 --------
 func _update_tutorial_label() -> void:
 	if not tutorial_label or not game_manager: return
 	if game_manager.tutorial_level > 0 or game_manager.tutorial_level0_phase >= 3:
@@ -894,7 +930,6 @@ func _update_action_panel() -> void:
 	if cp == null or cp.is_ai or game_manager.is_game_over(): return
 
 	if step_mode == 0:
-		# Step0: 选牌阶段 → 出牌/跳过
 		action_panel.add_child(_mkb("出牌(选牌型)", _on_step_next, selected_indices.is_empty()))
 		var hand_limit = min(game_manager.players.size() * 4, 18)
 		if cp.get_hand_count() >= hand_limit:
@@ -902,20 +937,21 @@ func _update_action_panel() -> void:
 		else:
 			action_panel.add_child(_mkb("跳过", _on_pass, false))
 	elif step_mode == 1:
-		# Step1: 选牌型 → 单质/化合物/族炸/返回 (接炸中只显示族炸)
 		if game_manager.clan_bomb_chain_active and game_manager.get_current_player_index() != game_manager.clan_bomb_owner:
 			action_panel.add_child(_mkb("作为族炸打出", _on_clan_bomb, false))
 			action_panel.add_child(_mkb("返回", _on_back, false))
 		else:
 			action_panel.add_child(_mkb("作为单质打出", _on_element, false))
 			action_panel.add_child(_mkb("合成化合物", _on_choose_compound, false))
+			if game_manager.sequence_rules_enabled:
+				action_panel.add_child(_mkb("作为顺序打出", _on_sequence, false))
+			if game_manager.organic_rules_enabled:
+				action_panel.add_child(_mkb("合成有机物(化合物)", _on_choose_organic, false))
 			action_panel.add_child(_mkb("作为族炸打出", _on_clan_bomb, false))
 			action_panel.add_child(_mkb("返回", _on_back, false))
 	elif step_mode == 2:
-		# Step2: 化合价选择
 		_update_valence_buttons()
 	elif step_mode == 3:
-		# Step3: 上限弃牌确认
 		action_panel.add_child(_mkb("确认弃置", _on_pass, selected_indices.size() != 1))
 		action_panel.add_child(_mkb("取消", _on_back, false))
 
@@ -940,16 +976,15 @@ func _on_hint_toggled(pressed: bool) -> void:
 
 # ============================================================
 # 十一、元素着色规则
-# 优先级: 精确符号 > 族匹配(VIIA) > 类型匹配
 # ============================================================
 func _get_card_color(card) -> Color:
 	var sym = card.symbol
 	if sym == "H": return Color(0.4, 0.7, 1.0)
 	if sym == "O": return Color(0.0, 0.3, 1.0)
 	if sym == "N": return Color(0.4, 0.2, 0.8)
-	if sym == "F": return Color(0.56, 1.0, 0.56)  # 浅绿色
-	if sym == "Cl": return Color(0.56, 1.0, 0.56)  # 浅绿色
-	if sym == "Br": return Color(0.6, 0.4, 0.2)  # 棕色
+	if sym == "F": return Color(0.56, 1.0, 0.56)
+	if sym == "Cl": return Color(0.56, 1.0, 0.56)
+	if sym == "Br": return Color(0.6, 0.4, 0.2)
 	if sym in ["C", "B", "Si", "S"]: return Color(1.0, 0.9, 0.1)
 	if sym == "P": return Color(1.0, 0.85, 0.85)
 	if card.group in ["VIIA"]: return Color(0.0, 0.7, 0.2)
@@ -975,7 +1010,6 @@ func _update_hand_buttons() -> void:
 	if cp == null: return
 
 	if cp.is_ai:
-		# AI 回合：显示等待标签
 		var wl = Label.new()
 		wl.text = "等待 %s 行动中..." % cp.player_name
 		wl.add_theme_font_size_override("font_size", 28)
@@ -985,7 +1019,6 @@ func _update_hand_buttons() -> void:
 			var timer = get_tree().create_timer(1.5)
 			timer.timeout.connect(_ai_auto_play)
 	else:
-		# 人类玩家：渲染牌面按钮
 		cp.sort_hand_by_atomic_number()
 		for i in range(cp.hand.size()):
 			var card = cp.hand[i]
@@ -994,13 +1027,11 @@ func _update_hand_buttons() -> void:
 			hand_buttons.append(btn)
 
 
-# -------- 构建单张原子牌面 (95×118px 白底圆角牌面) --------
 func _build_card_button(card, idx: int) -> Button:
 	var btn = Button.new()
 	btn.custom_minimum_size = Vector2(95, 118)
 	btn.tooltip_text = card.get_full_info()
 
-	# 正常样式：白底 + 灰色边框 + 圆角
 	var style_normal = StyleBoxFlat.new()
 	style_normal.bg_color = Color(0.97, 0.97, 0.98, 1.0)
 	style_normal.border_width_left = 2
@@ -1014,13 +1045,11 @@ func _build_card_button(card, idx: int) -> Button:
 	style_normal.corner_radius_bottom_right = 6
 	btn.add_theme_stylebox_override("normal", style_normal)
 
-	# 悬浮样式：边框变蓝
 	var style_hover = style_normal.duplicate()
 	style_hover.bg_color = Color(0.9, 0.93, 0.98, 1.0)
 	style_hover.border_color = Color(0.3, 0.5, 0.8, 1.0)
 	btn.add_theme_stylebox_override("hover", style_hover)
 
-	# 选中样式：黄底 + 金色加粗边框
 	if idx in selected_indices:
 		var style_sel = style_normal.duplicate()
 		style_sel.bg_color = Color(1.0, 1.0, 0.8, 1.0)
@@ -1031,7 +1060,6 @@ func _build_card_button(card, idx: int) -> Button:
 		style_sel.border_width_bottom = 3
 		btn.add_theme_stylebox_override("normal", style_sel)
 
-	# 原子序数 (左上)
 	var l_num = Label.new()
 	l_num.text = str(card.atomic_number)
 	l_num.add_theme_font_size_override("font_size", 11)
@@ -1039,7 +1067,6 @@ func _build_card_button(card, idx: int) -> Button:
 	l_num.position = Vector2(4, 2)
 	btn.add_child(l_num)
 
-	# 族 (右上)
 	var l_group = Label.new()
 	l_group.text = card.group
 	l_group.add_theme_font_size_override("font_size", 9)
@@ -1049,7 +1076,6 @@ func _build_card_button(card, idx: int) -> Button:
 	l_group.position = Vector2(43, 3)
 	btn.add_child(l_group)
 
-	# 符号 (中上，20px着色)
 	var l_sym = Label.new()
 	l_sym.text = card.symbol
 	l_sym.add_theme_font_size_override("font_size", 20)
@@ -1059,7 +1085,6 @@ func _build_card_button(card, idx: int) -> Button:
 	l_sym.position = Vector2(5, 22)
 	btn.add_child(l_sym)
 
-	# 中文名 (中，11px)
 	var l_name = Label.new()
 	l_name.text = card.name_cn
 	l_name.add_theme_font_size_override("font_size", 11)
@@ -1069,7 +1094,6 @@ func _build_card_button(card, idx: int) -> Button:
 	l_name.position = Vector2(5, 48)
 	btn.add_child(l_name)
 
-	# 化合价 (中下，标注正负)
 	var val_str = ""
 	for v in card.common_valence:
 		if val_str != "": val_str += " "
@@ -1084,7 +1108,6 @@ func _build_card_button(card, idx: int) -> Button:
 	l_val.position = Vector2(5, 65)
 	btn.add_child(l_val)
 
-	# 相对原子质量 (左下)
 	var l_mass = Label.new()
 	l_mass.text = "%.1f" % card.atomic_weight
 	l_mass.add_theme_font_size_override("font_size", 9)
@@ -1156,13 +1179,23 @@ func _on_step_next() -> void:
 	step_mode = 1
 	_update_action_panel()
 
-# -------- 打出牌型 --------
 func _on_element() -> void:
 	var cp = game_manager.get_current_player()
 	var cards: Array = []
 	for _idx in selected_indices: cards.append(cp.hand[_idx])
 	if UtilsScript.detect_pattern(cards) != UtilsScript.CardPattern.ELEMENT:
 		_show_info("不是有效单质！")
+		_on_back()
+		return
+	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards)
+	_handle_result(result)
+
+func _on_sequence() -> void:
+	var cp = game_manager.get_current_player()
+	var cards: Array = []
+	for _idx in selected_indices: cards.append(cp.hand[_idx])
+	if UtilsScript.detect_pattern(cards) != UtilsScript.CardPattern.SEQUENCE:
+		_show_info("不是有效顺序！需≥3张连续原子序数的牌。")
 		_on_back()
 		return
 	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards)
@@ -1189,7 +1222,6 @@ func _on_choose_compound() -> void:
 		_show_info("化合物至少需要两种不同元素！")
 		_on_back()
 		return
-	# 禁止卤族元素互化 (F/Cl/Br 之间)
 	if _is_halogen_only(symbols):
 		_show_info("卤族元素(F/Cl/Br)之间不可互相化合！请加入金属或其他非金属元素。")
 		_on_back()
@@ -1197,6 +1229,26 @@ func _on_choose_compound() -> void:
 	step_mode = 2
 	compound_selections.clear()
 	_update_action_panel()
+
+func _on_choose_organic() -> void:
+	var cp = game_manager.get_current_player()
+	var cards: Array = []
+	for _idx in selected_indices: cards.append(cp.hand[_idx])
+	# 检查是否为有机物
+	if UtilsScript.detect_pattern(cards, true) != UtilsScript.CardPattern.ORGANIC:
+		_show_info("不是有效有机物！有机物包括：甲烷CH4、乙烷C2H6、丙烷C3H8及他们的单一卤代物。\n卤代物只能包含一种卤族元素(F/Cl/Br)。")
+		_on_back()
+		return
+	# 打出有机物，标记 _organic 跳过族炸检测
+	var custom_valences = {"_organic": true}
+	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards, custom_valences)
+	if result == 0:
+		# 有机物打出成功
+		log_lines.push_back("🎉 %s 打出有机物，立即获胜！" % cp.player_name)
+		_handle_result(result)
+	else:
+		_show_info("有机物打出失败！")
+		_on_back()
 
 func _on_select_valence(symbol: String, valence: int) -> void:
 	for sel in compound_selections:
@@ -1236,7 +1288,6 @@ func _on_confirm_compound() -> void:
 		})
 
 	if valence_list.size() == 2:
-		# 2元素化合物：GCD 最简比
 		var a = valence_list[0]
 		var b = valence_list[1]
 		if a.sign * b.sign > 0:
@@ -1292,7 +1343,6 @@ func _on_back() -> void:
 	compound_selections.clear()
 	_update_action_panel()
 
-# -------- 跳过与上限弃牌 --------
 func _on_pass() -> void:
 	var cp = game_manager.get_current_player()
 	var hand_limit = min(game_manager.players.size() * 4, 18)
@@ -1333,17 +1383,12 @@ func _on_discard_mode() -> void:
 # 十五、结果处理与状态重置
 # ============================================================
 func _handle_result(result: int) -> void:
-	if result == 0:
-		# 第0关：牌局阶段，玩家操作后检查是否需要显示规则提示
+	if result == 0:  # 成功打出（普通牌型）或有机物胜利/手牌出完
 		if game_manager != null and game_manager.tutorial_level0_phase == 3:
 			var tip = game_manager.level0_rule_tip
 			if tip == "越大越小":
 				var tip_box = _level0_make_tip_box("【越大越小】\n同牌型比较时，原子序数和越小的牌越大。桌面牌必须被你出的牌压过（你的牌要更大）！", 4.0)
 				game_page.add_child(tip_box)
-			elif tip == "同类同出":
-				# 同类同出提示在打出单质/化合物时已经通过level0_last_player_action记录
-				if game_manager.clan_bomb_chain_active:
-					pass  # 族炸的"牌权争夺"已记录
 			elif tip == "牌权争夺":
 				var tip_box = _level0_make_tip_box("【牌权争夺】\n你打出了族炸！族炸可以超越牌型限制，直接抢到牌权。但注意：打出族炸后进入冷却❄，需要用化合物解除。", 4.5)
 				game_page.add_child(tip_box)
@@ -1351,13 +1396,102 @@ func _handle_result(result: int) -> void:
 		_step_reset()
 		_refresh_ui()
 		return
+	elif result == 1:  # 打出顺序，需要选择指定牌型
+		_step_reset()
+		_show_sequence_constraint_dialog()
+		return
 	var msg = "非法出牌！"
 	if result == -2: msg = "牌不够大！"
 	elif result == -3: msg = "不能出族炸！"
 	elif result == -4: msg = "牌型不匹配！"
+	elif result == -6: msg = "不符合顺序指定的牌型约束！"
 	_show_info(msg)
 	_on_back()
 
+
+# ============================================================
+# 十五之二、顺序指定牌型弹窗
+# ============================================================
+func _show_sequence_constraint_dialog() -> void:
+	# 创建弹窗
+	var overlay = Control.new()
+	overlay.anchor_left = 0
+	overlay.anchor_top = 0
+	overlay.anchor_right = 1
+	overlay.anchor_bottom = 1
+	overlay.mouse_filter = Control.MOUSE_FILTER_STOP
+
+	var bg = ColorRect.new()
+	bg.color = Color(0, 0, 0, 0.5)
+	bg.anchor_left = 0; bg.anchor_top = 0
+	bg.anchor_right = 1; bg.anchor_bottom = 1
+	overlay.add_child(bg)
+
+	var panel = ColorRect.new()
+	panel.color = Color(0.95, 0.95, 1, 0.97)
+	panel.position = Vector2(300, 250)
+	panel.size = Vector2(500, 250)
+	overlay.add_child(panel)
+
+	var title = Label.new()
+	title.text = "选择下一名玩家必须打出的牌型"
+	title.add_theme_font_size_override("font_size", 18)
+	title.add_theme_color_override("font_color", Color(0, 0, 0, 1))
+	title.position = Vector2(320, 260)
+	title.size = Vector2(460, 30)
+	overlay.add_child(title)
+
+	var desc = Label.new()
+	desc.text = "打出「顺序」后，出牌方向已反转。\n请选择让下一名玩家打出哪种牌型，\n否则该玩家将被罚抽2张牌。"
+	desc.add_theme_font_size_override("font_size", 13)
+	desc.add_theme_color_override("font_color", Color(0.2, 0.2, 0.2, 1))
+	desc.position = Vector2(320, 295)
+	desc.size = Vector2(460, 65)
+	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	overlay.add_child(desc)
+
+	# 可选择：单质、化合物、族炸（有机物也可以）
+	var patterns = [
+		{"name": "单质", "pattern": UtilsScript.CardPattern.ELEMENT},
+		{"name": "化合物", "pattern": UtilsScript.CardPattern.COMPOUND},
+		{"name": "族炸", "pattern": UtilsScript.CardPattern.CLAN_BOMB},
+	]
+	if game_manager.organic_rules_enabled:
+		patterns.append({"name": "有机物", "pattern": UtilsScript.CardPattern.ORGANIC})
+
+	for i in range(patterns.size()):
+		var btn = Button.new()
+		btn.text = patterns[i].name
+		btn.custom_minimum_size = Vector2(140, 40)
+		btn.add_theme_font_size_override("font_size", 15)
+		btn.position = Vector2(320 + (i % 3) * 150, 370 + (i / 3) * 50)
+		var p = patterns[i].pattern
+		btn.pressed.connect(func():
+			game_manager.set_sequence_constraint(p)
+			overlay.queue_free()
+			_refresh_ui()
+		)
+		overlay.add_child(btn)
+
+	# 取消按钮（不指定，视为放弃权利）
+	var cancel_btn = Button.new()
+	cancel_btn.text = "跳过指定"
+	cancel_btn.custom_minimum_size = Vector2(140, 40)
+	cancel_btn.add_theme_font_size_override("font_size", 14)
+	cancel_btn.position = Vector2(470, 370 + patterns.size() / 3 * 50 + 10)
+	cancel_btn.pressed.connect(func():
+		game_manager.sequence_constraint_active = false
+		game_manager.sequence_constraint = -1
+		game_manager.next_turn()
+		overlay.queue_free()
+		_refresh_ui()
+	)
+	overlay.add_child(cancel_btn)
+
+	game_page.add_child(overlay)
+
+
+# ============================================================
 func _step_reset() -> void:
 	selected_indices.clear()
 	step_mode = 0
@@ -1374,22 +1508,35 @@ func _show_end_page(custom_text: String) -> void:
 	end_page.visible = true
 	if help_page_rules: help_page_rules.visible = false
 	if help_page_cards: help_page_cards.visible = false
+	if help_page_supp: help_page_supp.visible = false
 	var is_tutorial = (game_manager != null and (game_manager.tutorial_level >= 1 or game_manager.tutorial_level0_phase >= 1))
 	if end_label:
 		if game_manager:
 			var w = game_manager.get_winner()
 			if w:
 				end_label.text = "获胜者: %s" % w.player_name
-				# 教学关卡：返回按钮指向教学引导页
 				if is_tutorial:
 					if tut_page: tut_page.visible = false
 					if end_button:
-						end_button.pressed.disconnect(_show_start_page)
-						end_button.pressed.connect(_on_show_tutorial_page)
+						_ensure_end_button_connected(_on_show_tutorial_page)
+				else:
+					_ensure_end_button_connected(_show_start_page)
 				return
 		end_label.text = custom_text if custom_text != "" else "游戏结束"
+	_ensure_end_button_connected(_show_start_page)
 	if is_tutorial:
 		if tut_page: tut_page.visible = false
+
+
+func _ensure_end_button_connected(target: Callable) -> void:
+	if end_button == null:
+		return
+	if end_button.pressed.is_connected(_show_start_page):
+		end_button.pressed.disconnect(_show_start_page)
+	if end_button.pressed.is_connected(_on_show_tutorial_page):
+		end_button.pressed.disconnect(_on_show_tutorial_page)
+	if not end_button.pressed.is_connected(target):
+		end_button.pressed.connect(target)
 
 
 # ============================================================
@@ -1400,7 +1547,7 @@ func _ai_auto_play() -> void:
 	var cp = game_manager.get_current_player()
 	if cp == null or not cp.is_ai or cp.hand.is_empty(): return
 	var gm_idx = game_manager.get_current_player_index()
-	# 第0关AI：族炸链中直接跳过（不能出族炸），其余只出单质和化合物
+
 	if game_manager.tutorial_level == 0 and game_manager.tutorial_level0_phase >= 1:
 		if game_manager.clan_bomb_chain_active:
 			game_manager.player_pass(gm_idx)
@@ -1415,13 +1562,10 @@ func _ai_auto_play() -> void:
 		_refresh_ui()
 		return
 
-	# 非第0关AI：使用完整策略
 	_ai_try_play(cp, gm_idx)
 	_refresh_ui()
 
-# -------- 第0关AI：只出单质或化合物 --------
 func _ai_try_play_level0(p, gm_idx: int):
-	# 1. 化合物配对 O(n²)（跳过卤族互化对）
 	for i in range(p.hand.size()):
 		for j in range(i + 1, p.hand.size()):
 			var pair = [p.hand[i], p.hand[j]]
@@ -1439,7 +1583,6 @@ func _ai_try_play_level0(p, gm_idx: int):
 					cv[sym] = v
 				if game_manager.play_cards(gm_idx, pair, cv) == 0: return
 
-	# 2. 双原子分子配对
 	for i in range(p.hand.size()):
 		var c = p.hand[i]
 		if c.symbol in UtilsScript.DIATOMIC_SYMBOLS:
@@ -1449,14 +1592,11 @@ func _ai_try_play_level0(p, gm_idx: int):
 					if game_manager.play_cards(gm_idx, dp) == 0: return
 					break
 
-	# 3. 单质单张
 	for c in p.hand:
 		if game_manager.play_cards(gm_idx, [c]) == 0: return
 
-	# 4. 全部失败 → 跳过
 	game_manager.player_pass(gm_idx)
 
-# -------- AI 族炸尝试 --------
 func _ai_try_clan_bomb(p, gm_idx: int):
 	var bg = _group_by_group(p.hand)
 	for g in bg:
@@ -1464,16 +1604,13 @@ func _ai_try_clan_bomb(p, gm_idx: int):
 			if game_manager.play_cards(gm_idx, bg[g].duplicate()) == 0: return
 	game_manager.player_pass(gm_idx)
 
-# -------- AI 出牌优先顺序: 族炸 → 化合物 → 双原子 → 单质 --------
 func _ai_try_play(p, gm_idx: int):
-	# 1. 族炸尝试
 	if not p.clan_bomb_cooling:
 		var bg = _group_by_group(p.hand)
 		for g in bg:
 			if bg[g].size() >= 2:
 				if game_manager.play_cards(gm_idx, bg[g].duplicate()) == 0: return
 
-	# 2. 化合物配对 O(n²)（跳过卤族互化对）
 	for i in range(p.hand.size()):
 		for j in range(i + 1, p.hand.size()):
 			var pair = [p.hand[i], p.hand[j]]
@@ -1492,7 +1629,6 @@ func _ai_try_play(p, gm_idx: int):
 					cv[sym] = v
 				if game_manager.play_cards(gm_idx, pair, cv) == 0: return
 
-	# 3. 双原子分子配对
 	for i in range(p.hand.size()):
 		var c = p.hand[i]
 		if c.symbol in UtilsScript.DIATOMIC_SYMBOLS:
@@ -1502,14 +1638,11 @@ func _ai_try_play(p, gm_idx: int):
 					if game_manager.play_cards(gm_idx, dp) == 0: return
 					break
 
-	# 4. 单质单张
 	for c in p.hand:
 		if game_manager.play_cards(gm_idx, [c]) == 0: return
 
-	# 5. 全部失败 → 跳过
 	game_manager.player_pass(gm_idx)
 
-# -------- AI 辅助函数 --------
 func _group_by_group(hand: Array) -> Dictionary:
 	var r = {}
 	for c in hand:

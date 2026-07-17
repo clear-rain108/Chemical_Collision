@@ -145,6 +145,53 @@ grow_horizontal = 2
 theme_override_font_sizes/font_size = 24
 text = "教学引导"
 
+[node name="OrganicCheckBox" type="CheckBox" parent="StartPage" unique_id=484320361]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.83
+anchor_right = 0.5
+anchor_bottom = 0.83
+offset_left = -180.0
+offset_top = -15.0
+offset_right = 80.0
+offset_bottom = 15.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 18
+text = "有机物胜利规则"
+
+[node name="SequenceCheckBox" type="CheckBox" parent="StartPage" unique_id=1245855590]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.88
+anchor_right = 0.5
+anchor_bottom = 0.88
+offset_left = -180.0
+offset_top = -15.0
+offset_right = 80.0
+offset_bottom = 15.0
+grow_horizontal = 2
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 18
+text = "顺序牌型规则"
+
+[node name="SupplementaryHelpBtn" type="Button" parent="StartPage" unique_id=1175101231]
+layout_mode = 1
+anchors_preset = -1
+anchor_left = 0.5
+anchor_top = 0.93
+anchor_right = 0.5
+anchor_bottom = 0.93
+offset_left = -90.0
+offset_top = -20.0
+offset_right = 90.0
+offset_bottom = 20.0
+grow_horizontal = 2
+theme_override_font_sizes/font_size = 16
+text = "查看补充规则"
+
 [node name="EndPage" type="Control" parent="." unique_id=676685224]
 visible = false
 layout_mode = 1
@@ -481,7 +528,7 @@ text = "□ 手牌上限规则
   · 5人局: 上限18张(截断)
   · 6~8人局: 上限18张
 
-□ 上限弃牌规则（新增）
+□ 上限弃牌规则
 手牌达上限时：
   必须选择1张手牌弃置
   不能正常跳过抽牌
@@ -549,11 +596,20 @@ offset_bottom = 622.0
 theme_override_font_sizes/font_size = 15
 text = "返回游戏"
 
-[node name="HelpRulesToCardsBtn" type="Button" parent="HelpPage_Rules" unique_id=1398980499]
+[node name="HelpRulesToSuppBtn" type="Button" parent="HelpPage_Rules" unique_id=1308879121]
 layout_mode = 0
 offset_left = 150.0
 offset_top = 595.0
-offset_right = 340.0
+offset_right = 290.0
+offset_bottom = 622.0
+theme_override_font_sizes/font_size = 15
+text = "补充规则 →"
+
+[node name="HelpRulesToCardsBtn" type="Button" parent="HelpPage_Rules" unique_id=1398980499]
+layout_mode = 0
+offset_left = 310.0
+offset_top = 595.0
+offset_right = 500.0
 offset_bottom = 622.0
 theme_override_font_sizes/font_size = 15
 text = "查看卡牌介绍 →"
@@ -744,7 +800,183 @@ offset_bottom = 622.0
 theme_override_font_sizes/font_size = 15
 text = "返回游戏"
 
+[node name="HelpCardsToSuppBtn" type="Button" parent="HelpPage_Cards" unique_id=1658395922]
+layout_mode = 0
+offset_left = 150.0
+offset_top = 595.0
+offset_right = 290.0
+offset_bottom = 622.0
+theme_override_font_sizes/font_size = 15
+text = "补充规则 →"
+
 [node name="HelpCardsToRulesBtn" type="Button" parent="HelpPage_Cards" unique_id=1177262367]
+layout_mode = 0
+offset_left = 310.0
+offset_top = 595.0
+offset_right = 500.0
+offset_bottom = 622.0
+theme_override_font_sizes/font_size = 15
+text = "← 查看规则介绍"
+
+[node name="HelpPage_Supp" type="Control" parent="." unique_id=1775682911]
+visible = false
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -575.0
+offset_top = -325.0
+offset_right = 575.0
+offset_bottom = 325.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="HelpSuppBackground" type="ColorRect" parent="HelpPage_Supp" unique_id=1800942021]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+color = Color(0.78, 0.88, 0.98, 1)
+
+[node name="HelpSuppTitle" type="Label" parent="HelpPage_Supp" unique_id=1434195713]
+layout_mode = 0
+offset_left = 30.0
+offset_top = 8.0
+offset_right = 1120.0
+offset_bottom = 32.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 22
+text = "■ 补充规则说明"
+horizontal_alignment = 1
+
+[node name="HelpSuppCol1" type="Label" parent="HelpPage_Supp" unique_id=1576616888]
+layout_mode = 0
+offset_left = 30.0
+offset_top = 40.0
+offset_right = 350.0
+offset_bottom = 585.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 12
+text = "□ 补充规则启用方式
+在开始页勾选「规则补充」
+后开始游戏即可启用。
+启用后游戏页会显示
+【补充规则】状态提示。
+
+□ 有机物胜利规则
+有机物是化合物的一种
+特殊子类型。仅承认：
+· 甲烷 CH₄
+  C×1 + H×4
+· 乙烷 C₂H₆
+  C×2 + H×6
+· 丙烷 C₃H₈
+  C×3 + H×8
+· 单一卤代物
+  以上烷烃中一个H被
+  一种卤族元素(F/Cl/Br)替换
+  例: CH₃Cl(C×1+H×3+Cl×1)
+       C₂H₅F(C×2+H×5+F×1)
+  限制:
+  只能含一种卤族元素！
+
+□ 有机物打出方式
+选中正确组合的牌后
+在牌型选择步骤点
+「合成有机物(化合物)」
+即可打出"
+autowrap_mode = 3
+
+[node name="HelpSuppCol2" type="Label" parent="HelpPage_Supp" unique_id=188263997]
+layout_mode = 0
+offset_left = 370.0
+offset_top = 40.0
+offset_right = 690.0
+offset_bottom = 585.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 12
+text = "□ 有机物胜利判定
+打出有机物后
+游戏立即结束
+打出者直接获胜！
+
+□ 有机物牌力
+族炸 > 有机物 > 化合物 > 单质
+
+□ 顺序牌型规则
+由三张及以上
+连续原子序数的牌构成
+例: H(1)+He(2)+Li(3)=3张
+   B(5)+C(6)+N(7)+O(8)=4张
+
+□ 顺序特性一
+没有大小比较！
+可以和桌面上的任何牌
+争牌权。打出顺序后
+桌面复位为新桌面。
+
+□ 顺序特性二
+打出时，出牌的顺序反转！
+顺时针 ↔ 逆时针
+当前方向在状态栏显示
+  (→ 顺时针 | ← 逆时针)
+"
+autowrap_mode = 3
+
+[node name="HelpSuppCol3" type="Label" parent="HelpPage_Supp" unique_id=138439687]
+layout_mode = 0
+offset_left = 710.0
+offset_top = 40.0
+offset_right = 1120.0
+offset_bottom = 585.0
+theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_font_sizes/font_size = 12
+text = "□ 顺序特性三
+打出顺序后弹出对话框
+让玩家选择下一名玩家
+必须打出的牌型：
+· 单质
+· 化合物
+· 族炸
+· 有机物(如启用补充规则)
+若不打出指定牌型
+该玩家罚抽2张牌
+并跳过回合。
+
+□ 顺序特性四
+无论下一名玩家
+出什么牌
+再下一名玩家都
+自由出牌！
+约束仅作用于
+紧邻的下一名玩家。
+
+□ 族炸打断
+族炸可以打断
+顺序的牌型约束
+打出族炸后约束消除
+族炸接炸正常进行
+
+□ 补充规则适用范围
+仅在开始页勾选后启用
+教学关卡默认不启用
+"
+autowrap_mode = 3
+
+[node name="HelpSuppBackBtn" type="Button" parent="HelpPage_Supp" unique_id=437692206]
+layout_mode = 0
+offset_left = 30.0
+offset_top = 595.0
+offset_right = 130.0
+offset_bottom = 622.0
+theme_override_font_sizes/font_size = 15
+text = "返回游戏"
+
+[node name="HelpSuppToRulesBtn" type="Button" parent="HelpPage_Supp" unique_id=1180158041]
 layout_mode = 0
 offset_left = 150.0
 offset_top = 595.0
@@ -752,6 +984,15 @@ offset_right = 340.0
 offset_bottom = 622.0
 theme_override_font_sizes/font_size = 15
 text = "← 查看规则介绍"
+
+[node name="HelpSuppToCardsBtn" type="Button" parent="HelpPage_Supp" unique_id=1331215586]
+layout_mode = 0
+offset_left = 360.0
+offset_top = 595.0
+offset_right = 550.0
+offset_bottom = 622.0
+theme_override_font_sizes/font_size = 15
+text = "查看卡牌介绍 →"
 
 [node name="GamePage" type="Control" parent="." unique_id=1067851078]
 visible = false
@@ -852,16 +1093,6 @@ offset_right = 770.0
 offset_bottom = 599.0
 theme_override_font_sizes/font_size = 13
 text = "退出游戏"
-
-[node name="ExitProgramButton" type="Button" parent="GamePage" unique_id=1319816787]
-visible = false
-layout_mode = 0
-offset_left = 380.0
-offset_top = 555.0
-offset_right = 480.0
-offset_bottom = 590.0
-theme_override_font_sizes/font_size = 13
-text = "关闭程序"
 
 [node name="CardInfoLabel" type="Label" parent="GamePage" unique_id=244830457]
 layout_mode = 0

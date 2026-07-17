@@ -1,6 +1,7 @@
 # ============================================================
 # GameManager.gd - 游戏规则引擎
 # 回合管理 / 出牌校验 / 族炸接炸链 / 教程关卡 / 上限弃牌
+# 补充规则：有机物立即胜利 / 顺序牌型（方向反转+指定牌型）
 # ============================================================
 
 const CardDatabaseScript = preload("res://scripts/CardDatabase.gd")
@@ -30,10 +31,19 @@ var log_messages: Array = []
 # ============================================================
 # 三、规则状态变量
 # ============================================================
-var compound_immune: bool = false      # 溢出化合物免疫族炸
-var clan_bomb_chain_active: bool = false # 族炸接炸链激活
-var clan_bomb_owner: int = -1          # 接炸链引爆者索引
-var clan_bomb_disabled: bool = false   # 禁用族炸（第一关）
+var compound_immune: bool = false          # 溢出化合物免疫族炸
+var clan_bomb_chain_active: bool = false   # 族炸接炸链激活
+var clan_bomb_owner: int = -1              # 接炸链引爆者索引
+var clan_bomb_disabled: bool = false       # 禁用族炸（第一关）
+
+# ============================================================
+# 三之二、补充规则状态变量
+# ============================================================
+var organic_rules_enabled: bool = false        # 有机物规则开关
+var sequence_rules_enabled: bool = false       # 顺序规则开关
+var direction_clockwise: bool = true           # 出牌方向（true=顺时针, false=逆时针）
+var sequence_constraint: int = -1              # 顺序指定牌型约束（-1=无约束）
+var sequence_constraint_active: bool = false   # 顺序约束是否激活
 
 # ============================================================
 # 四、教程状态变量
@@ -109,6 +119,9 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> bool:
 	clan_bomb_chain_active = false
 	clan_bomb_owner = -1
 	clan_bomb_disabled = false
+	direction_clockwise = true
+	sequence_constraint = -1
+	sequence_constraint_active = false
 	tutorial_level = 0
 	tutorial_step = 0
 	tutorial_guidance = ""
@@ -138,6 +151,11 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> bool:
 
 	phase = 1
 	log_messages.append("===== 游戏开始 =====")
+	if organic_rules_enabled or sequence_rules_enabled:
+		var rules_list: Array = []
+		if organic_rules_enabled: rules_list.append("有机物胜利")
+		if sequence_rules_enabled: rules_list.append("顺序牌型")
+		log_messages.append("【补充规则已启用】" + " + ".join(rules_list))
 	log_messages.append("当前回合: %s (自由出牌)" % players[current_player_index].player_name)
 	return true
 
@@ -163,6 +181,9 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 
 	var player = players[player_index]
 	var skip_bomb = custom_valences.size() >= 2
+	# 合成有机物时也跳过族炸检测
+	if custom_valences.has("_organic"):
+		skip_bomb = true
 	var pattern = UtilsScript.detect_pattern(cards, skip_bomb)
 	if pattern == -1:
 		return -1
@@ -170,6 +191,11 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 	# -------- 第零关AI禁止出族炸 --------
 	if tutorial_level == 0 and tutorial_level0_phase >= 1 and player.is_ai and pattern == UtilsScript.CardPattern.CLAN_BOMB:
 		return -3
+
+	# -------- 顺序约束检查 --------
+	if sequence_constraint_active and not is_round_starter and player_index != table_player_index:
+		if sequence_constraint >= 0 and pattern != sequence_constraint:
+			return -6  # 不符合顺序指定的牌型约束
 
 	# -------- 族炸判定 --------
 	if pattern == UtilsScript.CardPattern.CLAN_BOMB:
@@ -222,6 +248,8 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 		var fi = UtilsScript.get_compound_formula(cards, custom_valences)
 		if not fi.is_empty():
 			log_msg += " " + fi.get("formula", "??")
+	if pattern == UtilsScript.CardPattern.ORGANIC:
+		log_msg += " " + UtilsScript.get_organic_name(cards)
 	log_msg += ")"
 	log_messages.append(log_msg)
 
@@ -233,16 +261,25 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 		elif not is_round_starter and table_pattern == pattern:
 			level0_rule_tip = "越大越小"
 		elif is_round_starter:
-			# 首次出牌（自由出牌时）
 			level0_rule_tip = "同类同出"
 		if pattern == UtilsScript.CardPattern.ELEMENT or pattern == UtilsScript.CardPattern.COMPOUND:
 			level0_last_player_action = "同类同出"
+
+	# -------- 有机物：立即胜利 --------
+	if pattern == UtilsScript.CardPattern.ORGANIC:
+		phase = 2
+		winner_index = player_index
+		log_messages.append("===== 🎉 %s 打出有机物，立即获胜！=====" % player.player_name)
+		clan_bomb_chain_active = false
+		sequence_constraint_active = false
+		return 0
 
 	# -------- 族炸：启动接炸链 + 牌权移交 --------
 	if pattern == UtilsScript.CardPattern.CLAN_BOMB:
 		player.clan_bomb_cooling = true
 		clan_bomb_chain_active = true
 		clan_bomb_owner = player_index
+		sequence_constraint_active = false  # 族炸打断顺序约束
 		_check_tutorial_progress(pattern, not player.is_ai)
 		for i in range(players.size()):
 			if i != player_index:
@@ -256,6 +293,23 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 		next_turn()  # 牌权立即移交下一名玩家
 		return 0
 
+	# -------- 顺序：反转方向 + 指定牌型 --------
+	if pattern == UtilsScript.CardPattern.SEQUENCE:
+		direction_clockwise = not direction_clockwise
+		var dir_name = "顺时针" if direction_clockwise else "逆时针"
+		log_messages.append("↻ 出牌顺序反转为 %s！%s 可选择指定牌型" % [dir_name, player.player_name])
+		# 返回特殊码 1 表示需要UI层弹出选择界面
+		clan_bomb_chain_active = false
+		clan_bomb_owner = -1
+		_reset_all_passes()
+		is_round_starter = false
+		if player.get_hand_count() == 0:
+			phase = 2
+			winner_index = player_index
+			log_messages.append("===== 游戏结束！获胜者: %s =====" % player.player_name)
+			return 0
+		return 1  # 特殊返回值：需要选择指定牌型
+
 	# -------- 化合物：解除冷却 + 溢出检查 --------
 	if pattern == UtilsScript.CardPattern.COMPOUND:
 		player.clan_bomb_cooling = false
@@ -263,9 +317,11 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 			compound_immune = true
 			log_messages.append("⚠ 溢出化合物！牌数≥%d人，免疫族炸" % players.size())
 
-	# -------- 非族炸出牌完成：重置状态 --------
+	# -------- 非族炸/非顺序出牌完成：重置状态 --------
 	clan_bomb_chain_active = false
 	clan_bomb_owner = -1
+	sequence_constraint_active = false  # 正常出牌后清除约束
+	sequence_constraint = -1
 	_reset_all_passes()
 	is_round_starter = false
 
@@ -278,6 +334,37 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 	_check_tutorial_progress(pattern, not player.is_ai)
 	next_turn()
 	return 0
+
+
+# ============================================================
+# 八之二、顺序指定牌型
+# ============================================================
+# 由UI层调用，设置顺序打出后指定的牌型约束
+func set_sequence_constraint(constraint_pattern: int) -> void:
+	sequence_constraint = constraint_pattern
+	sequence_constraint_active = true
+	var pname = UtilsScript.get_pattern_name(constraint_pattern)
+	log_messages.append("指定下一名玩家必须打出：%s，否则罚抽2张" % pname)
+	next_turn()
+
+
+# ============================================================
+# 八之三、玩家不满足顺序约束时的罚抽
+# ============================================================
+func player_fail_sequence_constraint(player_index: int) -> void:
+	if player_index < 0 or player_index >= players.size():
+		return
+	var player = players[player_index]
+	# 罚抽2张牌
+	var drawn = database.draw_cards(2)
+	for card in drawn:
+		player.add_card(card)
+	player.sort_hand_by_atomic_number()
+	player.has_passed = true
+	log_messages.append("%s 未打出指定牌型，罚抽2张并跳过" % player.player_name)
+	sequence_constraint_active = false  # 约束结束
+	sequence_constraint = -1
+	next_turn()
 
 
 # ============================================================
@@ -313,6 +400,9 @@ func player_pass(player_index: int) -> void:
 			else:
 				log_messages.append("%s 跳过回合" % player.player_name)
 
+	# 跳过时清除顺序约束（下一名玩家自由出牌）
+	sequence_constraint_active = false
+	sequence_constraint = -1
 	next_turn()
 
 
@@ -327,12 +417,22 @@ func player_discard_and_pass(player_index: int, card_to_discard) -> void:
 	player.remove_cards([card_to_discard])
 	player.has_passed = true
 	log_messages.append("%s 手牌达上限，弃置 %s 并跳过" % [player.player_name, card_to_discard.symbol])
+	sequence_constraint_active = false
+	sequence_constraint = -1
 	next_turn()
 
 
 # ============================================================
-# 十、牌权轮转
+# 十、牌权轮转（支持方向切换）
 # ============================================================
+# 根据方向获取下一个索引
+func _get_next_index_in_direction(from_idx: int) -> int:
+	if direction_clockwise:
+		return (from_idx + 1) % players.size()
+	else:
+		return (from_idx - 1 + players.size()) % players.size()
+
+
 func next_turn() -> void:
 	# 族炸链中：进入接炸轮询
 	if clan_bomb_chain_active:
@@ -345,10 +445,10 @@ func next_turn() -> void:
 		_start_new_round()
 		return
 
-	# 顺时针找下一位有牌且未 pass 的玩家
+	# 按当前方向找下一位有牌且未 pass 的玩家
 	var next_idx = current_player_index
 	for _i in range(players.size()):
-		next_idx = (next_idx + 1) % players.size()
+		next_idx = _get_next_index_in_direction(next_idx)
 		var p = players[next_idx]
 		if p.get_hand_count() > 0 and not p.has_passed:
 			current_player_index = next_idx
@@ -393,14 +493,16 @@ func _start_new_round() -> void:
 	clan_bomb_chain_active = false
 	clan_bomb_owner = -1
 	compound_immune = false
+	sequence_constraint_active = false
+	sequence_constraint = -1
 
-	current_player_index = (current_player_index + 1) % players.size()
+	current_player_index = _get_next_index_in_direction(current_player_index)
 	for _i in range(players.size()):
 		var p = players[current_player_index]
 		if p.get_hand_count() > 0:
 			log_messages.append("====== 新一轮！%s 自由出牌 ======" % p.player_name)
 			return
-		current_player_index = (current_player_index + 1) % players.size()
+		current_player_index = _get_next_index_in_direction(current_player_index)
 
 	var alive = _get_alive_players()
 	if alive.size() == 1:
@@ -451,6 +553,9 @@ func init_tutorial(level: int) -> bool:
 	clan_bomb_chain_active = false
 	clan_bomb_owner = -1
 	clan_bomb_disabled = false
+	direction_clockwise = true
+	sequence_constraint = -1
+	sequence_constraint_active = false
 	log_messages.clear()
 	tutorial_level0_phase = 0
 	ai_no_draw = false
@@ -475,7 +580,6 @@ func init_tutorial(level: int) -> bool:
 		# AI 各补2张非0族随机牌
 		for ai_idx in [1, 2]:
 			var ai = players[ai_idx]
-			# 从剩余牌库中取非0族牌
 			var non_noble_pool: Array = []
 			for card in database.deck:
 				if card.group != "0":
@@ -488,7 +592,6 @@ func init_tutorial(level: int) -> bool:
 				ai.add_card(new_card)
 				database.deck.erase(card)
 
-		# 玩家从剩余牌库抽8张
 		var player_cards = database.draw_cards(8)
 		for card in player_cards:
 			players[0].add_card(card)
@@ -496,7 +599,7 @@ func init_tutorial(level: int) -> bool:
 
 		ai_no_draw = true
 		clan_bomb_disabled = false
-		tutorial_level0_phase = 0  # UI层控制：先走UI介绍→流程介绍→牌局
+		tutorial_level0_phase = 0
 		tutorial_step = 0
 		tutorial_success = ""
 		tutorial_guidance = ""
@@ -533,7 +636,6 @@ func init_tutorial(level: int) -> bool:
 	return true
 
 
-# -------- 第零关专用牌库：前三周期18种元素各3张 = 54张 --------
 func _init_level0_deck() -> void:
 	var first18 = ["H","He","Li","Be","B","C","N","O","F","Ne","Na","Mg","Al","Si","P","S","Cl","Ar"]
 	var full_db = CardDatabaseScript.new()
@@ -549,7 +651,6 @@ func _init_level0_deck() -> void:
 	database.shuffle()
 
 
-# -------- 深拷贝一张牌 --------
 func _copy_card(card):
 	return CardDatabaseScript.CardDataScript.new(
 		card.symbol, card.name_cn, card.name_en, card.atomic_number,
@@ -603,13 +704,9 @@ func _update_tutorial_level0_guidance() -> void:
 	if tutorial_level != 0:
 		return
 	match tutorial_level0_phase:
-		1:
-			# UI 介绍阶段 - 引导由 GameUI 覆盖层处理
-			tutorial_guidance = ""
-		2:
-			tutorial_guidance = ""
-		3:
-			tutorial_guidance = "【牌局中】尝试出牌！你可以打出单质、化合物或族炸。AI默认只出单质和化合物。"
+		1: tutorial_guidance = ""
+		2: tutorial_guidance = ""
+		3: tutorial_guidance = "【牌局中】尝试出牌！你可以打出单质、化合物或族炸。AI默认只出单质和化合物。"
 
 
 func _check_tutorial_progress(pattern: int, player_is_human: bool) -> void:
@@ -619,7 +716,6 @@ func _check_tutorial_progress(pattern: int, player_is_human: bool) -> void:
 	var advanced = false
 
 	if tutorial_level == 0:
-		# 第0关：仅记录，不推进 step
 		pass
 	elif tutorial_level == 1:
 		if tutorial_step == 1 and pattern == UtilsScript.CardPattern.ELEMENT:
@@ -688,6 +784,8 @@ func get_all_players_info() -> String:
 	if clan_bomb_chain_active:
 		info += "⚠ 接炸中！%s 的族炸等待被接\n" % players[clan_bomb_owner].player_name
 	info += "牌库: %d 张\n" % database.get_remaining_count()
+	if not direction_clockwise:
+		info += "方向: 逆时针 ←\n"
 	return info
 
 
@@ -699,8 +797,16 @@ func get_available_patterns(player_idx: int) -> String:
 		if player_idx == clan_bomb_owner:
 			return "等待他人接炸..."
 		return "仅可出: 更大的族炸 / 跳过(抽1张)"
+	if sequence_constraint_active and player_idx != table_player_index:
+		var cn = UtilsScript.get_pattern_name(sequence_constraint)
+		return "顺序约束：必须打出 %s / 跳过(罚抽2张)" % cn
 	if is_round_starter or table_cards.is_empty():
 		var s = "自由出牌: 单质+化合物"
+		if organic_rules_enabled or sequence_rules_enabled:
+			var extras: Array = []
+			if organic_rules_enabled: extras.append("有机物")
+			if sequence_rules_enabled: extras.append("顺序")
+			s += "+" + "+".join(extras)
 		if not p.clan_bomb_cooling and not clan_bomb_disabled:
 			s += "+族炸"
 		elif clan_bomb_disabled:
