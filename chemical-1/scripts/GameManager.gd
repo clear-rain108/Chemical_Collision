@@ -247,7 +247,12 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 	if pattern == UtilsScript.CardPattern.COMPOUND:
 		var fi = UtilsScript.get_compound_formula(cards, custom_valences)
 		if not fi.is_empty():
-			log_msg += " " + fi.get("formula", "??")
+			var formula = fi.get("formula", "??")
+			log_msg += " " + formula
+			# 附加 IUPAC 中文命名
+			var comp_name = UtilsScript.get_compound_name(cards, custom_valences)
+			if comp_name != "":
+				log_msg += "（" + comp_name + "）"
 	if pattern == UtilsScript.CardPattern.ORGANIC:
 		log_msg += " " + UtilsScript.get_organic_name(cards)
 	log_msg += ")"

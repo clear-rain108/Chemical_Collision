@@ -779,12 +779,57 @@ func _update_table_label() -> void:
 		for c in cards: syms.append(c.symbol)
 		var txt = "桌面: %s 打出 %s" % [p.player_name, pn]
 		if en != "": txt += " " + en
+		if pat == UtilsScript.CardPattern.COMPOUND:
+			var fi = UtilsScript.get_compound_formula(cards)
+			if not fi.is_empty():
+				var formula = fi.get("formula", "")
+				if formula != "":
+					txt += " " + formula
+					var comp_name = UtilsScript.get_compound_name(cards)
+					if comp_name != "":
+						txt += "（" + comp_name + "）"
 		if game_manager.compound_immune: txt += " [免疫]"
 		if game_manager.clan_bomb_chain_active: txt += " ⚠接炸中"
 		table_label.text = txt
 
+		# 为桌面迷你卡牌计算每个元素的化合价
+		var card_valences: Dictionary = {}
+		if pat == UtilsScript.CardPattern.ELEMENT:
+			for i in range(cards.size()):
+				card_valences[i] = 0
+		elif pat == UtilsScript.CardPattern.COMPOUND:
+			var fi2 = UtilsScript.get_compound_formula(cards)
+			if not fi2.is_empty():
+				# 按化学式的标准顺序（正电性在前，负电性在后，同内按电负性递增）重排卡牌
+				# 这样桌面小卡牌的物理顺序与化学式字符串一致
+				var pos_list2: Array = fi2.get("pos_list", [])
+				var neg_list2: Array = fi2.get("neg_list", [])
+				var ordered_cards: Array = []
+				for e in pos_list2:
+					for _ei in range(e.count):
+						for c in cards:
+							if c.symbol == e.symbol and c not in ordered_cards:
+								ordered_cards.append(c)
+								break
+				for e in neg_list2:
+					for _ei in range(e.count):
+						for c in cards:
+							if c.symbol == e.symbol and c not in ordered_cards:
+								ordered_cards.append(c)
+								break
+				if ordered_cards.size() == cards.size():
+					cards = ordered_cards
+				# 计算每个元素的化合价（按重排后的索引）
+				for e in pos_list2 + neg_list2:
+					for i in range(cards.size()):
+						if cards[i].symbol == e.symbol:
+							card_valences[i] = e.ox_state
+
 		for i in range(cards.size()):
-			var mini = _build_mini_card_button(cards[i])
+			var cv = null
+			if card_valences.has(i):
+				cv = card_valences[i]
+			var mini = _build_mini_card_button(cards[i], cv)
 			mini.position = Vector2(500 + i * 80, 105)
 			game_page.add_child(mini)
 			table_card_buttons.append(mini)
@@ -792,7 +837,7 @@ func _update_table_label() -> void:
 		table_label.text = "桌面: 空"
 
 
-func _build_mini_card_button(card) -> Button:
+func _build_mini_card_button(card, custom_valence = null) -> Button:
 	var btn = Button.new()
 	btn.custom_minimum_size = Vector2(72, 90)
 	btn.tooltip_text = card.get_full_info()
@@ -849,19 +894,22 @@ func _build_mini_card_button(card) -> Button:
 	l_name.position = Vector2(4, 38)
 	btn.add_child(l_name)
 
-	var val_str = ""
-	for v in card.common_valence:
-		if val_str != "": val_str += " "
-		if v > 0: val_str += "+%d" % v
-		else: val_str += "%d" % v
-	var l_val = Label.new()
-	l_val.text = val_str
-	l_val.add_theme_font_size_override("font_size", 8)
-	l_val.add_theme_color_override("font_color", Color(0.5, 0.2, 0.2, 1))
-	l_val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l_val.size = Vector2(65, 10)
-	l_val.position = Vector2(4, 52)
-	btn.add_child(l_val)
+	# 化合价显示：如果提供了自定义化合价就用它，否则显示常见化合价
+	if custom_valence != null:
+		# 单质/双原子分子显示 0，化合物显示实际氧化态
+		var v = custom_valence
+		var val_str = ""
+		if v > 0: val_str = "+%d" % v
+		elif v < 0: val_str = "%d" % v
+		else: val_str = "0"
+		var l_val = Label.new()
+		l_val.text = val_str
+		l_val.add_theme_font_size_override("font_size", 8)
+		l_val.add_theme_color_override("font_color", Color(0.5, 0.2, 0.2, 1))
+		l_val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		l_val.size = Vector2(65, 10)
+		l_val.position = Vector2(4, 52)
+		btn.add_child(l_val)
 
 	var l_mass = Label.new()
 	l_mass.text = "%.1f" % card.atomic_weight
@@ -985,6 +1033,7 @@ func _get_card_color(card) -> Color:
 	if sym == "F": return Color(0.56, 1.0, 0.56)
 	if sym == "Cl": return Color(0.56, 1.0, 0.56)
 	if sym == "Br": return Color(0.6, 0.4, 0.2)
+	if sym == "I": return Color(0.35, 0.0, 0.35)  # 紫黑色
 	if sym in ["C", "B", "Si", "S"]: return Color(1.0, 0.9, 0.1)
 	if sym == "P": return Color(1.0, 0.85, 0.85)
 	if card.group in ["VIIA"]: return Color(0.0, 0.7, 0.2)
@@ -1223,7 +1272,7 @@ func _on_choose_compound() -> void:
 		_on_back()
 		return
 	if _is_halogen_only(symbols):
-		_show_info("卤族元素(F/Cl/Br)之间不可互相化合！请加入金属或其他非金属元素。")
+		_show_info("卤族元素(F/Cl/Br/I)之间不可互相化合！请加入金属或其他非金属元素。")
 		_on_back()
 		return
 	step_mode = 2
@@ -1651,7 +1700,7 @@ func _group_by_group(hand: Array) -> Dictionary:
 	return r
 
 func _is_ai_halogen_pair(pair: Array) -> bool:
-	var halogen = ["F", "Cl", "Br"]
+	var halogen = ["F", "Cl", "Br", "I"]
 	if pair[0].symbol != pair[1].symbol and pair[0].symbol in halogen and pair[1].symbol in halogen:
 		return true
 	return false
@@ -1661,7 +1710,7 @@ func _is_ai_halogen_pair(pair: Array) -> bool:
 # 十七、验证函数（卤族互化检查）
 # ============================================================
 func _is_halogen_only(symbols: Array) -> bool:
-	var halogen = ["F", "Cl", "Br"]
+	var halogen = ["F", "Cl", "Br", "I"]
 	for sym in symbols:
 		if sym not in halogen:
 			return false

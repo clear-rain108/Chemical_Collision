@@ -383,7 +383,7 @@ offset_bottom = 12.0
 grow_horizontal = 2
 theme_override_colors/font_color = Color(0, 0, 0, 1)
 theme_override_font_sizes/font_size = 14
-text = "4人局 (1玩家+3AI) | 熟悉族炸接炸、溢出化合物、手牌上限与UI界面"
+text = "4人局 (1玩家+3AI) | 熟悉族炸接炸、溢出化合物与手牌上限"
 horizontal_alignment = 1
 
 [node name="TutorialBackBtn" type="Button" parent="TutorialPage" unique_id=957627739]
@@ -603,16 +603,16 @@ offset_top = 595.0
 offset_right = 290.0
 offset_bottom = 622.0
 theme_override_font_sizes/font_size = 15
-text = "补充规则 →"
+text = "补充规则 "
 
 [node name="HelpRulesToCardsBtn" type="Button" parent="HelpPage_Rules" unique_id=1398980499]
 layout_mode = 0
-offset_left = 310.0
-offset_top = 595.0
-offset_right = 500.0
-offset_bottom = 622.0
+offset_left = 539.0
+offset_top = 593.0
+offset_right = 729.0
+offset_bottom = 623.0
 theme_override_font_sizes/font_size = 15
-text = "查看卡牌介绍 →"
+text = "查看卡牌介绍 "
 
 [node name="HelpPage_Cards" type="Control" parent="." unique_id=1780342333]
 visible = false
@@ -807,7 +807,7 @@ offset_top = 595.0
 offset_right = 290.0
 offset_bottom = 622.0
 theme_override_font_sizes/font_size = 15
-text = "补充规则 →"
+text = "补充规则"
 
 [node name="HelpCardsToRulesBtn" type="Button" parent="HelpPage_Cards" unique_id=1177262367]
 layout_mode = 0
@@ -816,7 +816,7 @@ offset_top = 595.0
 offset_right = 500.0
 offset_bottom = 622.0
 theme_override_font_sizes/font_size = 15
-text = "← 查看规则介绍"
+text = " 查看规则介绍"
 
 [node name="HelpPage_Supp" type="Control" parent="." unique_id=1775682911]
 visible = false
@@ -983,7 +983,7 @@ offset_top = 595.0
 offset_right = 340.0
 offset_bottom = 622.0
 theme_override_font_sizes/font_size = 15
-text = "← 查看规则介绍"
+text = "查看规则介绍"
 
 [node name="HelpSuppToCardsBtn" type="Button" parent="HelpPage_Supp" unique_id=1331215586]
 layout_mode = 0
@@ -992,7 +992,7 @@ offset_top = 595.0
 offset_right = 550.0
 offset_bottom = 622.0
 theme_override_font_sizes/font_size = 15
-text = "查看卡牌介绍 →"
+text = "查看卡牌介绍"
 
 [node name="GamePage" type="Control" parent="." unique_id=1067851078]
 visible = false

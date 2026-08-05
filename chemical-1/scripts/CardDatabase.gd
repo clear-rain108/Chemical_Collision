@@ -1,6 +1,6 @@
 # ============================================================
 # CardDatabase.gd - 牌库生成与洗牌
-# 前四周期 28 种元素（卤族10张，H/O/S 8张，主族6张，副族4张）
+# 前四周期+碘 29 种元素（卤族10张，H/O/S 8张，主族6张，副族4张）
 # ============================================================
 
 const CardDataScript = preload("res://scripts/CardData.gd")
@@ -11,7 +11,7 @@ const CardDataScript = preload("res://scripts/CardData.gd")
 # 副族标识（这些元素只生成 4 张）
 const SUBGROUP_SYMBOLS = ["Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn"]
 # 特殊张数元素
-const HALOGEN_SYMBOLS = ["F", "Cl", "Br"]    # 卤族 10 张
+const HALOGEN_SYMBOLS = ["F", "Cl", "Br", "I"]    # 卤族 10 张
 const HIGH_COUNT_SYMBOLS = ["O", "S", "H"]    # 高张数 8 张
 const MAIN_COPIES = 6
 const SUB_COPIES = 4
@@ -56,6 +56,8 @@ static func get_element_data() -> Array:
 		["Cu", "铜", "Copper", 29, CardDataScript.GROUP_IB, 4, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 1, [1, 2], 1.90, 63.546, "优良的电导体"],
 		["Zn", "锌", "Zinc", 30, CardDataScript.GROUP_IIB, 4, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 2, [2], 1.65, 65.380, "镀锌防腐的重要金属"],
 		["Br", "溴", "Bromine", 35, CardDataScript.GROUP_VIIA, 4, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_LIQUID, 7, [-1, 1, 5], 2.96, 79.904, "唯一常温下液态的非金属"],
+		# === 第五周期 ===
+		["I", "碘", "Iodine", 53, CardDataScript.GROUP_VIIA, 5, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_SOLID, 7, [-1, 1, 5, 7], 2.66, 126.90, "紫黑色固体，升华产生紫色蒸气"],
 	]
 
 
