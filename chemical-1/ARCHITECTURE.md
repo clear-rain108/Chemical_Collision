@@ -1,7 +1,7 @@
 # 化学碰撞 — 程序架构与实现文档
 
-> **版本**: 12.0  
-> **日期**: 2026-07-11  
+> **版本**: 13.0  
+> **日期**: 2026-08-06  
 > **引擎**: Godot 4.x / GDScript
 
 ---
@@ -52,7 +52,7 @@ chemical-1/
 ├── Main.tscn                          ← 6 页场景
 ├── scripts/
 │   ├── CardData.gd                    ← 数据模型：13属性+16族常量+序列化
-│   ├── CardDatabase.gd                ← 牌库：28种元素(卤族10/高8/主6/副4)=172张
+│   ├── CardDatabase.gd                ← 牌库：29种元素(卤族10/高8/主6/副4)=182张
 │   ├── GameManager.gd                 ← 规则引擎：play_cards/牌权/接炸/上限弃牌/教程
 │   ├── GameUI.gd                      ← UI控制器：牌面渲染/步骤流/AI/着色/教程
 │   └── Utils.gd                       ← 工具函数：detect_pattern/compound/compare
@@ -87,13 +87,13 @@ chemical-1/
 
 ## 4. 数据层 - CardDatabase.gd
 
-**职责**: 牌库生成（172张）与 Fisher-Yates 洗牌。
+**职责**: 牌库生成（182张）与 Fisher-Yates 洗牌。
 
 ### 张数分级
 
 | 常量 | 元素 | 张数 |
 |------|------|------|
-| HALOGEN_SYMBOLS | F, Cl, Br | 10 |
+| HALOGEN_SYMBOLS | F, Cl, Br, I | 10 |
 | HIGH_COUNT_SYMBOLS | H, O, S | 8 |
 | SUBGROUP_SYMBOLS | Cr~Zn (7种) | 4 |
 | 其余主族 (15种) | — | 6 |
@@ -103,7 +103,7 @@ chemical-1/
 | 模块 | 行号 | 说明 |
 |------|------|------|
 | 张数常量 | L9-16 | 四级张数定义 |
-| 元素数据 | L19-54 | 28种元素原始数据（13字段/元素）|
+| 元素数据 | L19-54 | 29种元素原始数据（13字段/元素）|
 | 牌库生成 | L60-79 | generate_deck() 按 sym 动态计算 copies |
 | 洗牌与抽牌 | L83-106 | Fisher-Yates shuffle, draw_card, draw_cards |
 | 查询 | L110-111 | get_remaining_count() |
@@ -132,7 +132,7 @@ detect_pattern(cards, skip_clan_bomb=false):
 | 枚举与常量 | L8-17 | CardPattern enum, DIATOMIC_SYMBOLS |
 | 牌型检测 | L20-58 | detect_pattern, _is_same_element |
 | 族炸检测 | L62-77 | _is_clan_bomb |
-| 化合物检测 | L81-176 | _is_compound, _can_balance_valence, get_compound_formula |
+| 化合物检测 | L81-367 | _is_compound, _can_balance_valence, get_compound_formula（含非金属正价兜底：无金属时提升 H 及酸中心原子为正价）|
 | 单质显示 | L181-205 | get_element_display, _to_subscript |
 | 比大小 | L210-270 | compare_cards, _compare_by_total_atomic |
 | 辅助 | L274-279 | get_pattern_name |
@@ -160,6 +160,7 @@ detect_pattern(cards, skip_clan_bomb=false):
 | tutorial_level | 0=自由模式, 1=第一关, 2=第二关 |
 | tutorial_step | 当前教程步骤 |
 | compound_immune | 溢出化合物免疫族炸 |
+| table_custom_valences | 桌面化合物实际化合价（play_cards 出牌时保存，渲染化学式/排序/化合价显示用）|
 | _get_hand_limit() | min(players×4, 18) |
 
 ### 核心函数流程
@@ -169,7 +170,7 @@ init_game(total, ai) → bool
 play_cards(idx, cards, cv) → int
   ├─ detect_pattern → 族炸/非族炸判定
   ├─ 族炸: 冷却/免疫/接炸比较 → next_turn()（牌权移交）
-  ├─ 化合物: 比例校验 → 溢出检查
+  ├─ 化合物: 比例校验 → 保存 table_custom_valences → 溢出检查
   └─ 非族炸: 牌型匹配 → 比大小
 player_pass(idx) → 上限检查 → 抽牌 → next_turn()
 player_discard_and_pass(idx, card) → 上限弃牌
@@ -221,7 +222,7 @@ _ai_auto_play():
   族炸链中 → 冷却跳过 / 出族炸
   否则 → _ai_try_play():
 	├─ 族炸尝试（同族≥2张）
-	├─ 化合物配对 O(n²)（跳过卤族互化对）
+	├─ 化合物配对 O(n²)（跳过卤族互化对；化合价直接取公式配平结果，如 HCl 中 H=+1、Cl=-1）
 	├─ 双原子分子配对
 	├─ 单质单张
 	└─ 全部失败 → player_pass()
@@ -275,7 +276,7 @@ GameManager.init_game / init_tutorial
 |------|------|--------|
 | detect_pattern | Utils.gd L21-47 | O(n) |
 | _is_clan_bomb | Utils.gd L62-77 | O(n) |
-| get_compound_formula | Utils.gd L113-176 | O(n) |
+| get_compound_formula | Utils.gd L264-367（含非金属正价兜底）| O(n) |
 | compare_cards | Utils.gd L213-252 | O(n) |
 | generate_deck | CardDatabase.gd L61-79 | O(28×copies) |
 | shuffle | CardDatabase.gd L83-89 | O(n) Fisher-Yates |
@@ -284,5 +285,5 @@ GameManager.init_game / init_tutorial
 
 ---
 
-**文档版本**: 12.0  
-**最后更新**: 2026-07-11
+**文档版本**: 13.0  
+**最后更新**: 2026-08-06

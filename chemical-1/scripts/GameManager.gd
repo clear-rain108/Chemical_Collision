@@ -25,6 +25,7 @@ var winner_index: int = -1
 var table_cards: Array = []
 var table_player_index: int = -1
 var table_pattern: int = -1    # 桌面牌型（用于限制接牌类型）
+var table_custom_valences: Dictionary = {}  # 桌面化合物的实际化合价（渲染化学式/排序/化合价显示）
 var is_round_starter: bool = true
 var log_messages: Array = []
 
@@ -112,6 +113,7 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> bool:
 	table_cards.clear()
 	table_player_index = -1
 	table_pattern = -1
+	table_custom_valences.clear()
 	winner_index = -1
 	current_player_index = 0
 	is_round_starter = true
@@ -233,6 +235,7 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 	# -------- 从手牌移除，更新桌面 --------
 	player.remove_cards(cards)
 	table_cards = cards.duplicate()
+	table_custom_valences = custom_valences.duplicate()
 	table_pattern = pattern
 	table_player_index = player_index
 	compound_immune = false
@@ -482,6 +485,7 @@ func _finish_clan_bomb_chain() -> void:
 	table_cards.clear()
 	table_pattern = -1
 	table_player_index = -1
+	table_custom_valences.clear()
 	is_round_starter = true
 	_reset_all_passes()
 	current_player_index = owner_idx
@@ -493,6 +497,7 @@ func _start_new_round() -> void:
 	table_cards.clear()
 	table_pattern = -1
 	table_player_index = -1
+	table_custom_valences.clear()
 	is_round_starter = true
 	_reset_all_passes()
 	clan_bomb_chain_active = false
@@ -551,6 +556,7 @@ func init_tutorial(level: int) -> bool:
 	table_cards.clear()
 	table_player_index = -1
 	table_pattern = -1
+	table_custom_valences.clear()
 	winner_index = -1
 	current_player_index = 0
 	is_round_starter = true

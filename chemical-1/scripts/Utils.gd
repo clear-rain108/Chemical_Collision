@@ -325,6 +325,45 @@ static func get_compound_formula(cards: Array, custom_valences: Dictionary = {})
 					"ox_state": mn,
 				})
 
+	# 兜底：无金属正价时，识别非金属正价元素（酸/氢化物，如 HClO 中 H、Cl 为正价）
+	# 规则1：H 恒提升为正价 (+1)
+	# 规则2：若存在 O 负价，则将"非H非O且拥有正价"的元素中电负性最小者提升为正价（酸的中心原子）
+	if pos_list.is_empty() and not neg_list.is_empty():
+		var remaining_neg: Array = []
+		var has_oxygen = false
+		for e in neg_list:
+			if e.symbol == "O":
+				has_oxygen = true
+		var best_central = null
+		for e in neg_list:
+			if e.symbol == "H":
+				e.valence = 1
+				e.ox_state = 1
+				pos_list.append(e)
+			else:
+				var cd = elem_cards.get(e.symbol)
+				var mp2 = 0
+				if cd:
+					for v in cd.common_valence:
+						if v > 0 and v > mp2:
+							mp2 = v
+				if e.symbol != "O" and mp2 > 0:
+					if best_central == null or e.electronegativity < best_central.electronegativity:
+						best_central = e
+				remaining_neg.append(e)
+		if has_oxygen and best_central != null:
+			var cd = elem_cards.get(best_central.symbol)
+			var mp2 = 0
+			if cd:
+				for v in cd.common_valence:
+					if v > 0 and v > mp2:
+						mp2 = v
+			best_central.valence = mp2
+			best_central.ox_state = mp2
+			remaining_neg.erase(best_central)
+			pos_list.append(best_central)
+		neg_list = remaining_neg
+
 	if pos_list.is_empty() or neg_list.is_empty(): return {}
 
 	# 按电负性排序（规范要求：正价元素按电负性递增，负价元素按电负性递增）

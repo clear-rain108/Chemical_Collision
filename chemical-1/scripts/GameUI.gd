@@ -780,12 +780,13 @@ func _update_table_label() -> void:
 		var txt = "桌面: %s 打出 %s" % [p.player_name, pn]
 		if en != "": txt += " " + en
 		if pat == UtilsScript.CardPattern.COMPOUND:
-			var fi = UtilsScript.get_compound_formula(cards)
+			var table_cv = game_manager.table_custom_valences
+			var fi = UtilsScript.get_compound_formula(cards, table_cv)
 			if not fi.is_empty():
 				var formula = fi.get("formula", "")
 				if formula != "":
 					txt += " " + formula
-					var comp_name = UtilsScript.get_compound_name(cards)
+					var comp_name = UtilsScript.get_compound_name(cards, table_cv)
 					if comp_name != "":
 						txt += "（" + comp_name + "）"
 		if game_manager.compound_immune: txt += " [免疫]"
@@ -798,7 +799,7 @@ func _update_table_label() -> void:
 			for i in range(cards.size()):
 				card_valences[i] = 0
 		elif pat == UtilsScript.CardPattern.COMPOUND:
-			var fi2 = UtilsScript.get_compound_formula(cards)
+			var fi2 = UtilsScript.get_compound_formula(cards, game_manager.table_custom_valences)
 			if not fi2.is_empty():
 				# 按化学式的标准顺序（正电性在前，负电性在后，同内按电负性递增）重排卡牌
 				# 这样桌面小卡牌的物理顺序与化学式字符串一致
@@ -1622,14 +1623,12 @@ func _ai_try_play_level0(p, gm_idx: int):
 				continue
 			var fi = UtilsScript.get_compound_formula(pair)
 			if not fi.is_empty() and fi.get("ratio_ok", false):
+				# 化合价直接取公式中已配平的正/负价（如 HCl 中 H=+1、Cl=-1）
 				var cv: Dictionary = {}
-				for sym in fi.get("actual_counts", {}):
-					var sample = p.hand[i] if p.hand[i].symbol == sym else p.hand[j]
-					var v = 0
-					for val in sample.common_valence:
-						if val > 0: v = val; break
-					if v == 0: v = -abs(sample.common_valence[0])
-					cv[sym] = v
+				for e in fi.get("pos_list", []):
+					cv[e.symbol] = e.ox_state
+				for e in fi.get("neg_list", []):
+					cv[e.symbol] = e.ox_state
 				if game_manager.play_cards(gm_idx, pair, cv) == 0: return
 
 	for i in range(p.hand.size()):
@@ -1667,15 +1666,12 @@ func _ai_try_play(p, gm_idx: int):
 				continue
 			var fi = UtilsScript.get_compound_formula(pair)
 			if not fi.is_empty() and fi.get("ratio_ok", false):
+				# 化合价直接取公式中已配平的正/负价（如 HCl 中 H=+1、Cl=-1）
 				var cv: Dictionary = {}
-				var counts = fi.get("actual_counts", {})
-				for sym in counts:
-					var sample = p.hand[i] if p.hand[i].symbol == sym else p.hand[j]
-					var v = 0
-					for val in sample.common_valence:
-						if val > 0: v = val; break
-					if v == 0: v = -abs(sample.common_valence[0])
-					cv[sym] = v
+				for e in fi.get("pos_list", []):
+					cv[e.symbol] = e.ox_state
+				for e in fi.get("neg_list", []):
+					cv[e.symbol] = e.ox_state
 				if game_manager.play_cards(gm_idx, pair, cv) == 0: return
 
 	for i in range(p.hand.size()):

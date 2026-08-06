@@ -615,7 +615,6 @@ theme_override_font_sizes/font_size = 15
 text = "查看卡牌介绍 "
 
 [node name="HelpPage_Cards" type="Control" parent="." unique_id=1780342333]
-visible = false
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -703,16 +702,12 @@ text = "□ 第四周期
   Zn 锌 30  IIB   金属  灰色    4张
   —主族—
   Br 溴 35  VIIA  非金属 棕色   10张
+  I 碘 53  VIIA  非金属 紫黑色   10张
 
-□ 排除的第四周期元素
-Sc(钪) Ti(钛) V(钒)
-Ga(镓) Ge(锗) As(砷)
-Se(硒) Kr(氪)
-以上8种暂不加入牌库
 
 □ 牌库统计
-172张
-= 卤族 ×10×3 = 30
+182张
+= 卤族 ×10×4 = 40
 + H/O/S ×8×3 = 24
 + 主族 ×6×15 = 90
 + 副族 ×4×7 = 28"

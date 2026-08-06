@@ -1,7 +1,7 @@
 # 化学碰撞 — 玩法规则与程序实现文档
 
-> **版本**: 15.0  
-> **日期**: 2026-08-05  
+> **版本**: 16.0  
+> **日期**: 2026-08-06  
 > **引擎**: Godot 4.x / GDScript
 
 ---
@@ -143,11 +143,10 @@ detect_pattern(cards, skip_clan_bomb=false) 判定优先级:
 
 ## 9. 化合物限制规则
 
-**卤族互化禁止**：F、Cl、Br 三种卤族元素之间不允许互相化合。
+**卤族互化禁止**：F、Cl、Br、I 四种卤族元素之间不允许互相化合。
 
-- F + Cl → ❌ "卤族元素之间不可互相化合！"
-- F + Br → ❌
-- Cl + Br → ❌
+- F + Cl / F + Br / F + I → ❌ "卤族元素之间不可互相化合！"
+- Cl + Br / Cl + I / Br + I → ❌
 - Na + F → ✅ NaF（卤族 + 金属可以）
 - **AI 同样遵守此规则**（通过 `_is_ai_halogen_pair()` 跳过纯卤族对）
 
@@ -251,6 +250,9 @@ GameManager.init_game / init_tutorial
 - 位于手牌区（y=237）上方，避免与手牌重叠
 - 鼠标悬停显示完整卡牌信息（tooltip）
 - 牌面样式与手牌一致：白底圆角，悬停蓝边框
+- **化合物按化学式标准顺序排列**：正电性元素在前、负电性在后，组内按电负性递增；例如次氯酸 HClO 显示为 H → Cl → O（不再跟随玩家点击顺序）
+- **化合价显示实际打出时的选择**：`GameManager.table_custom_valences` 在 `play_cards()` 出牌时保存，渲染时按实际化合价显示并排序（如 HClO 显示 H+1 / Cl+1 / O-2）
+- 兜底：若缺少化合价记录，`get_compound_formula()` 默认路径会把酸/氢化物中的非金属正价元素（H 恒为正价；有 O 时把电负性最小的非 H 非 O 正价元素提升为正价）识别出来，保证排序仍正确
 
 ---
 
@@ -258,11 +260,11 @@ GameManager.init_game / init_tutorial
 
 | 文件 | 角色 |
 |------|------|
-| `scripts/Utils.gd` | detect_pattern / get_compound_formula / compare_cards / 有机物检测 / 顺序检测 |
-| `scripts/GameManager.gd` | play_cards / 牌权轮转 / 接炸链 / 溢出化合物 / 接炸跳过摸牌 / 有机物胜利 / 顺序反转方向+指定牌型 |
-| `scripts/GameUI.gd` | 卡牌牌面渲染 / 步骤流 / AI / 卤族互化(玩家+AI) / 教程显示 / 有机物按钮 / 顺序指定弹窗 |
+| `scripts/Utils.gd` | detect_pattern / get_compound_formula（含非金属正价兜底）/ compare_cards / 有机物检测 / 顺序检测 |
+| `scripts/GameManager.gd` | play_cards / 牌权轮转 / 接炸链 / 溢出化合物 / 接炸跳过摸牌 / 有机物胜利 / 顺序反转方向+指定牌型 / 记录桌面实际化合价 table_custom_valences |
+| `scripts/GameUI.gd` | 卡牌牌面渲染（桌面迷你卡牌按化学式顺序）/ 步骤流 / AI（化合价取公式配平结果）/ 卤族互化(玩家+AI) / 教程显示 / 有机物按钮 / 顺序指定弹窗 |
 | `scripts/CardData.gd` | 卡牌属性 + 序列化 + 族常量 |
-| `scripts/CardDatabase.gd` | 牌库生成（卤族10/高张数8/主族6/副族4）= 172 张 |
+| `scripts/CardDatabase.gd` | 牌库生成（卤族10/高张数8/主族6/副族4）= 182 张 |
 | `Main.tscn` | 5+1 页场景布局（统一浅蓝白背景）|
 | `COLORING_DOCUMENTATION.md` | 元素着色文档 |
 | `AI_PLAYER_AUDIT.md` | AI与玩家逻辑对照审计 |
@@ -347,5 +349,5 @@ GameManager.init_game / init_tutorial
 
 ---
 
-**文档版本**: 13.0  
-**最后更新**: 2026-07-17
+**文档版本**: 16.0  
+**最后更新**: 2026-08-06
