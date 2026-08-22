@@ -1,7 +1,7 @@
 # 化合物形成机制 — 新旧对比
 
 > **日期**: 2026-07-07  
-> **文件**: `scripts/Utils.gd`
+> **文件**: `scripts/CompoundSolver.gd`
 
 ---
 

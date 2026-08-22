@@ -7,7 +7,9 @@
 extends Control
 
 const GameManagerScript = preload("res://scripts/GameManager.gd")
-const UtilsScript = preload("res://scripts/Utils.gd")
+const CardPatternsScript = preload("res://scripts/CardPatterns.gd")
+const CompoundSolverScript = preload("res://scripts/CompoundSolver.gd")
+const AIPlayerScript = preload("res://scripts/AIPlayer.gd")
 
 # ============================================================
 # 一、页面引用
@@ -772,21 +774,21 @@ func _update_table_label() -> void:
 	if game_manager.table_player_index >= 0:
 		var p = game_manager.players[game_manager.table_player_index]
 		var cards = game_manager.table_cards
-		var pat = UtilsScript.detect_pattern(cards)
-		var pn = UtilsScript.get_pattern_name(pat)
-		var en = UtilsScript.get_element_display(cards)
+		var pat = CardPatternsScript.detect_pattern(cards)
+		var pn = CardPatternsScript.get_pattern_name(pat)
+		var en = CardPatternsScript.get_element_display(cards)
 		var syms: Array = []
 		for c in cards: syms.append(c.symbol)
 		var txt = "桌面: %s 打出 %s" % [p.player_name, pn]
 		if en != "": txt += " " + en
-		if pat == UtilsScript.CardPattern.COMPOUND:
+		if pat == CardPatternsScript.CardPattern.COMPOUND:
 			var table_cv = game_manager.table_custom_valences
-			var fi = UtilsScript.get_compound_formula(cards, table_cv)
+			var fi = CompoundSolverScript.get_compound_formula(cards, table_cv)
 			if not fi.is_empty():
 				var formula = fi.get("formula", "")
 				if formula != "":
 					txt += " " + formula
-					var comp_name = UtilsScript.get_compound_name(cards, table_cv)
+					var comp_name = CompoundSolverScript.get_compound_name(cards, table_cv)
 					if comp_name != "":
 						txt += "（" + comp_name + "）"
 		if game_manager.compound_immune: txt += " [免疫]"
@@ -795,11 +797,11 @@ func _update_table_label() -> void:
 
 		# 为桌面迷你卡牌计算每个元素的化合价
 		var card_valences: Dictionary = {}
-		if pat == UtilsScript.CardPattern.ELEMENT:
+		if pat == CardPatternsScript.CardPattern.ELEMENT:
 			for i in range(cards.size()):
 				card_valences[i] = 0
-		elif pat == UtilsScript.CardPattern.COMPOUND:
-			var fi2 = UtilsScript.get_compound_formula(cards, game_manager.table_custom_valences)
+		elif pat == CardPatternsScript.CardPattern.COMPOUND:
+			var fi2 = CompoundSolverScript.get_compound_formula(cards, game_manager.table_custom_valences)
 			if not fi2.is_empty():
 				# 按化学式的标准顺序（正电性在前，负电性在后，同内按电负性递增）重排卡牌
 				# 这样桌面小卡牌的物理顺序与化学式字符串一致
@@ -1233,7 +1235,7 @@ func _on_element() -> void:
 	var cp = game_manager.get_current_player()
 	var cards: Array = []
 	for _idx in selected_indices: cards.append(cp.hand[_idx])
-	if UtilsScript.detect_pattern(cards) != UtilsScript.CardPattern.ELEMENT:
+	if CardPatternsScript.detect_pattern(cards) != CardPatternsScript.CardPattern.ELEMENT:
 		_show_info("不是有效单质！")
 		_on_back()
 		return
@@ -1244,7 +1246,7 @@ func _on_sequence() -> void:
 	var cp = game_manager.get_current_player()
 	var cards: Array = []
 	for _idx in selected_indices: cards.append(cp.hand[_idx])
-	if UtilsScript.detect_pattern(cards) != UtilsScript.CardPattern.SEQUENCE:
+	if CardPatternsScript.detect_pattern(cards) != CardPatternsScript.CardPattern.SEQUENCE:
 		_show_info("不是有效顺序！需≥3张连续原子序数的牌。")
 		_on_back()
 		return
@@ -1255,7 +1257,7 @@ func _on_clan_bomb() -> void:
 	var cp = game_manager.get_current_player()
 	var cards: Array = []
 	for _idx in selected_indices: cards.append(cp.hand[_idx])
-	if UtilsScript.detect_pattern(cards) != UtilsScript.CardPattern.CLAN_BOMB:
+	if CardPatternsScript.detect_pattern(cards) != CardPatternsScript.CardPattern.CLAN_BOMB:
 		_show_info("不是有效族炸！")
 		_on_back()
 		return
@@ -1285,7 +1287,7 @@ func _on_choose_organic() -> void:
 	var cards: Array = []
 	for _idx in selected_indices: cards.append(cp.hand[_idx])
 	# 检查是否为有机物
-	if UtilsScript.detect_pattern(cards, true) != UtilsScript.CardPattern.ORGANIC:
+	if CardPatternsScript.detect_pattern(cards, true) != CardPatternsScript.CardPattern.ORGANIC:
 		_show_info("不是有效有机物！有机物包括：甲烷CH4、乙烷C2H6、丙烷C3H8及他们的单一卤代物。\n卤代物只能包含一种卤族元素(F/Cl/Br)。")
 		_on_back()
 		return
@@ -1502,12 +1504,12 @@ func _show_sequence_constraint_dialog() -> void:
 
 	# 可选择：单质、化合物、族炸（有机物也可以）
 	var patterns = [
-		{"name": "单质", "pattern": UtilsScript.CardPattern.ELEMENT},
-		{"name": "化合物", "pattern": UtilsScript.CardPattern.COMPOUND},
-		{"name": "族炸", "pattern": UtilsScript.CardPattern.CLAN_BOMB},
+		{"name": "单质", "pattern": CardPatternsScript.CardPattern.ELEMENT},
+		{"name": "化合物", "pattern": CardPatternsScript.CardPattern.COMPOUND},
+		{"name": "族炸", "pattern": CardPatternsScript.CardPattern.CLAN_BOMB},
 	]
 	if game_manager.organic_rules_enabled:
-		patterns.append({"name": "有机物", "pattern": UtilsScript.CardPattern.ORGANIC})
+		patterns.append({"name": "有机物", "pattern": CardPatternsScript.CardPattern.ORGANIC})
 
 	for i in range(patterns.size()):
 		var btn = Button.new()
@@ -1593,113 +1595,7 @@ func _ensure_end_button_connected(target: Callable) -> void:
 # 十六、AI 自动操作策略
 # ============================================================
 func _ai_auto_play() -> void:
-	if game_manager == null or game_manager.is_game_over(): return
-	var cp = game_manager.get_current_player()
-	if cp == null or not cp.is_ai or cp.hand.is_empty(): return
-	var gm_idx = game_manager.get_current_player_index()
-
-	if game_manager.tutorial_level == 0 and game_manager.tutorial_level0_phase >= 1:
-		if game_manager.clan_bomb_chain_active:
-			game_manager.player_pass(gm_idx)
-		else:
-			_ai_try_play_level0(cp, gm_idx)
-		_refresh_ui()
-		return
-
-	if game_manager.clan_bomb_chain_active:
-		if cp.clan_bomb_cooling: game_manager.player_pass(gm_idx)
-		else: _ai_try_clan_bomb(cp, gm_idx)
-		_refresh_ui()
-		return
-
-	_ai_try_play(cp, gm_idx)
-	_refresh_ui()
-
-func _ai_try_play_level0(p, gm_idx: int):
-	for i in range(p.hand.size()):
-		for j in range(i + 1, p.hand.size()):
-			var pair = [p.hand[i], p.hand[j]]
-			if _is_ai_halogen_pair(pair):
-				continue
-			var fi = UtilsScript.get_compound_formula(pair)
-			if not fi.is_empty() and fi.get("ratio_ok", false):
-				# 化合价直接取公式中已配平的正/负价（如 HCl 中 H=+1、Cl=-1）
-				var cv: Dictionary = {}
-				for e in fi.get("pos_list", []):
-					cv[e.symbol] = e.ox_state
-				for e in fi.get("neg_list", []):
-					cv[e.symbol] = e.ox_state
-				if game_manager.play_cards(gm_idx, pair, cv) == 0: return
-
-	for i in range(p.hand.size()):
-		var c = p.hand[i]
-		if c.symbol in UtilsScript.DIATOMIC_SYMBOLS:
-			for j in range(p.hand.size()):
-				if i != j and p.hand[j].symbol == c.symbol:
-					var dp = [p.hand[i], p.hand[j]]
-					if game_manager.play_cards(gm_idx, dp) == 0: return
-					break
-
-	for c in p.hand:
-		if game_manager.play_cards(gm_idx, [c]) == 0: return
-
-	game_manager.player_pass(gm_idx)
-
-func _ai_try_clan_bomb(p, gm_idx: int):
-	var bg = _group_by_group(p.hand)
-	for g in bg:
-		if bg[g].size() >= 2:
-			if game_manager.play_cards(gm_idx, bg[g].duplicate()) == 0: return
-	game_manager.player_pass(gm_idx)
-
-func _ai_try_play(p, gm_idx: int):
-	if not p.clan_bomb_cooling:
-		var bg = _group_by_group(p.hand)
-		for g in bg:
-			if bg[g].size() >= 2:
-				if game_manager.play_cards(gm_idx, bg[g].duplicate()) == 0: return
-
-	for i in range(p.hand.size()):
-		for j in range(i + 1, p.hand.size()):
-			var pair = [p.hand[i], p.hand[j]]
-			if _is_ai_halogen_pair(pair):
-				continue
-			var fi = UtilsScript.get_compound_formula(pair)
-			if not fi.is_empty() and fi.get("ratio_ok", false):
-				# 化合价直接取公式中已配平的正/负价（如 HCl 中 H=+1、Cl=-1）
-				var cv: Dictionary = {}
-				for e in fi.get("pos_list", []):
-					cv[e.symbol] = e.ox_state
-				for e in fi.get("neg_list", []):
-					cv[e.symbol] = e.ox_state
-				if game_manager.play_cards(gm_idx, pair, cv) == 0: return
-
-	for i in range(p.hand.size()):
-		var c = p.hand[i]
-		if c.symbol in UtilsScript.DIATOMIC_SYMBOLS:
-			for j in range(p.hand.size()):
-				if i != j and p.hand[j].symbol == c.symbol:
-					var dp = [p.hand[i], p.hand[j]]
-					if game_manager.play_cards(gm_idx, dp) == 0: return
-					break
-
-	for c in p.hand:
-		if game_manager.play_cards(gm_idx, [c]) == 0: return
-
-	game_manager.player_pass(gm_idx)
-
-func _group_by_group(hand: Array) -> Dictionary:
-	var r = {}
-	for c in hand:
-		if not r.has(c.group): r[c.group] = []
-		r[c.group].append(c)
-	return r
-
-func _is_ai_halogen_pair(pair: Array) -> bool:
-	var halogen = ["F", "Cl", "Br", "I"]
-	if pair[0].symbol != pair[1].symbol and pair[0].symbol in halogen and pair[1].symbol in halogen:
-		return true
-	return false
+	AIPlayerScript.auto_play(game_manager, _refresh_ui)
 
 
 # ============================================================

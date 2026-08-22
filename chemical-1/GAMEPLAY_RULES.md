@@ -260,12 +260,17 @@ GameManager.init_game / init_tutorial
 
 | 文件 | 角色 |
 |------|------|
-| `scripts/Utils.gd` | detect_pattern / get_compound_formula（含非金属正价兜底）/ compare_cards / 有机物检测 / 顺序检测 |
+| `scripts/CardPatterns.gd` | detect_pattern / compare_cards / 族炸检测 / 顺序检测 |
+| `scripts/CompoundSolver.gd` | get_compound_formula（含非金属正价兜底）/ get_compound_name / 有机物检测 |
 | `scripts/GameManager.gd` | play_cards / 牌权轮转 / 接炸链 / 溢出化合物 / 接炸跳过摸牌 / 有机物胜利 / 顺序反转方向+指定牌型 / 记录桌面实际化合价 table_custom_valences |
-| `scripts/GameUI.gd` | 卡牌牌面渲染（桌面迷你卡牌按化学式顺序）/ 步骤流 / AI（化合价取公式配平结果）/ 卤族互化(玩家+AI) / 教程显示 / 有机物按钮 / 顺序指定弹窗 |
+| `scripts/PlayerManager.gd` | 人数规划 / PlayerInfo / 发牌 / 手牌上限 |
+| `scripts/GameLogger.gd` | 信息记录（统一日志）|
+| `scripts/AIPlayer.gd` | AI 出牌策略（化合价取公式配平结果）|
+| `scripts/TutorialUI.gd` | 教程内容与引导 |
+| `scripts/GameUI.gd` | 卡牌牌面渲染（桌面迷你卡牌按化学式顺序）/ 步骤流 / 卤族互化(玩家) / 教程显示 / 有机物按钮 / 顺序指定弹窗 |
 | `scripts/CardData.gd` | 卡牌属性 + 序列化 + 族常量 |
 | `scripts/CardDatabase.gd` | 牌库生成（卤族10/高张数8/主族6/副族4）= 182 张 |
-| `Main.tscn` | 5+1 页场景布局（统一浅蓝白背景）|
+| `Main.tscn` | 6 页场景布局（统一浅蓝白背景）|
 | `COLORING_DOCUMENTATION.md` | 元素着色文档 |
 | `AI_PLAYER_AUDIT.md` | AI与玩家逻辑对照审计 |
 | `GAMEPLAY_RULES.md` | 本文档 — 完整玩法规则 |
@@ -300,10 +305,10 @@ GameManager.init_game / init_tutorial
 
 #### 实现
 
-- 检测函数：`Utils.gd` 中的 `_is_organic()` 和 `get_organic_name()`
+- 检测函数：`CompoundSolver.gd` 中的 `is_organic()` 和 `get_organic_name()`
 - 胜利判定：`GameManager.gd` 中 `play_cards()` 检测到 `ORGANIC` 类型后立即设置 `winner_index` 并结束游戏
-- 牌型优先级：有机物在 `detect_pattern()` 中的检测优先级高于普通化合物，低于族炸
-- 牌力比较：有机物 > 化合物 > 单质（在 `compare_cards()` 中体现）
+- 牌型优先级：有机物在 `CardPatterns.detect_pattern()` 中的检测优先级高于普通化合物，低于族炸
+- 牌力比较：有机物 > 化合物 > 单质（在 `CardPatterns.compare_cards()` 中体现）
 
 ### 16.2 顺序牌型规则
 
@@ -340,7 +345,7 @@ GameManager.init_game / init_tutorial
 
 #### 实现
 
-- 检测函数：`Utils.gd` 中的 `_is_sequence()` 按原子序数排序后检查是否严格连续
+- 检测函数：`CardPatterns.gd` 中的 `_is_sequence()` 按原子序数排序后检查是否严格连续
 - 方向反转：`GameManager.gd` 中的 `direction_clockwise` 在打出 SEQUENCE 时翻转
 - 牌型约束：`GameManager.gd` 中的 `set_sequence_constraint()` 和 `sequence_constraint_active` 控制
 - 罚抽：`GameManager.gd` 中的 `player_fail_sequence_constraint()` 在玩家不满足约束时罚抽2张

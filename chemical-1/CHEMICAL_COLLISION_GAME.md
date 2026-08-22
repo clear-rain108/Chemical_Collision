@@ -59,15 +59,20 @@
 ```
 chemical-1/
 ├── project.godot
-├── Main.tscn                         # 5 页场景
+├── Main.tscn                         # 6 页场景
 ├── scripts/
 │   ├── CardData.gd                   # 13 属性 + 16 族常量
-│   ├── CardDatabase.gd               # 172 张（四级张数）
-│   ├── GameManager.gd                # 规则引擎 + 教程引导 + 上限弃牌
-│   ├── GameUI.gd                     # 牌面渲染 + 步骤流 + AI + 着色
-│   └── Utils.gd                      # 牌型判定 / 化合物 / 比大小
-├── CHEMICAL_COLLISION_GAME.md        # 本文档 (v10.0)
-├── GAMEPLAY_RULES.md                 # 玩法规则 (v10.0)
+│   ├── CardDatabase.gd               # 182 张（四级张数）
+│   ├── PlayerManager.gd              # 人数规划 + PlayerInfo + 发牌 + 上限
+│   ├── GameLogger.gd                 # 信息记录（统一日志）
+│   ├── CardPatterns.gd               # 牌型判定 / 比大小
+│   ├── CompoundSolver.gd             # 化合物配平 / IUPAC 命名 / 有机物
+│   ├── GameManager.gd                # 规则引擎 + 上限弃牌
+│   ├── AIPlayer.gd                   # AI 出牌策略
+│   ├── TutorialUI.gd                 # 教程内容与引导
+│   └── GameUI.gd                     # 页面管理 + 牌面渲染 + 步骤流 + 着色
+├── CHEMICAL_COLLISION_GAME.md        # 本文档
+├── GAMEPLAY_RULES.md                 # 玩法规则
 ├── ARCHITECTURE.md                   # 程序架构
 ├── COLORING_DOCUMENTATION.md         # 元素着色文档
 └── COMPOUND_MECHANISM_COMPARISON.md  # 化合物机制对比

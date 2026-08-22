@@ -12,12 +12,13 @@
 2. [文件结构](#2-文件结构)
 3. [数据层 - CardData.gd](#3-数据层---carddatagd)
 4. [数据层 - CardDatabase.gd](#4-数据层---carddatabasegd)
-5. [逻辑层 - Utils.gd](#5-逻辑层---utilsgd)
+5. [逻辑层 - 牌型计算](#5-逻辑层---牌型计算cardpatternsgd--compoundsolvergd)
 6. [逻辑层 - GameManager.gd](#6-逻辑层---gamemanagergd)
-7. [表现层 - GameUI.gd](#7-表现层---gameuigd)
-8. [场景结构 - Main.tscn](#8-场景结构---maintscn)
-9. [数据流](#9-数据流)
-10. [关键算法](#10-关键算法)
+7. [逻辑层 - 辅助模块](#7-逻辑层---辅助模块)
+8. [表现层 - GameUI.gd](#8-表现层---gameuigd)
+9. [场景结构 - Main.tscn](#9-场景结构---maintscn)
+10. [数据流](#10-数据流)
+11. [关键算法](#11-关键算法)
 
 ---
 
@@ -28,13 +29,17 @@
 ```
 ┌─────────────────────────────────────────┐
 │                      表现层              │
-│  Main.tscn  GameUI.gd                   │
-│  6页UI  着色与牌面渲染  按钮交互         │
-│  手牌上限检查  牌库计数  教程引导        │
+│  Main.tscn  GameUI.gd  TutorialUI.gd    │
+│  6页UI  着色与牌面渲染  按钮交互          │
+│  教程引导显示                             │
 ├─────────────────────────────────────────┤
 │                      逻辑层              │
-│  GameManager.gd  →  规则引擎 & 牌权轮转  │
-│  Utils.gd        →  牌型判定 & 化合物   │
+│  GameManager.gd   →  规则引擎 & 牌权轮转  │
+│  CardPatterns.gd  →  牌型判定 & 比大小   │
+│  CompoundSolver.gd → 化合物配平 & 命名   │
+│  AIPlayer.gd      →  AI 出牌策略        │
+│  PlayerManager.gd →  人数规划 & 玩家     │
+│  GameLogger.gd    →  信息记录           │
 ├─────────────────────────────────────────┤
 │                      数据层              │
 │  CardData.gd      →  卡牌属性定义       │
@@ -53,9 +58,17 @@ chemical-1/
 ├── scripts/
 │   ├── CardData.gd                    ← 数据模型：13属性+16族常量+序列化
 │   ├── CardDatabase.gd                ← 牌库：29种元素(卤族10/高8/主6/副4)=182张
-│   ├── GameManager.gd                 ← 规则引擎：play_cards/牌权/接炸/上限弃牌/教程
-│   ├── GameUI.gd                      ← UI控制器：牌面渲染/步骤流/AI/着色/教程
-│   └── Utils.gd                       ← 工具函数：detect_pattern/compound/compare
+│   ├── PlayerManager.gd               ← 人数规划：PlayerInfo类/玩家创建/发牌/手牌上限
+│   ├── GameLogger.gd                  ← 信息记录：统一日志模块
+│   ├── CardPatterns.gd                ← 牌型计算：detect_pattern/族炸/顺序/比大小
+│   ├── CompoundSolver.gd              ← 化合物形成：配平/IUPAC命名/有机物识别
+│   ├── GameManager.gd                 ← 规则引擎：play_cards/牌权/接炸/上限弃牌
+│   ├── AIPlayer.gd                    ← AI决策：出牌策略（族炸/化合物/双原子/单质）
+│   ├── TutorialUI.gd                  ← 教程内容：引导文本/成功提示/进度判定
+│   └── GameUI.gd                      ← UI控制器：页面切换/牌面渲染/步骤流/着色
+├── tests/
+│   ├── verify_refactor.gd             ← 模块单测（牌型/化合物/日志/玩家）
+│   └── verify_integration.gd          ← 集成测试（GameManager + AIPlayer）
 ├── CHEMICAL_COLLISION_GAME.md         ← 游戏设计文档
 ├── GAMEPLAY_RULES.md                  ← 玩法规则文档
 ├── ARCHITECTURE.md                    ← 本文档
@@ -63,6 +76,19 @@ chemical-1/
 ├── COMPOUND_MECHANISM_COMPARISON.md   ← 化合物机制对比
 └── AI_PLAYER_AUDIT.md                ← AI与玩家逻辑对照审计
 ```
+
+### 功能划分概览
+
+| 功能维度 | 模块 | 说明 |
+|---------|------|------|
+| **UI** | GameUI.gd / TutorialUI.gd | 页面切换、牌面渲染、出牌步骤流、教程引导显示 |
+| **牌型计算** | CardPatterns.gd + CompoundSolver.gd | 纯静态函数：牌型检测、化合物配平、命名、比大小 |
+| **牌的使用和打出** | GameManager.gd | 出牌合法性校验、桌面状态、回合轮转 |
+| **信息记录** | GameLogger.gd | 统一日志写入/缓存/获取 |
+| **人数规划** | PlayerManager.gd | 玩家创建、发牌、手牌上限计算 |
+| **AI决策** | AIPlayer.gd | AI 出牌策略（独立于 UI） |
+| **数据层** | CardData.gd + CardDatabase.gd | 卡牌数据结构、牌库生成与洗牌 |
+
 
 ---
 
@@ -110,42 +136,69 @@ chemical-1/
 
 ---
 
-## 5. 逻辑层 - Utils.gd
+## 5. 逻辑层 - 牌型计算（CardPatterns.gd + CompoundSolver.gd）
 
-**职责**: 牌型判定、化合物配平、比大小。所有方法均为 `static`。
+**职责**: 牌型判定、化合物配平、命名、比大小。所有方法均为 `static`，无状态、可独立测试。
 
-### 牌型检测优先级
+### 5.1 CardPatterns.gd（牌型计算核心）
 
-```
-detect_pattern(cards, skip_clan_bomb=false):
+**职责**: 牌型枚举、牌型检测、族炸/顺序检测、比大小。
+
+```gdscript
+CardPatterns.detect_pattern(cards, skip_clan_bomb=false):
   1. 1张 → ELEMENT
   2. 2张同元素 & H/N/O/F/Cl → ELEMENT (X₂)
   3. !skip_clan_bomb & 同族≥2不同元素 → CLAN_BOMB
-  4. ≥2张 & 化合价可配平 → COMPOUND
-  5. 否则 → -1
+  4. ≥3张连续原子序数 → SEQUENCE
+  5. is_organic() → ORGANIC
+  6. is_compound() → COMPOUND
+  7. 否则 → -1
 ```
 
-### 模块结构
+| 模块 | 说明 |
+|------|------|
+| CardPattern 枚举 + DIATOMIC_SYMBOLS | 牌型定义与双原子分子元素集 |
+| detect_pattern / _is_same_element | 牌型检测总入口 |
+| _is_sequence / _is_clan_bomb | 顺序 / 族炸检测 |
+| compare_cards / _compare_by_total_atomic | 比大小（族炸>有机物>化合物>单质）|
+| get_pattern_name / get_element_display | 牌型中文名 / 单质显示 |
 
-| 模块 | 行号 | 说明 |
-|------|------|------|
-| 枚举与常量 | L8-17 | CardPattern enum, DIATOMIC_SYMBOLS |
-| 牌型检测 | L20-58 | detect_pattern, _is_same_element |
-| 族炸检测 | L62-77 | _is_clan_bomb |
-| 化合物检测 | L81-367 | _is_compound, _can_balance_valence, get_compound_formula（含非金属正价兜底：无金属时提升 H 及酸中心原子为正价）|
-| 单质显示 | L181-205 | get_element_display, _to_subscript |
-| 比大小 | L210-270 | compare_cards, _compare_by_total_atomic |
-| 辅助 | L274-279 | get_pattern_name |
+### 5.2 CompoundSolver.gd（化合物形成模块）
+
+**职责**: 化合物检测、化合价配平、IUPAC 命名、有机物识别。**后续扩展只需修改此文件**。
+
+| 模块 | 说明 |
+|------|------|
+| 命名常量表 | OXYANION_MAP / OXYACID_FORMULAS / ACID_SALT_ANIONS / VARIABLE_METAL_CN_NAMES / NONMETAL_CN_NAMES（数据表驱动）|
+| is_compound / _can_balance_valence | 化合物合法性检测 |
+| get_compound_formula | 配平 + 化学式生成（含非金属正价兜底：无金属时提升 H 及酸中心原子为正价）|
+| get_compound_name / _try_get_oxy_name | IUPAC 命名（含氧酸/含氧酸盐/酸式盐）|
+| is_organic / get_organic_name | 有机物识别与命名（CH4/C2H6/C3H8 及单一卤代物）|
+| _to_subscript / _gcd | 化学式下标渲染 / 配平辅助 |
+
+**扩展点**（数据表驱动，修改数据即扩展能力）：
+- 新增含氧酸 → `OXYANION_MAP` 加条目
+- 新增有机物 → `is_organic()` / `get_organic_name()` 扩展匹配分支
+- 新增变价金属命名 → `VARIABLE_METAL_CN_NAMES` 加条目
+
+### 5.3 依赖方向
+
+```
+CardPatterns.detect_pattern()  → 判断 COMPOUND/ORGANIC 时调用
+		↓（单向，无环）
+CompoundSolver.is_compound() / is_organic()
+```
 
 ---
 
 ## 6. 逻辑层 - GameManager.gd
 
-**职责**: 回合管理、出牌校验、族炸接炸链、教程关卡、上限弃牌。
+**职责**: 回合管理、出牌校验、族炸接炸链、上限弃牌（牌的使用和打出）。玩家信息已拆至 PlayerManager，日志已拆至 GameLogger。
 
-### PlayerInfo 内部类
+### PlayerInfo 玩家信息类（已拆至 PlayerManager.gd）
 
 ```
+PlayerManager.PlayerInfo
 属性: player_name, hand, is_ai, has_passed, clan_bomb_cooling
 方法: get_hand_count(), add_card(), remove_cards(), sort_hand_by_atomic_number()
 ```
@@ -179,11 +232,47 @@ _init_tutorial(level) → 预设手牌 + 教程步骤初始化
 _check_tutorial_progress(pattern, human) → 进度检查
 ```
 
+## 7. 逻辑层 - 辅助模块
+
+### 7.1 PlayerManager.gd（人数规划）
+
+**职责**: 玩家数量规划 / PlayerInfo 玩家信息类 / 发牌 / 手牌上限。
+
+| 模块 | 说明 |
+|------|------|
+| MIN/MAX_PLAYERS / INITIAL_HAND_SIZE | 人数与初始手牌常量 |
+| PlayerInfo 类 | player_name/hand/is_ai/has_passed/clan_bomb_cooling |
+| create_players / validate_player_count | 玩家创建与配置校验 |
+| deal_initial_hands | 初始发牌 |
+| get_hand_limit | min(玩家数×4, 18) |
+
+### 7.2 GameLogger.gd（信息记录）
+
+**职责**: 统一游戏日志的写入、缓存与获取。规则层只调 `add_log`，UI 层通过 `flush_logs` 消费。
+
+### 7.3 AIPlayer.gd（AI 决策）
+
+**职责**: AI 自动出牌策略（族炸/化合物/双原子分子/单质/跳过），与 UI 解耦。
+
+```gdscript
+AIPlayer.auto_play(game_manager, ui_refresh)
+  ├─ 第0关：仅出基础牌，AI 不抽牌
+  ├─ 族炸链：冷却→跳过 / 否则出更大族炸
+  └─ 常规：族炸→化合物 O(n²)→双原子→单质→pass
+```
+
+### 7.4 TutorialUI.gd（教程内容）
+
+**职责**: 教程引导文本 / 成功提示 / 进度判定（静态函数，无状态）。
+
 ---
 
-## 7. 表现层 - GameUI.gd
 
-**职责**: 页面管理、牌面渲染、步骤流、AI、着色、教程显示。
+---
+
+## 8. 表现层 - GameUI.gd
+
+**职责**: 页面管理、牌面渲染、步骤流、着色、教程显示。AI 策略已拆至 AIPlayer.gd。
 
 ### 页面管理
 
@@ -215,12 +304,12 @@ step3: 上限弃牌 → "确认弃置" + "取消"
 
 优先级：精确符号 > 族匹配(VIIA) > 类型匹配(金属/非金属/准金属/稀有气体)
 
-### AI 策略
+### AI 策略（已拆至 AIPlayer.gd）
 
 ```
-_ai_auto_play():
+AIPlayer.auto_play(game_manager, ui_refresh):
   族炸链中 → 冷却跳过 / 出族炸
-  否则 → _ai_try_play():
+  否则 → _try_play():
 	├─ 族炸尝试（同族≥2张）
 	├─ 化合物配对 O(n²)（跳过卤族互化对；化合价直接取公式配平结果，如 HCl 中 H=+1、Cl=-1）
 	├─ 双原子分子配对
@@ -230,7 +319,7 @@ _ai_auto_play():
 
 ---
 
-## 8. 场景结构 - Main.tscn
+## 9. 场景结构 - Main.tscn
 
 ```
 Main (Control) ← GameUI.gd
@@ -249,19 +338,19 @@ Main (Control) ← GameUI.gd
 
 ---
 
-## 9. 数据流
+## 10. 数据流
 
 ```
 Start Page → 选择模式（自由/第一关/第二关）
   ↓
 GameManager.init_game / init_tutorial
-  ├── 172张牌洗牌 / 预设手牌
+  ├── 182张牌洗牌 / 预设手牌
   └── phase=1
 
 回合循环:
   _refresh_ui() → 状态/桌面/手牌/牌库计数/教程
   人类: 选牌→选牌型→卤族互化→化合价→play_cards
-  AI: 1.5s延迟→_ai_try_play→play_cards
+  AI: 1.5s延迟→AIPlayer.auto_play→play_cards
   pass: 上限→弃牌模式 / 正常→抽1张→next_turn
   族炸: clan_bomb_chain_active→next_turn→_intercept_next
   溢出: compound_immune→免疫族炸
@@ -270,20 +359,20 @@ GameManager.init_game / init_tutorial
 
 ---
 
-## 10. 关键算法
+## 11. 关键算法
 
 | 算法 | 位置 | 复杂度 |
 |------|------|--------|
-| detect_pattern | Utils.gd L21-47 | O(n) |
-| _is_clan_bomb | Utils.gd L62-77 | O(n) |
-| get_compound_formula | Utils.gd L264-367（含非金属正价兜底）| O(n) |
-| compare_cards | Utils.gd L213-252 | O(n) |
-| generate_deck | CardDatabase.gd L61-79 | O(28×copies) |
-| shuffle | CardDatabase.gd L83-89 | O(n) Fisher-Yates |
-| _ai_try_play | GameUI.gd | O(n²) 化合物配对 |
+| detect_pattern | CardPatterns.gd | O(n) |
+| _is_clan_bomb | CardPatterns.gd | O(n) |
+| get_compound_formula | CompoundSolver.gd（含非金属正价兜底）| O(n) |
+| compare_cards | CardPatterns.gd | O(n) |
+| generate_deck | CardDatabase.gd | O(28×copies) |
+| shuffle | CardDatabase.gd | O(n) Fisher-Yates |
+| _try_play (AI) | AIPlayer.gd | O(n²) 化合物配对 |
 | _intercept_next | GameManager.gd | O(n) 顺时针查找 |
 
 ---
 
-**文档版本**: 13.0  
-**最后更新**: 2026-08-06
+**文档版本**: 14.0  
+**最后更新**: 2026-08-22

@@ -1,18 +1,22 @@
 # ============================================================
 # GameManager.gd - 游戏规则引擎
-# 回合管理 / 出牌校验 / 族炸接炸链 / 教程关卡 / 上限弃牌
+# 回合管理 / 出牌校验 / 族炸接炸链 / 上限弃牌
 # 补充规则：有机物立即胜利 / 顺序牌型（方向反转+指定牌型）
 # ============================================================
 
 const CardDatabaseScript = preload("res://scripts/CardDatabase.gd")
-const UtilsScript = preload("res://scripts/Utils.gd")
+const CardPatternsScript = preload("res://scripts/CardPatterns.gd")
+const CompoundSolverScript = preload("res://scripts/CompoundSolver.gd")
+const PlayerManagerScript = preload("res://scripts/PlayerManager.gd")
+const GameLoggerScript = preload("res://scripts/GameLogger.gd")
+const TutorialUIScript = preload("res://scripts/TutorialUI.gd")
 
 # ============================================================
 # 一、游戏常量
 # ============================================================
-const MIN_PLAYERS = 3
-const MAX_PLAYERS = 8
-const INITIAL_HAND_SIZE = 8
+const MIN_PLAYERS = PlayerManagerScript.MIN_PLAYERS
+const MAX_PLAYERS = PlayerManagerScript.MAX_PLAYERS
+const INITIAL_HAND_SIZE = PlayerManagerScript.INITIAL_HAND_SIZE
 
 # ============================================================
 # 二、核心变量 (牌库/玩家/桌面)
@@ -27,7 +31,12 @@ var table_player_index: int = -1
 var table_pattern: int = -1    # 桌面牌型（用于限制接牌类型）
 var table_custom_valences: Dictionary = {}  # 桌面化合物的实际化合价（渲染化学式/排序/化合价显示）
 var is_round_starter: bool = true
-var log_messages: Array = []
+
+# 信息记录（统一日志模块）
+var logger: RefCounted = GameLoggerScript.new()
+var log_messages: Array:
+	get:
+		return logger.log_messages
 
 # ============================================================
 # 三、规则状态变量
@@ -58,43 +67,6 @@ var ai_no_draw: bool = false            # AI在第0关不抽牌
 var level0_rule_tip: String = ""        # 第0关规则提示（越大越小/同类同出/牌权争夺）
 var level0_last_player_action: String = ""  # 玩家上一次操作类型
 
-# ============================================================
-# 五、PlayerInfo 内部类
-# ============================================================
-class PlayerInfo:
-	var player_name: String = ""
-	var hand: Array = []
-	var is_ai: bool = false
-	var has_passed: bool = false         # 本轮是否跳过
-	var clan_bomb_cooling: bool = false  # 是否被族炸冷却
-
-	func _init(p_name: String, ai: bool = false):
-		player_name = p_name
-		is_ai = ai
-
-	func get_hand_count() -> int:
-		return hand.size()
-
-	func add_card(card) -> void:
-		if card != null:
-			hand.append(card)
-
-	func remove_cards(cards: Array) -> void:
-		for card in cards:
-			var idx = hand.find(card)
-			if idx >= 0:
-				hand.remove_at(idx)
-
-	func sort_hand_by_atomic_number() -> void:
-		hand.sort_custom(func(a, b): return a.atomic_number < b.atomic_number)
-
-	func get_hand_display() -> String:
-		if hand.is_empty():
-			return "[空]"
-		var names: Array = []
-		for card in hand:
-			names.append(card.symbol)
-		return ", ".join(names)
 
 
 # ============================================================
@@ -132,7 +104,7 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> bool:
 	ai_no_draw = false
 	level0_rule_tip = ""
 	level0_last_player_action = ""
-	log_messages.clear()
+	logger.clear_logs()
 
 	database = CardDatabaseScript.new()
 	database.generate_deck()
@@ -142,7 +114,7 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> bool:
 	var human_count = player_count - ai_count
 	for i in range(player_count):
 		var p_name = "玩家 %d" % (i + 1) if i < human_count else "AI %d" % (i + 1 - human_count)
-		players.append(PlayerInfo.new(p_name, i >= human_count))
+		players.append(PlayerManagerScript.PlayerInfo.new(p_name, i >= human_count))
 
 	# 每人发 8 张牌并排序
 	for player in players:
@@ -152,20 +124,20 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> bool:
 		player.sort_hand_by_atomic_number()
 
 	phase = 1
-	log_messages.append("===== 游戏开始 =====")
+	logger.add_log("===== 游戏开始 =====")
 	if organic_rules_enabled or sequence_rules_enabled:
 		var rules_list: Array = []
 		if organic_rules_enabled: rules_list.append("有机物胜利")
 		if sequence_rules_enabled: rules_list.append("顺序牌型")
-		log_messages.append("【补充规则已启用】" + " + ".join(rules_list))
-	log_messages.append("当前回合: %s (自由出牌)" % players[current_player_index].player_name)
+		logger.add_log("【补充规则已启用】" + " + ".join(rules_list))
+	logger.add_log("当前回合: %s (自由出牌)" % players[current_player_index].player_name)
 	return true
 
 
 # ============================================================
 # 七、查询当前玩家
 # ============================================================
-func get_current_player() -> PlayerInfo:
+func get_current_player() -> PlayerManagerScript.PlayerInfo:
 	if players.is_empty():
 		return null
 	return players[current_player_index]
@@ -186,12 +158,12 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 	# 合成有机物时也跳过族炸检测
 	if custom_valences.has("_organic"):
 		skip_bomb = true
-	var pattern = UtilsScript.detect_pattern(cards, skip_bomb)
+	var pattern = CardPatternsScript.detect_pattern(cards, skip_bomb)
 	if pattern == -1:
 		return -1
 
 	# -------- 第零关AI禁止出族炸 --------
-	if tutorial_level == 0 and tutorial_level0_phase >= 1 and player.is_ai and pattern == UtilsScript.CardPattern.CLAN_BOMB:
+	if tutorial_level == 0 and tutorial_level0_phase >= 1 and player.is_ai and pattern == CardPatternsScript.CardPattern.CLAN_BOMB:
 		return -3
 
 	# -------- 顺序约束检查 --------
@@ -200,7 +172,7 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 			return -6  # 不符合顺序指定的牌型约束
 
 	# -------- 族炸判定 --------
-	if pattern == UtilsScript.CardPattern.CLAN_BOMB:
+	if pattern == CardPatternsScript.CardPattern.CLAN_BOMB:
 		if clan_bomb_disabled:
 			return -3  # 本局禁止族炸
 		if not clan_bomb_chain_active and player.clan_bomb_cooling:
@@ -209,7 +181,7 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 			return -4  # 溢出化合物免疫族炸
 		if clan_bomb_chain_active:
 			if table_cards.size() > 0:
-				var cmp = UtilsScript.compare_cards(cards, table_cards)
+				var cmp = CardPatternsScript.compare_cards(cards, table_cards)
 				if cmp <= 0:
 					return -2
 	else:
@@ -217,18 +189,18 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 		if clan_bomb_chain_active:
 			return -1  # 接炸模式只能出族炸
 		if not is_round_starter:
-			if table_pattern == UtilsScript.CardPattern.ELEMENT and pattern != UtilsScript.CardPattern.ELEMENT:
+			if table_pattern == CardPatternsScript.CardPattern.ELEMENT and pattern != CardPatternsScript.CardPattern.ELEMENT:
 				return -4  # 单质后只能接单质或族炸
-			if table_pattern == UtilsScript.CardPattern.COMPOUND and pattern != UtilsScript.CardPattern.COMPOUND:
+			if table_pattern == CardPatternsScript.CardPattern.COMPOUND and pattern != CardPatternsScript.CardPattern.COMPOUND:
 				return -4  # 化合物后只能接化合物或族炸
 			if table_cards.size() > 0:
-				var cmp = UtilsScript.compare_cards(cards, table_cards)
+				var cmp = CardPatternsScript.compare_cards(cards, table_cards)
 				if cmp <= 0:
 					return -2
 
 	# -------- 化合物比例校验（必须在移除卡牌之前） --------
-	if pattern == UtilsScript.CardPattern.COMPOUND:
-		var fi = UtilsScript.get_compound_formula(cards, custom_valences)
+	if pattern == CardPatternsScript.CardPattern.COMPOUND:
+		var fi = CompoundSolverScript.get_compound_formula(cards, custom_valences)
 		if not fi.is_empty() and not fi.get("ratio_ok", false):
 			return -1  # 比例不匹配
 
@@ -241,49 +213,49 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 	compound_immune = false
 
 	# -------- 构建日志 --------
-	var pname = UtilsScript.get_pattern_name(pattern)
-	var elem_name = UtilsScript.get_element_display(cards)
+	var pname = CardPatternsScript.get_pattern_name(pattern)
+	var elem_name = CardPatternsScript.get_element_display(cards)
 	var card_str = _cards_to_string(cards)
 	var log_msg = "%s 打出了 %s (%s" % [player.player_name, card_str, pname]
-	if pattern == UtilsScript.CardPattern.ELEMENT and elem_name != "":
+	if pattern == CardPatternsScript.CardPattern.ELEMENT and elem_name != "":
 		log_msg += " " + elem_name
-	if pattern == UtilsScript.CardPattern.COMPOUND:
-		var fi = UtilsScript.get_compound_formula(cards, custom_valences)
+	if pattern == CardPatternsScript.CardPattern.COMPOUND:
+		var fi = CompoundSolverScript.get_compound_formula(cards, custom_valences)
 		if not fi.is_empty():
 			var formula = fi.get("formula", "??")
 			log_msg += " " + formula
 			# 附加 IUPAC 中文命名
-			var comp_name = UtilsScript.get_compound_name(cards, custom_valences)
+			var comp_name = CompoundSolverScript.get_compound_name(cards, custom_valences)
 			if comp_name != "":
 				log_msg += "（" + comp_name + "）"
-	if pattern == UtilsScript.CardPattern.ORGANIC:
-		log_msg += " " + UtilsScript.get_organic_name(cards)
+	if pattern == CardPatternsScript.CardPattern.ORGANIC:
+		log_msg += " " + CompoundSolverScript.get_organic_name(cards)
 	log_msg += ")"
-	log_messages.append(log_msg)
+	logger.add_log(log_msg)
 
 	# -------- 第0关规则提示检测 --------
 	if tutorial_level == 0 and not player.is_ai:
 		level0_rule_tip = ""
-		if pattern == UtilsScript.CardPattern.CLAN_BOMB:
+		if pattern == CardPatternsScript.CardPattern.CLAN_BOMB:
 			level0_rule_tip = "牌权争夺"
 		elif not is_round_starter and table_pattern == pattern:
 			level0_rule_tip = "越大越小"
 		elif is_round_starter:
 			level0_rule_tip = "同类同出"
-		if pattern == UtilsScript.CardPattern.ELEMENT or pattern == UtilsScript.CardPattern.COMPOUND:
+		if pattern == CardPatternsScript.CardPattern.ELEMENT or pattern == CardPatternsScript.CardPattern.COMPOUND:
 			level0_last_player_action = "同类同出"
 
 	# -------- 有机物：立即胜利 --------
-	if pattern == UtilsScript.CardPattern.ORGANIC:
+	if pattern == CardPatternsScript.CardPattern.ORGANIC:
 		phase = 2
 		winner_index = player_index
-		log_messages.append("===== 🎉 %s 打出有机物，立即获胜！=====" % player.player_name)
+		logger.add_log("===== 🎉 %s 打出有机物，立即获胜！=====" % player.player_name)
 		clan_bomb_chain_active = false
 		sequence_constraint_active = false
 		return 0
 
 	# -------- 族炸：启动接炸链 + 牌权移交 --------
-	if pattern == UtilsScript.CardPattern.CLAN_BOMB:
+	if pattern == CardPatternsScript.CardPattern.CLAN_BOMB:
 		player.clan_bomb_cooling = true
 		clan_bomb_chain_active = true
 		clan_bomb_owner = player_index
@@ -302,7 +274,7 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 		return 0
 
 	# -------- 顺序：反转方向 + 指定牌型 --------
-	if pattern == UtilsScript.CardPattern.SEQUENCE:
+	if pattern == CardPatternsScript.CardPattern.SEQUENCE:
 		direction_clockwise = not direction_clockwise
 		var dir_name = "顺时针" if direction_clockwise else "逆时针"
 		log_messages.append("↻ 出牌顺序反转为 %s！%s 可选择指定牌型" % [dir_name, player.player_name])
@@ -319,7 +291,7 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 		return 1  # 特殊返回值：需要选择指定牌型
 
 	# -------- 化合物：解除冷却 + 溢出检查 --------
-	if pattern == UtilsScript.CardPattern.COMPOUND:
+	if pattern == CardPatternsScript.CardPattern.COMPOUND:
 		player.clan_bomb_cooling = false
 		if cards.size() >= players.size():
 			compound_immune = true
@@ -351,7 +323,7 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 func set_sequence_constraint(constraint_pattern: int) -> void:
 	sequence_constraint = constraint_pattern
 	sequence_constraint_active = true
-	var pname = UtilsScript.get_pattern_name(constraint_pattern)
+	var pname = CardPatternsScript.get_pattern_name(constraint_pattern)
 	log_messages.append("指定下一名玩家必须打出：%s，否则罚抽2张" % pname)
 	next_turn()
 
@@ -415,7 +387,7 @@ func player_pass(player_index: int) -> void:
 
 
 func _get_hand_limit() -> int:
-	return min(players.size() * 4, 18)
+	return PlayerManagerScript.get_hand_limit(players.size())
 
 
 func player_discard_and_pass(player_index: int, card_to_discard) -> void:
@@ -580,9 +552,9 @@ func init_tutorial(level: int) -> bool:
 	if level == 0:
 		# ========== 第零关：界面熟悉 + 流程介绍 + 牌局体验 ==========
 		_init_level0_deck()
-		players.append(PlayerInfo.new("玩家", false))
-		players.append(PlayerInfo.new("AI 1", true))
-		players.append(PlayerInfo.new("AI 2", true))
+		players.append(PlayerManagerScript.PlayerInfo.new("玩家", false))
+		players.append(PlayerManagerScript.PlayerInfo.new("AI 1", true))
+		players.append(PlayerManagerScript.PlayerInfo.new("AI 2", true))
 
 		# AI 固定手牌：O, S, C, Si, H, Mg 各1张
 		_set_preset_hand(players[1], ["O", "S", "C", "Si", "H", "Mg"])
@@ -618,17 +590,17 @@ func init_tutorial(level: int) -> bool:
 
 	elif level == 1:
 		clan_bomb_disabled = true
-		players.append(PlayerInfo.new("玩家", false))
-		players.append(PlayerInfo.new("AI 1", true))
-		players.append(PlayerInfo.new("AI 2", true))
+		players.append(PlayerManagerScript.PlayerInfo.new("玩家", false))
+		players.append(PlayerManagerScript.PlayerInfo.new("AI 1", true))
+		players.append(PlayerManagerScript.PlayerInfo.new("AI 2", true))
 		_set_preset_hand(players[0], ["Na","Cl","Ca","O","He","Li","F","Mg","S","Ne"])
 		_set_preset_hand(players[1], ["K","Br","B","C","Al","Si","N","P"])
 		_set_preset_hand(players[2], ["H","Be","Ar","Cr","Mn","Fe","Co","Ni"])
 	elif level == 2:
-		players.append(PlayerInfo.new("玩家", false))
-		players.append(PlayerInfo.new("AI 1", true))
-		players.append(PlayerInfo.new("AI 2", true))
-		players.append(PlayerInfo.new("AI 3", true))
+		players.append(PlayerManagerScript.PlayerInfo.new("玩家", false))
+		players.append(PlayerManagerScript.PlayerInfo.new("AI 1", true))
+		players.append(PlayerManagerScript.PlayerInfo.new("AI 2", true))
+		players.append(PlayerManagerScript.PlayerInfo.new("AI 3", true))
 		_set_preset_hand(players[0], ["H","Li","Na","Cl","K","O","Ca","F","He","Ne"])
 		_set_preset_hand(players[1], ["Mg","S","Al","P","B","Si","C","N","Br","Be"])
 		_set_preset_hand(players[2], ["Ar","Cr","Mn","Fe","Co","Ni","Cu","Zn"])
@@ -671,7 +643,7 @@ func _copy_card(card):
 	)
 
 
-func _set_preset_hand(player: PlayerInfo, symbols: Array) -> void:
+func _set_preset_hand(player: PlayerManagerScript.PlayerInfo, symbols: Array) -> void:
 	for sym in symbols:
 		var card = _find_card_by_symbol(sym)
 		if card != null:
@@ -729,23 +701,23 @@ func _check_tutorial_progress(pattern: int, player_is_human: bool) -> void:
 	if tutorial_level == 0:
 		pass
 	elif tutorial_level == 1:
-		if tutorial_step == 1 and pattern == UtilsScript.CardPattern.ELEMENT:
+		if tutorial_step == 1 and pattern == CardPatternsScript.CardPattern.ELEMENT:
 			tutorial_success = "✓ 正确！你打出了一张单质。"
 			advanced = true
-		elif tutorial_step == 2 and pattern == UtilsScript.CardPattern.COMPOUND:
+		elif tutorial_step == 2 and pattern == CardPatternsScript.CardPattern.COMPOUND:
 			tutorial_success = "✓ 正确！你成功合成了一个化合物。"
 			advanced = true
-		elif tutorial_step == 3 and pattern == UtilsScript.CardPattern.COMPOUND:
+		elif tutorial_step == 3 and pattern == CardPatternsScript.CardPattern.COMPOUND:
 			tutorial_success = "✓ 很好！继续练习。"
 			advanced = true
 	elif tutorial_level == 2:
-		if tutorial_step == 1 and pattern == UtilsScript.CardPattern.CLAN_BOMB:
+		if tutorial_step == 1 and pattern == CardPatternsScript.CardPattern.CLAN_BOMB:
 			tutorial_success = "✓ 正确！你打出了族炸，抢到了牌权！注意你进入了冷却❄。"
 			advanced = true
-		elif tutorial_step == 2 and pattern == UtilsScript.CardPattern.COMPOUND:
+		elif tutorial_step == 2 and pattern == CardPatternsScript.CardPattern.COMPOUND:
 			tutorial_success = "✓ 正确！打出化合物解除了族炸冷却。"
 			advanced = true
-		elif tutorial_step == 3 and pattern == UtilsScript.CardPattern.CLAN_BOMB:
+		elif tutorial_step == 3 and pattern == CardPatternsScript.CardPattern.CLAN_BOMB:
 			tutorial_success = "✓ 正确！你成功接炸了！"
 			advanced = true
 		elif tutorial_step == 4:
@@ -780,11 +752,11 @@ func get_all_players_info() -> String:
 		info += "%s %s: %d 张牌%s%s%s\n" % [ai_tag, p.player_name, p.get_hand_count(), pass_tag, bomb_tag, marker]
 	if table_player_index >= 0:
 		var tp = players[table_player_index]
-		var pat = UtilsScript.detect_pattern(table_cards)
-		var pn = UtilsScript.get_pattern_name(pat)
-		var el = UtilsScript.get_element_display(table_cards)
+		var pat = CardPatternsScript.detect_pattern(table_cards)
+		var pn = CardPatternsScript.get_pattern_name(pat)
+		var el = CardPatternsScript.get_element_display(table_cards)
 		info += "桌面: %s 打出 %s (%s" % [tp.player_name, _cards_to_string(table_cards), pn]
-		if pat == UtilsScript.CardPattern.ELEMENT and el != "":
+		if pat == CardPatternsScript.CardPattern.ELEMENT and el != "":
 			info += " " + el
 		info += ")"
 		if compound_immune:
@@ -809,7 +781,7 @@ func get_available_patterns(player_idx: int) -> String:
 			return "等待他人接炸..."
 		return "仅可出: 更大的族炸 / 跳过(抽1张)"
 	if sequence_constraint_active and player_idx != table_player_index:
-		var cn = UtilsScript.get_pattern_name(sequence_constraint)
+		var cn = CardPatternsScript.get_pattern_name(sequence_constraint)
 		return "顺序约束：必须打出 %s / 跳过(罚抽2张)" % cn
 	if is_round_starter or table_cards.is_empty():
 		var s = "自由出牌: 单质+化合物"
@@ -826,13 +798,13 @@ func get_available_patterns(player_idx: int) -> String:
 		return s
 	if p.clan_bomb_cooling:
 		return "需要打出更大的牌 / 跳过"
-	if table_pattern == UtilsScript.CardPattern.ELEMENT:
+	if table_pattern == CardPatternsScript.CardPattern.ELEMENT:
 		var s = "桌面是单质，只能出更大的单质"
 		if not clan_bomb_disabled:
 			s += "/族炸"
 		s += " / 跳过"
 		return s
-	if table_pattern == UtilsScript.CardPattern.COMPOUND:
+	if table_pattern == CardPatternsScript.CardPattern.COMPOUND:
 		if compound_immune:
 			return "桌面溢出化合物(免疫族炸)，只能出更大的化合物 / 跳过"
 		var s = "桌面是化合物，只能出更大的化合物"
@@ -844,9 +816,7 @@ func get_available_patterns(player_idx: int) -> String:
 
 
 func flush_logs() -> Array:
-	var logs = log_messages.duplicate()
-	log_messages.clear()
-	return logs
+	return logger.flush_logs()
 
 func _cards_to_string(cards: Array) -> String:
 	if cards.is_empty():
@@ -859,7 +829,7 @@ func _cards_to_string(cards: Array) -> String:
 func is_game_over() -> bool:
 	return phase == 2
 
-func get_winner() -> PlayerInfo:
+func get_winner() -> PlayerManagerScript.PlayerInfo:
 	if winner_index < 0 or winner_index >= players.size():
 		return null
 	return players[winner_index]

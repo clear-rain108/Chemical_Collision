@@ -7,7 +7,7 @@
 
 ## 1. 概述
 
-本文档系统梳理 AI出牌逻辑（`GameUI.gd _ai_try_play()`）与玩家出牌逻辑（`GameUI.gd _on_element/_on_clan_bomb/_on_choose_compound/_on_confirm_compound`）的差异，确保两者行为一致。
+本文档系统梳理 AI出牌逻辑（`AIPlayer.gd _try_play()`）与玩家出牌逻辑（`GameUI.gd _on_element/_on_clan_bomb/_on_choose_compound/_on_confirm_compound`）的差异，确保两者行为一致。
 
 ---
 
@@ -19,8 +19,8 @@ play_cards(player_index, cards, custom_valences) → int
     ┌──────────────┴──────────────┐
     │                             │
   玩家操作                      AI操作
- _on_element / _on_clan_bomb    _ai_try_play()
- _on_confirm_compound           _ai_try_clan_bomb()
+ _on_element / _on_clan_bomb    AIPlayer._try_play()
+ _on_confirm_compound           AIPlayer._try_clan_bomb()
     │                             │
     ├─ 牌型校验                   ├─ 族炸尝试
     ├─ 卤族互化检查               ├─ 化合物配对
@@ -51,7 +51,7 @@ play_cards(player_index, cards, custom_valences) → int
 | 牌型匹配检查 | `play_cards()` 中 pattern match | 同样走 `play_cards()` | ✅ |
 | 比大小检查 | `play_cards()` 中 compare_cards | 同样走 `play_cards()` | ✅ |
 | 化合物比例校验 | `play_cards()` 中 ratio_ok | 同样走 `play_cards()` | ✅ |
-| **卤族互化检查** | `_on_choose_compound()` 中 `_is_halogen_only()` 拦截 | `_ai_try_play()` 中 `_is_ai_halogen_pair()` 跳过 | ✅ |
+| **卤族互化检查** | `_on_choose_compound()` 中 `_is_halogen_only()` 拦截 | `AIPlayer._try_play()` 中 `_is_ai_halogen_pair()` 跳过 | ✅ |
 | 单质牌型检测 | `_on_element()`: `detect_pattern == ELEMENT` | 内联在 `play_cards()` 中 | ✅ |
 | 族炸牌型检测 | `_on_clan_bomb()`: `detect_pattern == CLAN_BOMB` | 内联在 `play_cards()` 中 | ✅ |
 | 化合物化合价选择 | 玩家逐元素选择 → custom_valences | AI自动检测金属/非金属 → cv | 🔶 |
@@ -69,7 +69,7 @@ play_cards(player_index, cards, custom_valences) → int
 | | 玩家 | AI |
 |--|------|----|
 | 方式 | 从 `common_valence` 列表中手动选择 | 自动取最大值（正价取max，负价取min） |
-| 代码 | `_update_valence_buttons()` → `_on_select_valence()` | `_ai_try_play()`: `if v > 0: v = val; break` |
+| 代码 | `_update_valence_buttons()` → `_on_select_valence()` | `AIPlayer._try_play()`: `if v > 0: v = val; break` |
 | 灵活性 | 玩家可选择任意合法化合价 | AI 只用最大正价/最小负价 |
 | 影响 | 玩家可精细控制 | AI 可能错过某些化合物 |
 
@@ -80,7 +80,7 @@ play_cards(player_index, cards, custom_valences) → int
 | | 玩家 | AI |
 |--|------|----|
 | 方式 | 手动选择2张同元素 | O(n²) 配对搜索 DIATOMIC_SYMBOLS 中的元素 |
-| 代码 | `_on_element()` 统一处理 | `_ai_try_play()`: 单独循环检查 `c.symbol in DIATOMIC_SYMBOLS` |
+| 代码 | `_on_element()` 统一处理 | `AIPlayer._try_play()`: 单独循环检查 `c.symbol in DIATOMIC_SYMBOLS` |
 
 **评价**: 差异可接受。功能等价，只是处理路径不同。
 
@@ -97,7 +97,7 @@ play_cards(player_index, cards, custom_valences) → int
 
 ### 4.4 🟢 卤族互化检查 ✅ 已修复
 
-AI 现在通过 `_is_ai_halogen_pair()` 跳过纯卤族对（F+Cl, F+Br, Cl+Br），与玩家的 `_is_halogen_only()` 检查行为一致。
+AI 现在通过 `AIPlayer._is_ai_halogen_pair()` 跳过纯卤族对（F+Cl, F+Br, Cl+Br），与玩家的 `_is_halogen_only()` 检查行为一致。
 
 ---
 
@@ -105,10 +105,10 @@ AI 现在通过 `_is_ai_halogen_pair()` 跳过纯卤族对（F+Cl, F+Br, Cl+Br�
 
 | 牌型 | 玩家路径 | AI路径 | 公共路径 |
 |------|---------|--------|----------|
-| 单质 (1张) | `_on_element()` | `_ai_try_play()` 末尾循环 | `play_cards()` → `detect_pattern()` |
-| 单质 (双原子) | `_on_element()` | `_ai_try_play()` 双原子循环 | `play_cards()` → `detect_pattern()` |
-| 化合物 | `_on_choose_compound()` → `_on_confirm_compound()` | `_ai_try_play()` 配对循环 | `play_cards()` → `detect_pattern()` → `get_compound_formula()` |
-| 族炸 | `_on_clan_bomb()` | `_ai_try_clan_bomb()` / `_ai_try_play()` 族炸循环 | `play_cards()` → `detect_pattern()` |
+| 单质 (1张) | `_on_element()` | `AIPlayer._try_play()` 末尾循环 | `play_cards()` → `detect_pattern()` |
+| 单质 (双原子) | `_on_element()` | `AIPlayer._try_play()` 双原子循环 | `play_cards()` → `detect_pattern()` |
+| 化合物 | `_on_choose_compound()` → `_on_confirm_compound()` | `AIPlayer._try_play()` 配对循环 | `play_cards()` → `detect_pattern()` → `get_compound_formula()` |
+| 族炸 | `_on_clan_bomb()` | `AIPlayer._try_clan_bomb()` / `AIPlayer._try_play()` 族炸循环 | `play_cards()` → `detect_pattern()` |
 
 ---
 
