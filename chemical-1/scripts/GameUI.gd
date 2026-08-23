@@ -209,6 +209,11 @@ func _show_start_page() -> void:
 	if help_page_supp: help_page_supp.visible = false
 	_ensure_end_button_connected(_show_start_page)
 
+	# 回到主界面时清空上一局日志，避免残留
+	log_lines.clear()
+	if log_label:
+		log_label.text = "游戏日志:"
+
 func _on_show_help() -> void:
 	if help_page_rules: help_page_rules.visible = true
 	if game_page: game_page.visible = false
@@ -345,7 +350,7 @@ func _init_game(total: int = 4, ai: int = 3) -> void:
 # 七之一、第零关：Phase 1 — UI 标注介绍
 # ============================================================
 func _level0_start_phase1() -> void:
-	game_manager.tutorial_level0_phase = 1
+	game_manager.set_tutorial_level0_phase(1)
 	level0_active = true
 	level0_step = 0
 
@@ -537,7 +542,7 @@ func _level0_ensure_overlay() -> void:
 # 七之二、第零关：Phase 2 — 流程介绍
 # ============================================================
 func _level0_start_phase2() -> void:
-	game_manager.tutorial_level0_phase = 2
+	game_manager.set_tutorial_level0_phase(2)
 	level0_flow_index = 0
 	level0_flow_steps = [
 		"游戏开始，每名玩家从牌堆中抽8张牌，\n你需要通过巧妙组合并预判其他玩家，尽快将所有手牌打出，最先打完所有手牌者获胜",
@@ -619,7 +624,7 @@ func _level0_flow_next_step() -> void:
 # 七之三、第零关：Phase 3 — 牌局
 # ============================================================
 func _level0_start_phase3() -> void:
-	game_manager.tutorial_level0_phase = 3
+	game_manager.set_tutorial_level0_phase(3)
 
 	if level0_overlay:
 		level0_overlay.queue_free()
@@ -730,12 +735,12 @@ func _update_info_label() -> void:
 		info_label.text = _format_player_status()
 
 func _format_player_status() -> String:
-	if game_manager == null or game_manager.players.is_empty():
+	if game_manager == null or game_manager.get_player_count() == 0:
 		return "等待游戏初始化..."
 	var parts: Array = []
 	var cp_idx = game_manager.get_current_player_index()
-	for i in range(game_manager.players.size()):
-		var p = game_manager.players[i]
+	for i in range(game_manager.get_player_count()):
+		var p = game_manager.get_players()[i]
 		var is_current = (i == cp_idx)
 		var ai_tag = "(AI)" if p.is_ai else ""
 		var cooling = "❄" if p.clan_bomb_cooling else ""
@@ -748,16 +753,16 @@ func _format_player_status() -> String:
 	for j in range(1, parts.size()):
 		result += " → ● %s" % parts[j]
 	var counts: Array = []
-	for i in range(game_manager.players.size()):
-		counts.append("%s: %d张" % [game_manager.players[i].player_name, game_manager.players[i].get_hand_count()])
+	for i in range(game_manager.get_player_count()):
+		counts.append("%s: %d张" % [game_manager.get_players()[i].player_name, game_manager.get_players()[i].get_hand_count()])
 	result += "\n手牌: " + " | ".join(counts)
 	# 补充规则状态
-	if game_manager.organic_rules_enabled or game_manager.sequence_rules_enabled:
+	if game_manager.get_organic_rules_enabled() or game_manager.get_sequence_rules_enabled():
 		var rules_list: Array = []
-		if game_manager.organic_rules_enabled: rules_list.append("有机物胜利")
-		if game_manager.sequence_rules_enabled: rules_list.append("顺序牌型")
+		if game_manager.get_organic_rules_enabled(): rules_list.append("有机物胜利")
+		if game_manager.get_sequence_rules_enabled(): rules_list.append("顺序牌型")
 		result += "\n【补充规则】" + " + ".join(rules_list)
-	if not game_manager.direction_clockwise:
+	if not game_manager.get_direction_clockwise():
 		result += "\n方向: ← 逆时针"
 	return result
 
@@ -771,9 +776,9 @@ func _update_table_label() -> void:
 		if is_instance_valid(btn): btn.queue_free()
 	table_card_buttons.clear()
 
-	if game_manager.table_player_index >= 0:
-		var p = game_manager.players[game_manager.table_player_index]
-		var cards = game_manager.table_cards
+	if game_manager.get_table_player_index() >= 0:
+		var p = game_manager.get_players()[game_manager.get_table_player_index()]
+		var cards = game_manager.get_table_cards()
 		var pat = CardPatternsScript.detect_pattern(cards)
 		var pn = CardPatternsScript.get_pattern_name(pat)
 		var en = CardPatternsScript.get_element_display(cards)
@@ -782,7 +787,7 @@ func _update_table_label() -> void:
 		var txt = "桌面: %s 打出 %s" % [p.player_name, pn]
 		if en != "": txt += " " + en
 		if pat == CardPatternsScript.CardPattern.COMPOUND:
-			var table_cv = game_manager.table_custom_valences
+			var table_cv = game_manager.get_table_custom_valences()
 			var fi = CompoundSolverScript.get_compound_formula(cards, table_cv)
 			if not fi.is_empty():
 				var formula = fi.get("formula", "")
@@ -791,8 +796,8 @@ func _update_table_label() -> void:
 					var comp_name = CompoundSolverScript.get_compound_name(cards, table_cv)
 					if comp_name != "":
 						txt += "（" + comp_name + "）"
-		if game_manager.compound_immune: txt += " [免疫]"
-		if game_manager.clan_bomb_chain_active: txt += " ⚠接炸中"
+		if game_manager.is_compound_immune(): txt += " [免疫]"
+		if game_manager.is_clan_bomb_chain_active(): txt += " ⚠接炸中"
 		table_label.text = txt
 
 		# 为桌面迷你卡牌计算每个元素的化合价
@@ -801,7 +806,7 @@ func _update_table_label() -> void:
 			for i in range(cards.size()):
 				card_valences[i] = 0
 		elif pat == CardPatternsScript.CardPattern.COMPOUND:
-			var fi2 = CompoundSolverScript.get_compound_formula(cards, game_manager.table_custom_valences)
+			var fi2 = CompoundSolverScript.get_compound_formula(cards, game_manager.get_table_custom_valences())
 			if not fi2.is_empty():
 				# 按化学式的标准顺序（正电性在前，负电性在后，同内按电负性递增）重排卡牌
 				# 这样桌面小卡牌的物理顺序与化学式字符串一致
@@ -827,6 +832,13 @@ func _update_table_label() -> void:
 					for i in range(cards.size()):
 						if cards[i].symbol == e.symbol:
 							card_valences[i] = e.ox_state
+		elif pat == CardPatternsScript.CardPattern.SEQUENCE:
+			# 顺序牌按原子序数升序显示（与玩家选择顺序无关，体现连续序列）
+			var sorted_cards: Array = cards.duplicate()
+			sorted_cards.sort_custom(func(a, b): return a.atomic_number < b.atomic_number)
+			cards = sorted_cards
+			for i in range(cards.size()):
+				card_valences[i] = 0
 
 		for i in range(cards.size()):
 			var cv = null
@@ -947,11 +959,11 @@ func _update_card_info_label() -> void:
 
 func _update_deck_count() -> void:
 	if not deck_count_label or not game_manager: return
-	var db = game_manager.database
+	var db = game_manager.get_database()
 	if db: deck_count_label.text = "牌库剩余: %d张" % db.get_remaining_count()
 	else: deck_count_label.text = "牌库剩余: —"
 	if game_manager:
-		var hand_limit = min(game_manager.players.size() * 4, 18)
+		var hand_limit = game_manager.get_hand_limit()
 		deck_count_label.text += "  手牌上限: %d张" % hand_limit
 
 
@@ -982,22 +994,20 @@ func _update_action_panel() -> void:
 
 	if step_mode == 0:
 		action_panel.add_child(_mkb("出牌(选牌型)", _on_step_next, selected_indices.is_empty()))
-		var hand_limit = min(game_manager.players.size() * 4, 18)
+		var hand_limit = game_manager.get_hand_limit()
 		if cp.get_hand_count() >= hand_limit:
 			action_panel.add_child(_mkb("弃牌跳过(上限)", _on_pass, false))
 		else:
 			action_panel.add_child(_mkb("跳过", _on_pass, false))
 	elif step_mode == 1:
-		if game_manager.clan_bomb_chain_active and game_manager.get_current_player_index() != game_manager.clan_bomb_owner:
+		if game_manager.is_clan_bomb_chain_active() and game_manager.get_current_player_index() != game_manager.get_clan_bomb_owner():
 			action_panel.add_child(_mkb("作为族炸打出", _on_clan_bomb, false))
 			action_panel.add_child(_mkb("返回", _on_back, false))
 		else:
 			action_panel.add_child(_mkb("作为单质打出", _on_element, false))
 			action_panel.add_child(_mkb("合成化合物", _on_choose_compound, false))
-			if game_manager.sequence_rules_enabled:
+			if game_manager.get_sequence_rules_enabled():
 				action_panel.add_child(_mkb("作为顺序打出", _on_sequence, false))
-			if game_manager.organic_rules_enabled:
-				action_panel.add_child(_mkb("合成有机物(化合物)", _on_choose_organic, false))
 			action_panel.add_child(_mkb("作为族炸打出", _on_clan_bomb, false))
 			action_panel.add_child(_mkb("返回", _on_back, false))
 	elif step_mode == 2:
@@ -1239,18 +1249,19 @@ func _on_element() -> void:
 		_show_info("不是有效单质！")
 		_on_back()
 		return
-	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards)
+	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards, {}, CardPatternsScript.CardPattern.ELEMENT)
 	_handle_result(result)
 
 func _on_sequence() -> void:
 	var cp = game_manager.get_current_player()
 	var cards: Array = []
 	for _idx in selected_indices: cards.append(cp.hand[_idx])
-	if CardPatternsScript.detect_pattern(cards) != CardPatternsScript.CardPattern.SEQUENCE:
+	# 玩家选择"作为顺序"：顺序优先于族炸检测（如 Fe+Co+Ni 既是族炸又是顺序）
+	if CardPatternsScript.detect_pattern(cards, false, true) != CardPatternsScript.CardPattern.SEQUENCE:
 		_show_info("不是有效顺序！需≥3张连续原子序数的牌。")
 		_on_back()
 		return
-	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards)
+	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards, {}, CardPatternsScript.CardPattern.SEQUENCE)
 	_handle_result(result)
 
 func _on_clan_bomb() -> void:
@@ -1261,7 +1272,7 @@ func _on_clan_bomb() -> void:
 		_show_info("不是有效族炸！")
 		_on_back()
 		return
-	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards)
+	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards, {}, CardPatternsScript.CardPattern.CLAN_BOMB)
 	_handle_result(result)
 
 func _on_choose_compound() -> void:
@@ -1278,6 +1289,21 @@ func _on_choose_compound() -> void:
 		_show_info("卤族元素(F/Cl/Br/I)之间不可互相化合！请加入金属或其他非金属元素。")
 		_on_back()
 		return
+
+	# 自动识别有机物：选中牌组若实际为有机物（甲醛/甲醇/乙醇/甲酸/乙酸/烷烃等），
+	# 直接按有机物打出（跳过化合价选择），有机物打出即获胜
+	var cards: Array = []
+	for _idx in selected_indices: cards.append(cp.hand[_idx])
+	if CardPatternsScript.detect_pattern(cards, true) == CardPatternsScript.CardPattern.ORGANIC:
+		var custom_valences = {"_organic": true}
+		var result = game_manager.play_cards(game_manager.get_current_player_index(), cards, custom_valences, CardPatternsScript.CardPattern.ORGANIC)
+		if result == 0:
+			log_lines.push_back("🎉 %s 打出有机物，立即获胜！" % cp.player_name)
+		else:
+			_show_info("有机物打出失败！")
+		_handle_result(result)
+		return
+
 	step_mode = 2
 	compound_selections.clear()
 	_update_action_panel()
@@ -1293,7 +1319,7 @@ func _on_choose_organic() -> void:
 		return
 	# 打出有机物，标记 _organic 跳过族炸检测
 	var custom_valences = {"_organic": true}
-	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards, custom_valences)
+	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards, custom_valences, CardPatternsScript.CardPattern.ORGANIC)
 	if result == 0:
 		# 有机物打出成功
 		log_lines.push_back("🎉 %s 打出有机物，立即获胜！" % cp.player_name)
@@ -1367,7 +1393,7 @@ func _on_confirm_compound() -> void:
 		if ccards.size() != na + nb:
 			_show_info("收集卡牌出错！")
 			return
-		var result = game_manager.play_cards(gm_idx, ccards, custom_valences)
+		var result = game_manager.play_cards(gm_idx, ccards, custom_valences, CardPatternsScript.CardPattern.COMPOUND)
 		_handle_result(result)
 		return
 
@@ -1380,7 +1406,7 @@ func _on_confirm_compound() -> void:
 	if all_one and total_charge == 0:
 		var ccards: Array = []
 		for _idx in selected_indices: ccards.append(cp.hand[_idx])
-		var result = game_manager.play_cards(gm_idx, ccards, custom_valences)
+		var result = game_manager.play_cards(gm_idx, ccards, custom_valences, CardPatternsScript.CardPattern.COMPOUND)
 		_handle_result(result)
 		return
 
@@ -1397,7 +1423,7 @@ func _on_back() -> void:
 
 func _on_pass() -> void:
 	var cp = game_manager.get_current_player()
-	var hand_limit = min(game_manager.players.size() * 4, 18)
+	var hand_limit = game_manager.get_hand_limit()
 	if cp.get_hand_count() >= hand_limit:
 		_on_discard_mode()
 		return
@@ -1407,7 +1433,7 @@ func _on_pass() -> void:
 
 func _on_discard_mode() -> void:
 	var cp = game_manager.get_current_player()
-	var hand_limit = min(game_manager.players.size() * 4, 18)
+	var hand_limit = game_manager.get_hand_limit()
 	if cp.get_hand_count() < hand_limit:
 		step_mode = 0
 		selected_indices.clear()
@@ -1502,14 +1528,12 @@ func _show_sequence_constraint_dialog() -> void:
 	desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	overlay.add_child(desc)
 
-	# 可选择：单质、化合物、族炸（有机物也可以）
+	# 可选择：单质、化合物、族炸（有机物并入化合物，不单独列出）
 	var patterns = [
 		{"name": "单质", "pattern": CardPatternsScript.CardPattern.ELEMENT},
 		{"name": "化合物", "pattern": CardPatternsScript.CardPattern.COMPOUND},
 		{"name": "族炸", "pattern": CardPatternsScript.CardPattern.CLAN_BOMB},
 	]
-	if game_manager.organic_rules_enabled:
-		patterns.append({"name": "有机物", "pattern": CardPatternsScript.CardPattern.ORGANIC})
 
 	for i in range(patterns.size()):
 		var btn = Button.new()
@@ -1552,6 +1576,39 @@ func _step_reset() -> void:
 func _show_info(text: String) -> void:
 	if info_label and game_manager:
 		info_label.text = _format_player_status() + "\n" + text
+	# 同时显示居中的大号提示框（出牌不合理等错误提示醒目可见）
+	_show_center_warning(text)
+
+
+# 屏幕中央的大号警告提示框（黄底橙边，2.5秒自动消失）
+func _show_center_warning(text: String) -> void:
+	var box = Control.new()
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var bg = ColorRect.new()
+	bg.color = Color(1, 0.9, 0.6, 0.96)
+	bg.position = Vector2(300, 360)
+	bg.size = Vector2(800, 110)
+	box.add_child(bg)
+
+	var border = _level0_make_outline_rect(Vector2(300, 360), Vector2(800, 110), Color(0.9, 0.3, 0.1, 1), 4)
+	box.add_child(border)
+
+	var lbl = Label.new()
+	lbl.text = text
+	lbl.add_theme_font_size_override("font_size", 20)
+	lbl.add_theme_color_override("font_color", Color(0.5, 0.05, 0.05, 1))
+	lbl.position = Vector2(320, 365)
+	lbl.size = Vector2(760, 100)
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	box.add_child(lbl)
+
+	var timer = get_tree().create_timer(2.5)
+	timer.timeout.connect(box.queue_free)
+
+	game_page.add_child(box)
 
 func _show_end_page(custom_text: String) -> void:
 	var tut_page = get_node_or_null("TutorialPage")

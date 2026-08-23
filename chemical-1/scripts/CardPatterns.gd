@@ -23,8 +23,9 @@ const DIATOMIC_SYMBOLS = ["H", "N", "O", "F", "Cl", "Br", "I"]
 
 # ============================================================
 # 二、牌型检测（优先级：族炸 → 顺序 → 有机物 → 化合物）
+# prefer_sequence=true 时顺序优先于族炸（玩家明确选择"作为顺序"）
 # ============================================================
-static func detect_pattern(cards: Array, skip_clan_bomb: bool = false) -> int:
+static func detect_pattern(cards: Array, skip_clan_bomb: bool = false, prefer_sequence: bool = false) -> int:
 	if cards.is_empty():
 		return -1
 
@@ -35,6 +36,9 @@ static func detect_pattern(cards: Array, skip_clan_bomb: bool = false) -> int:
 		if cards[0].symbol in DIATOMIC_SYMBOLS:
 			return CardPattern.ELEMENT
 		return -1
+
+	if prefer_sequence and cards.size() >= 3 and _is_sequence(cards):
+		return CardPattern.SEQUENCE
 
 	if not skip_clan_bomb:
 		if _is_clan_bomb(cards):

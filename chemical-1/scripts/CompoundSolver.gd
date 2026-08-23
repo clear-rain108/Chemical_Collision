@@ -83,7 +83,7 @@ const NONMETAL_CN_NAMES = {
 # 二、有机物检测（视为化合物的子类）
 # ============================================================
 static func is_organic(cards: Array) -> bool:
-	if cards.size() < 5:
+	if cards.size() < 4:
 		return false
 	var elem_counts: Dictionary = {}
 	for c in cards:
@@ -105,20 +105,34 @@ static func is_organic(cards: Array) -> bool:
 			elif halogen_included != "":
 				return false
 			halogen_count = elem_counts[sym]
+
+	# ---- 烷烃（无卤素，C+H）：CH4 / C2H6 / C3H8 ----
 	if halogen_included == "" and symbols.size() == 2:
 		match c_count:
 			1: return h_count == 4
 			2: return h_count == 6
 			3: return h_count == 8
 		return false
+
+	# ---- 卤代烷烃（C+H+单一卤素）：一卤代物 ----
 	if halogen_included != "" and symbols.size() == 3:
-		if symbols.size() != 3:
-			return false
 		match c_count:
 			1: return h_count + halogen_count == 4
 			2: return h_count + halogen_count == 6
 			3: return h_count + halogen_count == 8
 		return false
+
+	# ---- 含氧有机物（C+H+O，无卤素）：甲醛/甲醇/乙醇/甲酸/乙酸 ----
+	if halogen_included == "" and symbols.size() == 3 and elem_counts.has("O"):
+		var o_count = elem_counts["O"]
+		match [c_count, h_count, o_count]:
+			[1, 2, 1]: return true   # 甲醛 CH2O
+			[1, 4, 1]: return true   # 甲醇 CH3OH
+			[2, 6, 1]: return true   # 乙醇 C2H5OH
+			[1, 2, 2]: return true   # 甲酸 HCOOH
+			[2, 4, 2]: return true   # 乙酸 CH3COOH
+		return false
+
 	return false
 
 
@@ -140,6 +154,15 @@ static func get_organic_name(cards: Array) -> String:
 		1: base_name = "甲烷 CH4"
 		2: base_name = "乙烷 C2H6"
 		3: base_name = "丙烷 C3H8"
+	# 含氧有机物（无卤素，C+H+O）：甲醛/甲醇/乙醇/甲酸/乙酸
+	if halogen_sym == "" and elem_counts.has("O"):
+		var o_count = elem_counts.get("O", 0)
+		match [c_count, h_count, o_count]:
+			[1, 2, 1]: return "甲醛 CH2O"
+			[1, 4, 1]: return "甲醇 CH3OH"
+			[2, 6, 1]: return "乙醇 C2H5OH"
+			[1, 2, 2]: return "甲酸 HCOOH"
+			[2, 4, 2]: return "乙酸 CH3COOH"
 	if halogen_sym == "":
 		return base_name
 	else:

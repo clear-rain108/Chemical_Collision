@@ -63,12 +63,16 @@ chemical-1/
 │   ├── CardPatterns.gd                ← 牌型计算：detect_pattern/族炸/顺序/比大小
 │   ├── CompoundSolver.gd              ← 化合物形成：配平/IUPAC命名/有机物识别
 │   ├── GameManager.gd                 ← 规则引擎：play_cards/牌权/接炸/上限弃牌
-│   ├── AIPlayer.gd                    ← AI决策：出牌策略（族炸/化合物/双原子/单质）
-│   ├── TutorialUI.gd                  ← 教程内容：引导文本/成功提示/进度判定
+│   ├── AIPlayer.gd                    ← AI决策：出牌策略（族炸/化合物/双原子/单质/接顺序）
+│   ├── TutorialController.gd          ← 教程状态机：关卡初始化/预设手牌/进度检查
+│   ├── TutorialUI.gd                  ← 教程内容：引导文本/成功提示（静态）
 │   └── GameUI.gd                      ← UI控制器：页面切换/牌面渲染/步骤流/着色
 ├── tests/
-│   ├── verify_refactor.gd             ← 模块单测（牌型/化合物/日志/玩家）
-│   └── verify_integration.gd          ← 集成测试（GameManager + AIPlayer）
+│   ├── verify_refactor.gd             ← 模块单测（牌型/化合物/日志/玩家/Q4牌型选择）
+│   ├── verify_integration.gd          ← 集成测试（GameManager + AIPlayer）
+│   ├── verify_logger.gd               ← 日志转发测试
+│   ├── verify_tutorial.gd             ← 教程控制器集成测试
+│   └── verify_ai_discard.gd           ← AI 上限自动弃牌测试（Q1+Q2）
 ├── CHEMICAL_COLLISION_GAME.md         ← 游戏设计文档
 ├── GAMEPLAY_RULES.md                  ← 玩法规则文档
 ├── ARCHITECTURE.md                    ← 本文档
@@ -87,6 +91,7 @@ chemical-1/
 | **信息记录** | GameLogger.gd | 统一日志写入/缓存/获取 |
 | **人数规划** | PlayerManager.gd | 玩家创建、发牌、手牌上限计算 |
 | **AI决策** | AIPlayer.gd | AI 出牌策略（独立于 UI） |
+| **教程控制** | TutorialController.gd | 教程关卡状态机、预设手牌、进度检查 |
 | **数据层** | CardData.gd + CardDatabase.gd | 卡牌数据结构、牌库生成与洗牌 |
 
 
@@ -261,9 +266,20 @@ AIPlayer.auto_play(game_manager, ui_refresh)
   └─ 常规：族炸→化合物 O(n²)→双原子→单质→pass
 ```
 
-### 7.4 TutorialUI.gd（教程内容）
+### 7.4 TutorialController.gd（教程控制）
 
-**职责**: 教程引导文本 / 成功提示 / 进度判定（静态函数，无状态）。
+**职责**: 教程关卡状态机、预设手牌、引导文本生成、进度检查（从 GameManager 解耦）。
+
+| 模块 | 说明 |
+|------|------|
+| init_tutorial | 关卡1/2预设手牌、第0关牌库与AI手牌 |
+| check_tutorial_progress | 出牌后进度判定与步骤推进 |
+| _update_tutorial_guidance | 关卡1/2引导文本 |
+| _update_tutorial_level0_guidance | 第0关引导文本 |
+
+### 7.5 TutorialUI.gd（教程内容）
+
+**职责**: 静态教程文本（引导文本/成功提示/进度判定），无状态。
 
 ---
 
@@ -310,11 +326,12 @@ step3: 上限弃牌 → "确认弃置" + "取消"
 AIPlayer.auto_play(game_manager, ui_refresh):
   族炸链中 → 冷却跳过 / 出族炸
   否则 → _try_play():
+	├─ 接顺序（仅桌面是顺序时出顺序，不主动出）
 	├─ 族炸尝试（同族≥2张）
 	├─ 化合物配对 O(n²)（跳过卤族互化对；化合价直接取公式配平结果，如 HCl 中 H=+1、Cl=-1）
 	├─ 双原子分子配对
 	├─ 单质单张
-	└─ 全部失败 → player_pass()
+	└─ 全部失败 → player_pass()（达上限时自动弃1张）
 ```
 
 ---
@@ -374,5 +391,5 @@ GameManager.init_game / init_tutorial
 
 ---
 
-**文档版本**: 14.0  
+**文档版本**: 15.0  
 **最后更新**: 2026-08-22

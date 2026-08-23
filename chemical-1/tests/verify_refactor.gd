@@ -63,6 +63,20 @@ func _init():
 	assert(CompoundSolverScript.is_organic(methane), "CH4应为有机物")
 	assert(CardPatternsScript.detect_pattern(methane) == CardPatternsScript.CardPattern.ORGANIC, "CH4检测应为有机物")
 
+	# Q4 验证：Fe+Co+Ni 既是 VIII 族族炸（同族），又是 26/27/28 连续顺序
+	var Fe = CardDataScript.new("Fe", "铁", "Iron", 26, CardDataScript.GROUP_VIII, 4, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 2, [2, 3], 1.83, 55.845, "铁")
+	var Co = CardDataScript.new("Co", "钴", "Cobalt", 27, CardDataScript.GROUP_VIII, 4, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 2, [2, 3], 1.88, 58.933, "钴")
+	var Ni = CardDataScript.new("Ni", "镍", "Nickel", 28, CardDataScript.GROUP_VIII, 4, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 2, [2, 3], 1.91, 58.693, "镍")
+	# 默认（族炸优先）
+	assert(CardPatternsScript.detect_pattern([Fe, Co, Ni]) == CardPatternsScript.CardPattern.CLAN_BOMB, "Fe+Co+Ni 默认应为族炸")
+	# 玩家选择"作为顺序"：prefer_sequence=true → 顺序优先
+	assert(CardPatternsScript.detect_pattern([Fe, Co, Ni], false, true) == CardPatternsScript.CardPattern.SEQUENCE, "Fe+Co+Ni 玩家选顺序应为顺序")
+	# 普通顺序（H+He+Li）不受影响
+	var He2 = CardDataScript.new("He", "氦", "Helium", 2, CardDataScript.GROUP_0, 1, CardDataScript.TYPE_NOBLE_GAS, CardDataScript.FORM_GAS, 2, [0], 0.0, 4.003, "氦")
+	var Li2 = CardDataScript.new("Li", "锂", "Lithium", 3, CardDataScript.GROUP_IA, 2, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 1, [1], 0.98, 6.941, "锂")
+	assert(CardPatternsScript.detect_pattern([H, He2, Li2], false, true) == CardPatternsScript.CardPattern.SEQUENCE, "H+He+Li 顺序")
+	assert(CardPatternsScript.detect_pattern([H, He2, Li2]) == CardPatternsScript.CardPattern.SEQUENCE, "H+He+Li 默认也应为顺序")
+
 	print("PASS: CardPatterns + CompoundSolver")
 
 	# 4. 比大小测试：Na(11) > H(1)，所以出H压不了Na

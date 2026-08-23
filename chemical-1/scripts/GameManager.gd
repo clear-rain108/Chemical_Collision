@@ -5,11 +5,12 @@
 # ============================================================
 
 const CardDatabaseScript = preload("res://scripts/CardDatabase.gd")
+const CardDataScript = preload("res://scripts/CardData.gd")
 const CardPatternsScript = preload("res://scripts/CardPatterns.gd")
 const CompoundSolverScript = preload("res://scripts/CompoundSolver.gd")
 const PlayerManagerScript = preload("res://scripts/PlayerManager.gd")
 const GameLoggerScript = preload("res://scripts/GameLogger.gd")
-const TutorialUIScript = preload("res://scripts/TutorialUI.gd")
+const TutorialControllerScript = preload("res://scripts/TutorialController.gd")
 
 # ============================================================
 # 一、游戏常量
@@ -56,8 +57,9 @@ var sequence_constraint: int = -1              # 顺序指定牌型约束（-1=�
 var sequence_constraint_active: bool = false   # 顺序约束是否激活
 
 # ============================================================
-# 四、教程状态变量
+# 四、教程状态变量（委托到 TutorialController）
 # ============================================================
+var tutorial_controller: RefCounted = null
 var tutorial_level: int = 0             # 0=自由模式, 1=第一关, 2=第二关
 var tutorial_step: int = 0              # 当前教程步骤
 var tutorial_guidance: String = ""      # 当前引导文本
@@ -149,7 +151,9 @@ func get_current_player_index() -> int:
 # ============================================================
 # 八、出牌校验核心函数
 # ============================================================
-func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {}) -> int:
+# intended_pattern: 玩家明确选择的牌型（CardPattern 枚举值，-1 表示自动检测）。
+# 当牌组同时满足多种牌型（如"既是族炸也是顺序"）时，以玩家选择的为准。
+func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {}, intended_pattern: int = -1) -> int:
 	if player_index < 0 or player_index >= players.size() or cards.is_empty():
 		return -1
 
@@ -158,9 +162,21 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 	# 合成有机物时也跳过族炸检测
 	if custom_valences.has("_organic"):
 		skip_bomb = true
-	var pattern = CardPatternsScript.detect_pattern(cards, skip_bomb)
+
+	# 玩家明确选择"作为顺序"时，顺序优先于族炸（如 Fe+Co+Ni 既是 VIII 族族炸又是 26/27/28 顺序）
+	var prefer_sequence = (intended_pattern == CardPatternsScript.CardPattern.SEQUENCE)
+	var pattern = CardPatternsScript.detect_pattern(cards, skip_bomb, prefer_sequence)
 	if pattern == -1:
 		return -1
+
+	# 若玩家明确选择了牌型，校验检测结果与意图一致
+	if intended_pattern >= 0 and pattern != intended_pattern:
+		# 启用有机物规则时，"合成化合物"路径可打出有机物（有机物是化合物子集）
+		if organic_rules_enabled and pattern == CardPatternsScript.CardPattern.ORGANIC \
+				and intended_pattern == CardPatternsScript.CardPattern.COMPOUND:
+			pass
+		else:
+			return -1
 
 	# -------- 第零关AI禁止出族炸 --------
 	if tutorial_level == 0 and tutorial_level0_phase >= 1 and player.is_ai and pattern == CardPatternsScript.CardPattern.CLAN_BOMB:
@@ -169,7 +185,11 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 	# -------- 顺序约束检查 --------
 	if sequence_constraint_active and not is_round_starter and player_index != table_player_index:
 		if sequence_constraint >= 0 and pattern != sequence_constraint:
-			return -6  # 不符合顺序指定的牌型约束
+			# 指定"化合物"时，有机物（化合物子类）同样满足约束
+			var constraint_match = (sequence_constraint == CardPatternsScript.CardPattern.COMPOUND \
+					and pattern == CardPatternsScript.CardPattern.ORGANIC)
+			if not constraint_match:
+				return -6  # 不符合顺序指定的牌型约束
 
 	# -------- 族炸判定 --------
 	if pattern == CardPatternsScript.CardPattern.CLAN_BOMB:
@@ -194,9 +214,16 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 			if table_pattern == CardPatternsScript.CardPattern.COMPOUND and pattern != CardPatternsScript.CardPattern.COMPOUND:
 				return -4  # 化合物后只能接化合物或族炸
 			if table_cards.size() > 0:
-				var cmp = CardPatternsScript.compare_cards(cards, table_cards)
-				if cmp <= 0:
-					return -2
+				# 桌面是顺序牌：无大小比较（顺序打出后复位桌面），下家仅受指定牌型约束
+				if table_pattern == CardPatternsScript.CardPattern.SEQUENCE:
+					pass
+				# 顺序接顺序：无大小比较，直接通过
+				elif table_pattern == CardPatternsScript.CardPattern.SEQUENCE and pattern == CardPatternsScript.CardPattern.SEQUENCE:
+					pass
+				else:
+					var cmp = CardPatternsScript.compare_cards(cards, table_cards)
+					if cmp <= 0:
+						return -2
 
 	# -------- 化合物比例校验（必须在移除卡牌之前） --------
 	if pattern == CardPatternsScript.CardPattern.COMPOUND:
@@ -357,12 +384,35 @@ func player_pass(player_index: int) -> void:
 	var hand_limit = _get_hand_limit()
 	player.has_passed = true
 
-	# 上限弃牌：不抽牌（UI 层负责选牌弃置）
+	# 顺序约束激活：被指定的下一名玩家跳过 → 罚抽2张并结束约束（下下名自由出牌）
+	if sequence_constraint_active and not is_round_starter and player_index != table_player_index:
+		# 手牌达上限时先弃1张（AI自动弃，人类由UI层处理）
+		if player.get_hand_count() >= hand_limit and player.is_ai:
+			var discard = _ai_pick_discard(player)
+			if discard != null:
+				player.remove_cards([discard])
+				log_messages.append("%s 手牌达上限，自动弃置 %s 并跳过" % [player.player_name, discard.symbol])
+		player_fail_sequence_constraint(player_index)
+		return
+
+	# 上限弃牌：手牌达上限时不能直接跳过，必须先弃 1 张
+	# 人类玩家由 UI 层负责选牌弃置（_on_discard_mode）；AI 在此自动弃 1 张
 	if player.get_hand_count() >= hand_limit:
-		if clan_bomb_chain_active:
-			log_messages.append("%s 手牌达上限，不接炸" % player.player_name)
+		if player.is_ai:
+			var discard = _ai_pick_discard(player)
+			if discard != null:
+				player.remove_cards([discard])
+				log_messages.append("%s 手牌达上限，自动弃置 %s 并跳过" % [player.player_name, discard.symbol])
+			else:
+				if clan_bomb_chain_active:
+					log_messages.append("%s 手牌达上限，不接炸" % player.player_name)
+				else:
+					log_messages.append("%s 手牌达上限，跳过" % player.player_name)
 		else:
-			log_messages.append("%s 手牌达上限，跳过" % player.player_name)
+			if clan_bomb_chain_active:
+				log_messages.append("%s 手牌达上限，不接炸" % player.player_name)
+			else:
+				log_messages.append("%s 手牌达上限，跳过" % player.player_name)
 	else:
 		# 第0关AI不抽牌
 		if ai_no_draw and player.is_ai:
@@ -384,6 +434,27 @@ func player_pass(player_index: int) -> void:
 	sequence_constraint_active = false
 	sequence_constraint = -1
 	next_turn()
+
+
+# AI 自动选择弃置的牌：优先弃置"孤立单张"（出现次数最少且原子序数最大者），
+# 保留可能组成化合物/族炸的牌。策略简单且行为一致，与人类玩家上限弃牌等价。
+func _ai_pick_discard(player):
+	if player.hand.is_empty():
+		return null
+	# 统计每种元素出现次数
+	var count_by_symbol: Dictionary = {}
+	for c in player.hand:
+		count_by_symbol[c.symbol] = count_by_symbol.get(c.symbol, 0) + 1
+	# 优先弃置出现次数最少、原子序数最大的单张
+	var best = null
+	var best_score = -1.0
+	for c in player.hand:
+		var cnt = count_by_symbol[c.symbol]
+		var score = c.atomic_number * 1.0 - cnt * 100.0  # 次数多→保留；原子序数大→优先弃
+		if best == null or score > best_score:
+			best = c
+			best_score = score
+	return best
 
 
 func _get_hand_limit() -> int:
@@ -520,7 +591,7 @@ func _get_alive_players() -> Array:
 
 
 # ============================================================
-# 十二、教程关卡系统
+# 十二、教程关卡系统（委托到 TutorialController）
 # ============================================================
 func init_tutorial(level: int) -> bool:
 	phase = 0
@@ -539,7 +610,7 @@ func init_tutorial(level: int) -> bool:
 	direction_clockwise = true
 	sequence_constraint = -1
 	sequence_constraint_active = false
-	log_messages.clear()
+	logger.clear_logs()
 	tutorial_level0_phase = 0
 	ai_no_draw = false
 	level0_rule_tip = ""
@@ -548,197 +619,61 @@ func init_tutorial(level: int) -> bool:
 	database = CardDatabaseScript.new()
 	database.generate_deck()
 
-	tutorial_level = level
-	if level == 0:
-		# ========== 第零关：界面熟悉 + 流程介绍 + 牌局体验 ==========
-		_init_level0_deck()
-		players.append(PlayerManagerScript.PlayerInfo.new("玩家", false))
-		players.append(PlayerManagerScript.PlayerInfo.new("AI 1", true))
-		players.append(PlayerManagerScript.PlayerInfo.new("AI 2", true))
+	# 创建教程控制器（若未创建）
+	if tutorial_controller == null:
+		tutorial_controller = TutorialControllerScript.new(self)
 
-		# AI 固定手牌：O, S, C, Si, H, Mg 各1张
-		_set_preset_hand(players[1], ["O", "S", "C", "Si", "H", "Mg"])
-		_set_preset_hand(players[2], ["O", "S", "C", "Si", "H", "Mg"])
-
-		# AI 各补2张非0族随机牌
-		for ai_idx in [1, 2]:
-			var ai = players[ai_idx]
-			var non_noble_pool: Array = []
-			for card in database.deck:
-				if card.group != "0":
-					non_noble_pool.append(card)
-			non_noble_pool.shuffle()
-			for card in non_noble_pool:
-				if ai.get_hand_count() >= 8:
-					break
-				var new_card = _copy_card(card)
-				ai.add_card(new_card)
-				database.deck.erase(card)
-
-		var player_cards = database.draw_cards(8)
-		for card in player_cards:
-			players[0].add_card(card)
-		players[0].sort_hand_by_atomic_number()
-
-		ai_no_draw = true
-		clan_bomb_disabled = false
-		tutorial_level0_phase = 0
-		tutorial_step = 0
-		tutorial_success = ""
-		tutorial_guidance = ""
-		_update_tutorial_level0_guidance()
-
-	elif level == 1:
-		clan_bomb_disabled = true
-		players.append(PlayerManagerScript.PlayerInfo.new("玩家", false))
-		players.append(PlayerManagerScript.PlayerInfo.new("AI 1", true))
-		players.append(PlayerManagerScript.PlayerInfo.new("AI 2", true))
-		_set_preset_hand(players[0], ["Na","Cl","Ca","O","He","Li","F","Mg","S","Ne"])
-		_set_preset_hand(players[1], ["K","Br","B","C","Al","Si","N","P"])
-		_set_preset_hand(players[2], ["H","Be","Ar","Cr","Mn","Fe","Co","Ni"])
-	elif level == 2:
-		players.append(PlayerManagerScript.PlayerInfo.new("玩家", false))
-		players.append(PlayerManagerScript.PlayerInfo.new("AI 1", true))
-		players.append(PlayerManagerScript.PlayerInfo.new("AI 2", true))
-		players.append(PlayerManagerScript.PlayerInfo.new("AI 3", true))
-		_set_preset_hand(players[0], ["H","Li","Na","Cl","K","O","Ca","F","He","Ne"])
-		_set_preset_hand(players[1], ["Mg","S","Al","P","B","Si","C","N","Br","Be"])
-		_set_preset_hand(players[2], ["Ar","Cr","Mn","Fe","Co","Ni","Cu","Zn"])
-		_set_preset_hand(players[3], ["He","Ne","O","F","Cl","Ar","K","Ca"])
-	else:
+	# 委托教程初始化（含预设手牌、level0 牌库、引导文本）
+	var ok = tutorial_controller.init_tutorial(level)
+	if not ok:
 		return false
 
-	if level != 0:
-		tutorial_step = 1
-		tutorial_success = ""
-		_update_tutorial_guidance()
+	# 从控制器同步教程状态（外部仍通过 GameManager 访问）
+	_sync_tutorial_state_from_controller()
 
 	phase = 1
-	log_messages.append("===== 教程关卡 %d 开始 =====" % level)
-	log_messages.append("当前回合: %s (自由出牌)" % players[current_player_index].player_name)
+	logger.add_log("===== 教程关卡 %d 开始 =====" % level)
+	logger.add_log("当前回合: %s (自由出牌)" % players[current_player_index].player_name)
 	return true
 
 
-func _init_level0_deck() -> void:
-	var first18 = ["H","He","Li","Be","B","C","N","O","F","Ne","Na","Mg","Al","Si","P","S","Cl","Ar"]
-	var full_db = CardDatabaseScript.new()
-	full_db.generate_deck()
-	database.deck.clear()
-	var counts: Dictionary = {}
-	for sym in first18:
-		counts[sym] = 0
-	for card in full_db.deck:
-		if card.symbol in first18 and counts[card.symbol] < 3:
-			database.deck.append(_copy_card(card))
-			counts[card.symbol] += 1
-	database.shuffle()
-
-
-func _copy_card(card):
-	return CardDatabaseScript.CardDataScript.new(
-		card.symbol, card.name_cn, card.name_en, card.atomic_number,
-		card.group, card.period, card.element_type, card.single_form,
-		card.valence_electrons, card.common_valence,
-		card.electronegativity, card.atomic_weight, card.description
-	)
-
-
-func _set_preset_hand(player: PlayerManagerScript.PlayerInfo, symbols: Array) -> void:
-	for sym in symbols:
-		var card = _find_card_by_symbol(sym)
-		if card != null:
-			player.add_card(card)
-	player.sort_hand_by_atomic_number()
-
-
-func _find_card_by_symbol(sym: String):
-	for card in database.deck:
-		if card.symbol == sym:
-			database.deck.erase(card)
-			return CardDatabaseScript.CardDataScript.new(
-				card.symbol, card.name_cn, card.name_en, card.atomic_number,
-				card.group, card.period, card.element_type, card.single_form,
-				card.valence_electrons, card.common_valence,
-				card.electronegativity, card.atomic_weight, card.description
-			)
-	return null
-
-
-# ============================================================
-# 十三、教程引导与进度
-# ============================================================
-func _update_tutorial_guidance() -> void:
-	if tutorial_level == 1:
-		match tutorial_step:
-			1: tutorial_guidance = "【第1步】观察手牌：每张牌显示元素符号+中文名。鼠标悬停可查看原子序数、族、化合价、相对质量。\n点击选中一张牌，再点「出牌(选牌型)」→「作为单质打出」试试！"
-			2: tutorial_guidance = "【第2步】很好！现在试试合成化合物：选中两种不同元素(如Na和Cl)，点「合成化合物」→为每种选化合价→确认打出。\n金属优先正价，非金属优先负价。"
-			3: tutorial_guidance = "【第3步】继续练习！尝试不同的单质和化合物组合。\n记住：原子序数和越小，牌力越大。桌面牌必须被你出的牌压过。"
-			_: tutorial_guidance = "【练习中】继续出牌直到打光手牌！随时可跳过抽牌。"
-	elif tutorial_level == 2:
-		match tutorial_step:
-			1: tutorial_guidance = "【第1步】熟悉族炸：选中同族≥2张不同元素(如H+Li都是IA族)，点「作为族炸打出」。\n族炸可以抢牌权，比普通牌更强！"
-			2: tutorial_guidance = "【第2步】族炸打出后进入冷却❄，必须出一个化合物来解除冷却。\n选中两种元素合成化合物，像Na+Cl=NaCl。"
-			3: tutorial_guidance = "【第3步】试试接炸！当AI打出族炸后，你如果也有同族牌可出更大族炸接炸。\n也可以跳过让AI接炸。"
-			4: tutorial_guidance = "【第4步】注意手牌上限！手牌达到上限时不能跳过，需选择1张弃置。\n继续练习直到打完所有手牌！"
-			_: tutorial_guidance = "【练习中】继续游戏！利用族炸+化合物完成对局。"
-
-
-func _update_tutorial_level0_guidance() -> void:
-	if tutorial_level != 0:
+# 从控制器同步教程状态变量（保持外部接口一致）
+func _sync_tutorial_state_from_controller() -> void:
+	if tutorial_controller == null:
 		return
-	match tutorial_level0_phase:
-		1: tutorial_guidance = ""
-		2: tutorial_guidance = ""
-		3: tutorial_guidance = "【牌局中】尝试出牌！你可以打出单质、化合物或族炸。AI默认只出单质和化合物。"
+	tutorial_level = tutorial_controller.tutorial_level
+	tutorial_step = tutorial_controller.tutorial_step
+	tutorial_guidance = tutorial_controller.tutorial_guidance
+	tutorial_success = tutorial_controller.tutorial_success
+	tutorial_level0_phase = tutorial_controller.tutorial_level0_phase
+	ai_no_draw = tutorial_controller.ai_no_draw
+	level0_rule_tip = tutorial_controller.level0_rule_tip
+	level0_last_player_action = tutorial_controller.level0_last_player_action
 
 
+# 出牌后的教程进度检查（委托到控制器）
 func _check_tutorial_progress(pattern: int, player_is_human: bool) -> void:
-	if not player_is_human:
+	if tutorial_controller == null:
 		return
-	tutorial_success = ""
-	var advanced = false
-
-	if tutorial_level == 0:
-		pass
-	elif tutorial_level == 1:
-		if tutorial_step == 1 and pattern == CardPatternsScript.CardPattern.ELEMENT:
-			tutorial_success = "✓ 正确！你打出了一张单质。"
-			advanced = true
-		elif tutorial_step == 2 and pattern == CardPatternsScript.CardPattern.COMPOUND:
-			tutorial_success = "✓ 正确！你成功合成了一个化合物。"
-			advanced = true
-		elif tutorial_step == 3 and pattern == CardPatternsScript.CardPattern.COMPOUND:
-			tutorial_success = "✓ 很好！继续练习。"
-			advanced = true
-	elif tutorial_level == 2:
-		if tutorial_step == 1 and pattern == CardPatternsScript.CardPattern.CLAN_BOMB:
-			tutorial_success = "✓ 正确！你打出了族炸，抢到了牌权！注意你进入了冷却❄。"
-			advanced = true
-		elif tutorial_step == 2 and pattern == CardPatternsScript.CardPattern.COMPOUND:
-			tutorial_success = "✓ 正确！打出化合物解除了族炸冷却。"
-			advanced = true
-		elif tutorial_step == 3 and pattern == CardPatternsScript.CardPattern.CLAN_BOMB:
-			tutorial_success = "✓ 正确！你成功接炸了！"
-			advanced = true
-		elif tutorial_step == 4:
-			tutorial_success = "继续练习！"
-			advanced = true
-
-	if advanced and tutorial_step < 5:
-		tutorial_step += 1
-		_update_tutorial_guidance()
+	tutorial_controller.check_tutorial_progress(pattern, player_is_human)
+	_sync_tutorial_state_from_controller()
 
 
 func get_tutorial_display() -> String:
-	var text = tutorial_guidance
-	if tutorial_success != "":
-		text += "\n" + tutorial_success
-	return text
+	if tutorial_controller == null:
+		return ""
+	return tutorial_controller.get_tutorial_display()
 
 
-# ============================================================
-# 十四、查询与辅助方法
-# ============================================================
+# UI 更新第0关阶段时调用（同步镜像与控制器）
+func set_tutorial_level0_phase(phase: int) -> void:
+	tutorial_level0_phase = phase
+	if tutorial_controller != null:
+		tutorial_controller.tutorial_level0_phase = phase
+		tutorial_controller._update_tutorial_level0_guidance()
+		_sync_tutorial_state_from_controller()
+
+
 func get_all_players_info() -> String:
 	var info = "===== 状态 =====\n"
 	for i in range(players.size()):
@@ -817,6 +752,64 @@ func get_available_patterns(player_idx: int) -> String:
 
 func flush_logs() -> Array:
 	return logger.flush_logs()
+
+
+# ============================================================
+# 十四之二、只读接口（供 UI 层访问，避免直接操作内部状态）
+# ============================================================
+func get_players() -> Array:
+	return players
+
+func get_player_count() -> int:
+	return players.size()
+
+func get_hand_limit() -> int:
+	return _get_hand_limit()
+
+func get_table_cards() -> Array:
+	return table_cards
+
+func get_table_pattern() -> int:
+	return table_pattern
+
+func get_table_player_index() -> int:
+	return table_player_index
+
+func get_table_custom_valences() -> Dictionary:
+	return table_custom_valences
+
+func get_database() -> RefCounted:
+	return database
+
+func get_is_round_starter() -> bool:
+	return is_round_starter
+
+func get_phase() -> int:
+	return phase
+
+func get_organic_rules_enabled() -> bool:
+	return organic_rules_enabled
+
+func get_sequence_rules_enabled() -> bool:
+	return sequence_rules_enabled
+
+func get_direction_clockwise() -> bool:
+	return direction_clockwise
+
+func is_clan_bomb_chain_active() -> bool:
+	return clan_bomb_chain_active
+
+func get_clan_bomb_owner() -> int:
+	return clan_bomb_owner
+
+func is_compound_immune() -> bool:
+	return compound_immune
+
+func get_sequence_constraint() -> int:
+	return sequence_constraint
+
+func is_sequence_constraint_active() -> bool:
+	return sequence_constraint_active
 
 func _cards_to_string(cards: Array) -> String:
 	if cards.is_empty():

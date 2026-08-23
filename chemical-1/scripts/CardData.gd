@@ -3,6 +3,9 @@
 # 定义单张化学元素卡牌的所有属性
 # ============================================================
 
+# 自引用预加载（供 from_dict 反序列化使用，避免每次动态 load）
+const CardDataScript = preload("res://scripts/CardData.gd")
+
 # ============================================================
 # 一、族常量定义（16个周期表族）
 # ============================================================
@@ -99,28 +102,7 @@ func get_full_info() -> String:
 
 
 # ============================================================
-# 七、逻辑判断方法
-# ============================================================
-# 判断是否为同族
-func is_same_group(other) -> bool:
-	return other != null and group != "" and group == other.group
-
-
-# 检查化合价是否匹配（是否存在一正一负可配平）
-func can_bond_with(other) -> bool:
-	if other == null:
-		return false
-	for v1 in common_valence:
-		for v2 in other.common_valence:
-			if v1 > 0 and v2 < 0:
-				return true
-			if v1 < 0 and v2 > 0:
-				return true
-	return false
-
-
-# ============================================================
-# 八、序列化方法
+# 七、序列化方法
 # ============================================================
 # JSON 序列化
 func to_dict() -> Dictionary:
@@ -141,9 +123,9 @@ func to_dict() -> Dictionary:
 	}
 
 
-# JSON 反序列化
+# JSON 反序列化（预加载脚本，避免每次动态 load）
 static func from_dict(data: Dictionary):
-	var card = load("res://scripts/CardData.gd").new()
+	var card = CardDataScript.new()
 	card.symbol = data.get("symbol", "")
 	card.name_cn = data.get("name_cn", "")
 	card.name_en = data.get("name_en", "")
