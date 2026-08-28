@@ -26,7 +26,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.78, 0.88, 0.98, 1)
+color = Color(0.902, 0.941, 0.98, 1)
 
 [node name="StartTitle" type="Label" parent="StartPage" unique_id=682625676]
 layout_mode = 1
@@ -208,7 +208,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.78, 0.88, 0.98, 1)
+color = Color(0.902, 0.941, 0.98, 1)
 
 [node name="EndTitle" type="Label" parent="EndPage" unique_id=2051721356]
 layout_mode = 1
@@ -271,7 +271,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.78, 0.88, 0.98, 1)
+color = Color(0.902, 0.941, 0.98, 1)
 
 [node name="TutorialTitle" type="Label" parent="TutorialPage" unique_id=1094856710]
 layout_mode = 1
@@ -423,7 +423,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.78, 0.88, 0.98, 1)
+color = Color(0.902, 0.941, 0.98, 1)
 
 [node name="HelpRulesTitle" type="Label" parent="HelpPage_Rules" unique_id=961850435]
 layout_mode = 0
@@ -615,6 +615,7 @@ theme_override_font_sizes/font_size = 15
 text = "查看卡牌介绍 "
 
 [node name="HelpPage_Cards" type="Control" parent="." unique_id=1780342333]
+visible = false
 layout_mode = 1
 anchors_preset = 8
 anchor_left = 0.5
@@ -635,7 +636,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.78, 0.88, 0.98, 1)
+color = Color(0.902, 0.941, 0.98, 1)
 
 [node name="HelpCardsTitle" type="Label" parent="HelpPage_Cards" unique_id=1683842665]
 layout_mode = 0
@@ -835,7 +836,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.78, 0.88, 0.98, 1)
+color = Color(0.902, 0.941, 0.98, 1)
 
 [node name="HelpSuppTitle" type="Label" parent="HelpPage_Supp" unique_id=1434195713]
 layout_mode = 0
@@ -990,7 +991,6 @@ theme_override_font_sizes/font_size = 15
 text = "查看卡牌介绍"
 
 [node name="GamePage" type="Control" parent="." unique_id=1067851078]
-visible = false
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -1005,7 +1005,7 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
-color = Color(0.78, 0.88, 0.98, 1)
+color = Color(0.902, 0.941, 0.98, 1)
 
 [node name="TitleLabel" type="Label" parent="GamePage" unique_id=973513050]
 layout_mode = 0
@@ -1020,9 +1020,9 @@ text = "化学碰撞"
 [node name="InfoLabel" type="Label" parent="GamePage" unique_id=1255070432]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 50.0
+offset_top = 42.0
 offset_right = 480.0
-offset_bottom = 140.0
+offset_bottom = 132.0
 theme_override_colors/font_color = Color(0, 0, 0, 1)
 theme_override_font_sizes/font_size = 14
 text = "初始化中..."
@@ -1030,9 +1030,9 @@ text = "初始化中..."
 [node name="TableLabel" type="Label" parent="GamePage" unique_id=119699122]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 150.0
+offset_top = 100.0
 offset_right = 600.0
-offset_bottom = 180.0
+offset_bottom = 130.0
 theme_override_colors/font_color = Color(0, 0, 0, 1)
 theme_override_font_sizes/font_size = 18
 text = "桌面: 空"
@@ -1121,10 +1121,10 @@ text = "牌库剩余: —"
 
 [node name="LogLabel" type="Label" parent="GamePage" unique_id=12348460]
 layout_mode = 0
-offset_left = 756.0
-offset_top = 37.0
-offset_right = 1146.0
-offset_bottom = 357.0
+offset_left = 826.0
+offset_top = 41.0
+offset_right = 1216.0
+offset_bottom = 361.0
 theme_override_font_sizes/font_size = 14
 text = "游戏日志:"
 autowrap_mode = 3

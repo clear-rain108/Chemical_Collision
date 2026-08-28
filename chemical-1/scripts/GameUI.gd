@@ -43,6 +43,7 @@ var ai_spin: SpinBox = null
 var hand_container: Control = null      # 手牌区 (HFlowContainer)
 var info_label: Label = null            # 牌权状态
 var deck_count_label: Label = null      # 牌库计数
+var status_bar_label: Label = null      # 顶部状态栏（当前玩家/手牌/牌库/桌面）
 var table_label: Label = null           # 桌面信息
 var log_label: Label = null             # 游戏日志
 var card_info_label: Label = null       # 可出牌型提示
@@ -187,6 +188,7 @@ func _setup_pages() -> void:
 		help_btn = game_page.get_node_or_null("HelpBtn")
 		tutorial_label = game_page.get_node_or_null("TutorialLabel")
 		deck_count_label = game_page.get_node_or_null("DeckCountLabel")
+		_build_status_bar()
 		if hint_button:
 			hint_button.toggled.connect(_on_hint_toggled)
 		if quit_button:
@@ -721,6 +723,7 @@ func _refresh_ui() -> void:
 		return
 	_update_info_label()
 	_update_table_label()
+	_update_status_bar()
 	_update_log_label()
 	_update_action_panel()
 	_update_hand_buttons()
@@ -733,6 +736,65 @@ func _refresh_ui() -> void:
 func _update_info_label() -> void:
 	if info_label and game_manager:
 		info_label.text = _format_player_status()
+
+# ============================================================
+# 八之二、顶部状态栏（当前玩家 / 手牌数 / 上限 / 牌库 / 桌面）
+# ============================================================
+func _build_status_bar() -> void:
+	if not game_page or status_bar_label != null:
+		return
+	# 深蓝灰背景条（60px，覆盖顶部）
+	var bar = ColorRect.new()
+	bar.color = Color(0.173, 0.243, 0.314, 1.0)   # #2C3E50
+	bar.position = Vector2(0, 0)
+	bar.size = Vector2(1280, 60)
+	game_page.add_child(bar)
+
+	# 状态栏文字
+	var lbl = Label.new()
+	lbl.position = Vector2(16, 8)
+	lbl.size = Vector2(1240, 44)
+	lbl.add_theme_font_size_override("font_size", 16)
+	lbl.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	game_page.add_child(lbl)
+	status_bar_label = lbl
+
+	# 状态栏已整合信息，隐藏被遮挡/冗余的旧标签，下方标签下移 60px 避免重叠
+	var title = game_page.get_node_or_null("TitleLabel")
+	if title: title.visible = false
+	var deck = game_page.get_node_or_null("DeckCountLabel")
+	if deck: deck.visible = false
+	if info_label: info_label.position += Vector2(0, 60)
+	if table_label: table_label.position += Vector2(0, 60)
+	if log_label: log_label.position += Vector2(0, 60)
+
+
+func _update_status_bar() -> void:
+	if not status_bar_label or not game_manager:
+		return
+	var cp_idx = game_manager.get_current_player_index()
+	var cp = game_manager.get_current_player()
+	if cp == null:
+		status_bar_label.text = ""
+		return
+	var ai_tag = "(AI)" if cp.is_ai else ""
+	var cooling = "❄" if cp.clan_bomb_cooling else ""
+	var pass_tag = "⏸" if cp.has_passed else ""
+	var hand_limit = game_manager.get_hand_limit()
+	var db = game_manager.get_database()
+	var deck_remain = db.get_remaining_count() if db else 0
+	# 桌面信息
+	var table_txt = "桌面: 空"
+	if game_manager.get_table_player_index() >= 0:
+		var tp = game_manager.get_players()[game_manager.get_table_player_index()]
+		var pat = CardPatternsScript.detect_pattern(game_manager.get_table_cards())
+		var pn = CardPatternsScript.get_pattern_name(pat)
+		table_txt = "桌面: %s 打出 %s" % [tp.player_name, pn]
+	status_bar_label.text = "▶ %s %s%s%s  手牌 %d/%d  ｜  牌库 %d  ｜  %s" % [
+		cp.player_name, ai_tag, cooling, pass_tag,
+		cp.get_hand_count(), hand_limit, deck_remain, table_txt
+	]
 
 func _format_player_status() -> String:
 	if game_manager == null or game_manager.get_player_count() == 0:
@@ -858,21 +920,21 @@ func _build_mini_card_button(card, custom_valence = null) -> Button:
 	btn.tooltip_text = card.get_full_info()
 
 	var style_normal = StyleBoxFlat.new()
-	style_normal.bg_color = Color(0.97, 0.97, 0.98, 1.0)
+	style_normal.bg_color = Color(0.973, 0.976, 0.988, 0.92)   # #F8F9FC 半透明
 	style_normal.border_width_left = 1
 	style_normal.border_width_right = 1
 	style_normal.border_width_top = 1
 	style_normal.border_width_bottom = 1
-	style_normal.border_color = Color(0.7, 0.7, 0.75, 1.0)
-	style_normal.corner_radius_top_left = 4
-	style_normal.corner_radius_top_right = 4
-	style_normal.corner_radius_bottom_left = 4
-	style_normal.corner_radius_bottom_right = 4
+	style_normal.border_color = Color(0.72, 0.74, 0.78, 0.9)
+	style_normal.corner_radius_top_left = 6
+	style_normal.corner_radius_top_right = 6
+	style_normal.corner_radius_bottom_left = 6
+	style_normal.corner_radius_bottom_right = 6
 	btn.add_theme_stylebox_override("normal", style_normal)
 
 	var style_hover = style_normal.duplicate()
-	style_hover.bg_color = Color(0.9, 0.93, 0.98, 1.0)
-	style_hover.border_color = Color(0.3, 0.5, 0.8, 1.0)
+	style_hover.bg_color = Color(0.9, 0.93, 0.98, 0.95)
+	style_hover.border_color = Color(0.35, 0.55, 0.85, 1.0)
 	btn.add_theme_stylebox_override("hover", style_hover)
 
 	var l_num = Label.new()
@@ -1022,7 +1084,43 @@ func _mkb(text: String, cb: Callable, dis: bool) -> Button:
 	b.text = text
 	b.custom_minimum_size = Vector2(160, 45)
 	b.add_theme_font_size_override("font_size", 16)
+	b.add_theme_color_override("font_color", Color(1, 1, 1, 1))
 	b.disabled = dis
+
+	# 深蓝灰圆角按钮样式
+	var style_normal = StyleBoxFlat.new()
+	style_normal.bg_color = Color(0.173, 0.243, 0.314, 1.0)   # #2C3E50
+	style_normal.corner_radius_top_left = 6
+	style_normal.corner_radius_top_right = 6
+	style_normal.corner_radius_bottom_left = 6
+	style_normal.corner_radius_bottom_right = 6
+	style_normal.border_width_left = 1
+	style_normal.border_width_right = 1
+	style_normal.border_width_top = 1
+	style_normal.border_width_bottom = 1
+	style_normal.border_color = Color(0.4, 0.55, 0.7, 1.0)
+	style_normal.content_margin_left = 10
+	style_normal.content_margin_right = 10
+	style_normal.content_margin_top = 6
+	style_normal.content_margin_bottom = 6
+	b.add_theme_stylebox_override("normal", style_normal)
+
+	# 悬停：背景变亮
+	var style_hover = style_normal.duplicate()
+	style_hover.bg_color = Color(0.27, 0.38, 0.5, 1.0)
+	style_hover.border_color = Color(0.55, 0.75, 0.95, 1.0)
+	b.add_theme_stylebox_override("hover", style_hover)
+
+	# 按下：略暗
+	var style_pressed = style_normal.duplicate()
+	style_pressed.bg_color = Color(0.12, 0.17, 0.23, 1.0)
+	b.add_theme_stylebox_override("pressed", style_pressed)
+
+	# 禁用：半透明
+	var style_disabled = style_normal.duplicate()
+	style_disabled.bg_color = Color(0.173, 0.243, 0.314, 0.35)
+	b.add_theme_stylebox_override("disabled", style_disabled)
+
 	b.pressed.connect(cb)
 	return b
 
@@ -1095,44 +1193,48 @@ func _build_card_button(card, idx: int) -> Button:
 	btn.tooltip_text = card.get_full_info()
 
 	var style_normal = StyleBoxFlat.new()
-	style_normal.bg_color = Color(0.97, 0.97, 0.98, 1.0)
-	style_normal.border_width_left = 2
-	style_normal.border_width_right = 2
-	style_normal.border_width_top = 2
-	style_normal.border_width_bottom = 2
-	style_normal.border_color = Color(0.7, 0.7, 0.75, 1.0)
-	style_normal.corner_radius_top_left = 6
-	style_normal.corner_radius_top_right = 6
-	style_normal.corner_radius_bottom_left = 6
-	style_normal.corner_radius_bottom_right = 6
+	style_normal.bg_color = Color(0.973, 0.976, 0.988, 1.0)   # #F8F9FC
+	style_normal.border_width_left = 1
+	style_normal.border_width_right = 1
+	style_normal.border_width_top = 1
+	style_normal.border_width_bottom = 1
+	style_normal.border_color = Color(0.72, 0.74, 0.78, 1.0)
+	style_normal.corner_radius_top_left = 8
+	style_normal.corner_radius_top_right = 8
+	style_normal.corner_radius_bottom_left = 8
+	style_normal.corner_radius_bottom_right = 8
 	btn.add_theme_stylebox_override("normal", style_normal)
 
 	var style_hover = style_normal.duplicate()
 	style_hover.bg_color = Color(0.9, 0.93, 0.98, 1.0)
-	style_hover.border_color = Color(0.3, 0.5, 0.8, 1.0)
+	style_hover.border_color = Color(0.35, 0.55, 0.85, 1.0)
+	style_hover.border_width_left = 2
+	style_hover.border_width_right = 2
+	style_hover.border_width_top = 2
+	style_hover.border_width_bottom = 2
 	btn.add_theme_stylebox_override("hover", style_hover)
 
 	if idx in selected_indices:
 		var style_sel = style_normal.duplicate()
-		style_sel.bg_color = Color(1.0, 1.0, 0.8, 1.0)
-		style_sel.border_color = Color(1.0, 0.7, 0.0, 1.0)
-		style_sel.border_width_left = 3
-		style_sel.border_width_right = 3
-		style_sel.border_width_top = 3
-		style_sel.border_width_bottom = 3
+		style_sel.bg_color = Color(1.0, 1.0, 0.82, 1.0)
+		style_sel.border_color = Color(0.9, 0.65, 0.1, 1.0)
+		style_sel.border_width_left = 2
+		style_sel.border_width_right = 2
+		style_sel.border_width_top = 2
+		style_sel.border_width_bottom = 2
 		btn.add_theme_stylebox_override("normal", style_sel)
 
 	var l_num = Label.new()
 	l_num.text = str(card.atomic_number)
-	l_num.add_theme_font_size_override("font_size", 11)
-	l_num.add_theme_color_override("font_color", Color(0.3, 0.3, 0.3, 1))
+	l_num.add_theme_font_size_override("font_size", 12)
+	l_num.add_theme_color_override("font_color", Color(0.25, 0.28, 0.32, 1))
 	l_num.position = Vector2(4, 2)
 	btn.add_child(l_num)
 
 	var l_group = Label.new()
 	l_group.text = card.group
 	l_group.add_theme_font_size_override("font_size", 9)
-	l_group.add_theme_color_override("font_color", Color(0.4, 0.4, 0.5, 1))
+	l_group.add_theme_color_override("font_color", _get_card_color(card))
 	l_group.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	l_group.size = Vector2(48, 14)
 	l_group.position = Vector2(43, 3)
@@ -1140,17 +1242,19 @@ func _build_card_button(card, idx: int) -> Button:
 
 	var l_sym = Label.new()
 	l_sym.text = card.symbol
-	l_sym.add_theme_font_size_override("font_size", 20)
+	l_sym.add_theme_font_size_override("font_size", 26)
 	l_sym.add_theme_color_override("font_color", _get_card_color(card))
+	l_sym.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.25))
+	l_sym.add_theme_constant_override("outline_size", 2)
 	l_sym.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l_sym.size = Vector2(85, 22)
-	l_sym.position = Vector2(5, 22)
+	l_sym.size = Vector2(85, 26)
+	l_sym.position = Vector2(5, 20)
 	btn.add_child(l_sym)
 
 	var l_name = Label.new()
 	l_name.text = card.name_cn
-	l_name.add_theme_font_size_override("font_size", 11)
-	l_name.add_theme_color_override("font_color", Color(0.1, 0.1, 0.1, 1))
+	l_name.add_theme_font_size_override("font_size", 12)
+	l_name.add_theme_color_override("font_color", Color(0.1, 0.12, 0.14, 1))
 	l_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l_name.size = Vector2(85, 15)
 	l_name.position = Vector2(5, 48)
@@ -1163,17 +1267,30 @@ func _build_card_button(card, idx: int) -> Button:
 		else: val_str += "%d" % v
 	var l_val = Label.new()
 	l_val.text = val_str
-	l_val.add_theme_font_size_override("font_size", 10)
-	l_val.add_theme_color_override("font_color", Color(0.5, 0.2, 0.2, 1))
+	l_val.add_theme_font_size_override("font_size", 11)
+	l_val.add_theme_color_override("font_color", Color(0.55, 0.2, 0.2, 1))
 	l_val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l_val.size = Vector2(85, 13)
-	l_val.position = Vector2(5, 65)
+	l_val.size = Vector2(85, 16)
+	l_val.position = Vector2(5, 64)
+	# 化合价圆底标签
+	var val_bg = StyleBoxFlat.new()
+	val_bg.bg_color = Color(0.96, 0.9, 0.88, 1.0)
+	val_bg.corner_radius_top_left = 6
+	val_bg.corner_radius_top_right = 6
+	val_bg.corner_radius_bottom_left = 6
+	val_bg.corner_radius_bottom_right = 6
+	val_bg.border_width_left = 1
+	val_bg.border_width_right = 1
+	val_bg.border_width_top = 1
+	val_bg.border_width_bottom = 1
+	val_bg.border_color = Color(0.85, 0.7, 0.65, 1.0)
+	l_val.add_theme_stylebox_override("normal", val_bg)
 	btn.add_child(l_val)
 
 	var l_mass = Label.new()
 	l_mass.text = "%.1f" % card.atomic_weight
 	l_mass.add_theme_font_size_override("font_size", 9)
-	l_mass.add_theme_color_override("font_color", Color(0.4, 0.4, 0.4, 1))
+	l_mass.add_theme_color_override("font_color", Color(0.45, 0.47, 0.5, 1))
 	l_mass.position = Vector2(3, 102)
 	btn.add_child(l_mass)
 
@@ -1591,7 +1708,7 @@ func _show_center_warning(text: String) -> void:
 	bg.size = Vector2(800, 110)
 	box.add_child(bg)
 
-	var border = _level0_make_outline_rect(Vector2(300, 360), Vector2(800, 110), Color(0.9, 0.3, 0.1, 1), 4)
+	var border = _level0_make_outline_rect(Vector2(300, 360), Vector2(800, 110), Color(0.906, 0.298, 0.235, 1), 4)
 	box.add_child(border)
 
 	var lbl = Label.new()
