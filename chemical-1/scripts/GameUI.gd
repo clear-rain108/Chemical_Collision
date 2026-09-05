@@ -1271,20 +1271,7 @@ func _build_card_button(card, idx: int) -> Button:
 	l_val.add_theme_color_override("font_color", Color(0.55, 0.2, 0.2, 1))
 	l_val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l_val.size = Vector2(85, 16)
-	l_val.position = Vector2(5, 64)
-	# 化合价圆底标签
-	var val_bg = StyleBoxFlat.new()
-	val_bg.bg_color = Color(0.96, 0.9, 0.88, 1.0)
-	val_bg.corner_radius_top_left = 6
-	val_bg.corner_radius_top_right = 6
-	val_bg.corner_radius_bottom_left = 6
-	val_bg.corner_radius_bottom_right = 6
-	val_bg.border_width_left = 1
-	val_bg.border_width_right = 1
-	val_bg.border_width_top = 1
-	val_bg.border_width_bottom = 1
-	val_bg.border_color = Color(0.85, 0.7, 0.65, 1.0)
-	l_val.add_theme_stylebox_override("normal", val_bg)
+	l_val.position = Vector2(5, 66)
 	btn.add_child(l_val)
 
 	var l_mass = Label.new()
