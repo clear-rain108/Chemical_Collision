@@ -1,7 +1,7 @@
 # 化学碰撞 — 程序架构与实现文档
 
-> **版本**: 13.0  
-> **日期**: 2026-08-06  
+> **版本**: 14.1  
+> **日期**: 2026-10-23  
 > **引擎**: Godot 4.x / GDScript
 
 ---
@@ -306,6 +306,47 @@ AIPlayer.auto_play(game_manager, ui_refresh)
 `_build_card_button()` — 95×118px 白底圆角牌面：
 - 左上：原子序数 | 右上：族 | 中上：元素符号(着色) | 中：中文名 | 中下：化合价(±标注) | 左下：相对原子质量
 
+布局 `_layout_hand_cards()`：一行居中；张数超过"不重叠容量"后按
+`step = min(CARD_STEP_MAX=60, (可用宽 - 牌宽) / (n-1))` 压缩重叠，
+重叠露出不足 72% 时切换紧凑牌面（内容左对齐，保证左侧窄条可读）。
+
+### 悬停交互（防抖动状态机）
+
+悬停效果 = 上浮 20px + 置顶 + 高亮边框 + 下方信息栏显示详情。关键约束：
+
+| 机制 | 实现 | 为什么必须这样 |
+|------|------|----------------|
+| 判定几何固定 | `_card_hover_rect()` = 静止位置 ∪ 抬起位置 `{base-(0,20), 115×138}`，只用 `base_pos` 算 | 若命中区随"抬起"变化，会出现 抬起→让出底部20px→移出→落回→再进入 的自激抖动 |
+| 不用引擎信号 | 不连 `mouse_entered/mouse_exited`，改由 `_process → _update_hand_hover()` 轮询 | 引擎 pick 结果会随 `position`/`z_index` 变化翻转 |
+| 重叠归属 | 命中重叠时取索引最大（最上层）；但鼠标仍在当前牌"核心区"`_card_core_rect()` 内则保持 | 重叠窄条处两张牌互相抢 hover，表现为抽搐 |
+| 切换延迟 | 目标需稳定 `HOVER_SWITCH_DELAY_MS = 110ms`；移出容器立即复位 | 快速划过时不逐张弹起、信息栏不刷屏 |
+| 样式同源 | `_apply_hover()` 同时改 `position / z_index` 与 **normal / hover / pressed 三个主题项**（三者指向同一 StyleBox） | 引擎 `hover` 态是第二套判定；未覆盖时会回退到默认深色主题（`bg=(0.225,0.225,0.225,0.6)`）——鼠标一停到牌上，整张牌就被盖成半透明深灰 |
+
+- 状态字段：`_hover_idx`（当前抬起）/ `_hover_pending_idx`（待稳定目标）/ `_hover_pending_at`（时间戳）
+- 按钮 meta：`base_pos` / `hand_idx` / `sb_normal` / `sb_hover`（后两者供样式切换）
+- `_update_hover_at(mp)` 是可注入鼠标位置的核心判定，自动化测试据此验证防抖；
+  `_on_hand_card_hover(btn, bool)` 保留为公共入口（测试与外部直接调用）
+- headless 环境（自动化测试）跳过 `_process` 轮询，避免 `(0,0)` 误触发
+
+### 卡牌状态样式（选中 / 悬停 / 焦点）
+
+`_build_card_button()` 为每张牌生成样式并**显式覆盖 Button 的全部状态项**：
+
+| 状态 | 未选中 | 已选中 |
+|------|--------|--------|
+| `normal` | 白底 `#F8F9FC` + 1px 浅灰边 + 轻投影(3px) | 浅黄 `#FFFFD1` + 2px 橙金边 |
+| `hover`（抬起时） | 浅蓝 `#E6EDFA` + 2px 蓝边 | 深一档浅黄 `#FFFAB8` + 2px 深橙边 |
+| `pressed` | 与 `normal` 同源 | 与 `normal` 同源 |
+| `focus` | `StyleBoxEmpty`（无框） | 同左 |
+
+- **三者必须同源**：`hover` / `pressed` 都指向当前 `normal` 的**同一个 StyleBox 对象**。引擎无论
+  认为鼠标是否悬停，绘制结果都完全一致 → 判定仍只由状态机负责，视觉上也不会出现第二个闪烁源。
+- **必须显式覆盖**：Godot 默认（深色）主题的 `hover` 是 `bg=(0.225,0.225,0.225,0.6)` 半透明深灰、
+  `focus` 是 `bg=(1,1,1,0.75)` 白罩。漏掉任何一项，真实鼠标悬停/点击后都会糊在牌面上
+  —— 这正是"选中后卡牌发黑"的根因（自动化截图直接调 `_apply_hover` 绕过了引擎 hover 态，所以没暴露）。
+- **选中牌的悬停保留黄色系**（只加深、换深橙边），否则悬停的浅蓝会把"已选中"的浅黄整个盖掉，
+  用户看不出哪张被选了。
+
 ### 出牌步骤流
 
 ```
@@ -347,7 +388,7 @@ Main (Control) ← GameUI.gd
 ├── GamePage           ← 游戏主界面
 │   ├── GameBackground ← Color(0.78,0.88,0.98)
 │   ├── TitleLabel / InfoLabel / TableLabel / DeckCountLabel
-│   ├── HandLabel / HandContainer (HFlow)
+│   ├── HandLabel / HandContainer (Control，手动重叠布局)
 │   ├── ActionPanel (HBox) / CardInfoLabel / TutorialLabel
 │   └── HintButton / HelpBtn / QuitButton
 └── EndPage
@@ -391,5 +432,5 @@ GameManager.init_game / init_tutorial
 
 ---
 
-**文档版本**: 15.0  
-**最后更新**: 2026-08-22
+**文档版本**: 14.1  
+**最后更新**: 2026-10-23

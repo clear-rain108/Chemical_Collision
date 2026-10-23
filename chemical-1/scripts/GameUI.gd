@@ -40,7 +40,7 @@ var ai_spin: SpinBox = null
 # ============================================================
 # 二、UI 控件引用
 # ============================================================
-var hand_container: Control = null      # 手牌区 (HFlowContainer)
+var hand_container: Control = null      # 手牌区 (Control，手动重叠布局)
 var info_label: Label = null            # 牌权状态
 var deck_count_label: Label = null      # 牌库计数
 var status_bar_label: Label = null      # 顶部状态栏（当前玩家/手牌/牌库/桌面）
@@ -56,12 +56,26 @@ var tutorial_label: Label = null        # 教程引导文本
 # 三、游戏状态
 # ============================================================
 var selected_indices: Array = []        # 选中的手牌索引
+var _card_info_backup: String = ""      # hover 详情覆盖前的信息栏文本
+var _card_info_detail_shown: bool = false  # 信息栏当前是否在显示 hover 详情
 var step_mode: int = 0                  # 0=选牌 1=牌型 2=化合价 3=弃牌
 var compound_selections: Array = []     # 化合价选择 [{symbol, valence}]
 var hand_buttons: Array = []            # 手牌按钮列表
+# 悬停状态机（-1 = 无）：命中判定用静止坐标，悬停状态不影响判定结果
+var _hover_idx: int = -1                # 当前抬起的牌索引
+var _hover_pending_idx: int = -1        # 正在等待稳定的目标索引
+var _hover_pending_at: int = 0          # 目标开始等待的时间戳（毫秒）
 var log_lines: Array = []               # 日志行缓存
 const MAX_LOG_LINES = 6
 var ai_triggered: bool = false          # AI 自动操作防重复
+
+# 手牌重叠布局参数
+const CARD_W := 95.0                    # 卡牌宽度
+const CARD_H := 118.0                   # 卡牌高度
+const CARD_GAP := 8.0                   # 不重叠时的间隙
+const HOVER_LIFT := 20.0                # 悬停上浮高度
+const CARD_STEP_MAX := 60.0             # 叠卡时每张最多露出的宽度（0.63×牌宽）
+const HOVER_SWITCH_DELAY_MS := 110      # 悬停牌切换需稳定的毫秒数（防快速划动时逐张弹起）
 
 # ============================================================
 # 第零关覆盖层 (Phase 1: UI介绍, Phase 2: 流程说明)
@@ -361,22 +375,22 @@ func _level0_start_phase1() -> void:
 			"title": "玩家顺序和手牌数",
 			"desc": "这是【玩家顺序和手牌数】\n显示每位玩家的名字、AI标签、手牌张数，以及当前轮到谁（◄标记）",
 			"target": "info_label",
-			"pos": Vector2(20, 50),
-			"size": Vector2(460, 90),
+			"pos": Vector2(20, 60),
+			"size": Vector2(460, 88),
 		},
 		{
 			"title": "桌面的牌",
 			"desc": "这是【桌面的牌】\n显示当前桌面上的牌是谁打出的、牌型是什么、有无特殊状态（如免疫、接炸中）",
 			"target": "table_label",
 			"pos": Vector2(20, 150),
-			"size": Vector2(600, 50),
+			"size": Vector2(600, 130),
 		},
 		{
 			"title": "手牌区",
-			"desc": "这是【手牌区】\n你的手牌在这里显示，每张牌为95×118px的原子牌面，点击可选中（黄色高亮）",
+			"desc": "这是【手牌区】\n你的手牌在这里显示，每张牌为95×118px的原子牌面，牌多时自动重叠排列，鼠标悬停可展开查看\n点击可选中（黄色高亮）",
 			"target": "hand_container",
-			"pos": Vector2(20, 237),
-			"size": Vector2(900, 373),
+			"pos": Vector2(16, 308),
+			"size": Vector2(804, 160),
 		},
 		{
 			"title": "出牌区",
@@ -747,7 +761,7 @@ func _build_status_bar() -> void:
 	var bar = ColorRect.new()
 	bar.color = Color(0.173, 0.243, 0.314, 1.0)   # #2C3E50
 	bar.position = Vector2(0, 0)
-	bar.size = Vector2(1280, 60)
+	bar.size = Vector2(1152, 60)
 	game_page.add_child(bar)
 
 	# 状态栏文字
@@ -760,14 +774,12 @@ func _build_status_bar() -> void:
 	game_page.add_child(lbl)
 	status_bar_label = lbl
 
-	# 状态栏已整合信息，隐藏被遮挡/冗余的旧标签，下方标签下移 60px 避免重叠
+	# 状态栏已整合信息，隐藏被遮挡/冗余的旧标签
 	var title = game_page.get_node_or_null("TitleLabel")
 	if title: title.visible = false
 	var deck = game_page.get_node_or_null("DeckCountLabel")
 	if deck: deck.visible = false
-	if info_label: info_label.position += Vector2(0, 60)
-	if table_label: table_label.position += Vector2(0, 60)
-	if log_label: log_label.position += Vector2(0, 60)
+	# 下方标签的纵向坐标已直接写在 Main.tscn 中（不再运行时下移，避免与桌面牌重叠）
 
 
 func _update_status_bar() -> void:
@@ -814,10 +826,14 @@ func _format_player_status() -> String:
 	var result = "● %s" % parts[0]
 	for j in range(1, parts.size()):
 		result += " → ● %s" % parts[j]
+	# 自己的手牌数已在顶部状态栏显示，这里只列 AI 的，避免信息重复
 	var counts: Array = []
 	for i in range(game_manager.get_player_count()):
-		counts.append("%s: %d张" % [game_manager.get_players()[i].player_name, game_manager.get_players()[i].get_hand_count()])
-	result += "\n手牌: " + " | ".join(counts)
+		var pl = game_manager.get_players()[i]
+		if not pl.is_ai: continue
+		counts.append("%s: %d张" % [pl.player_name, pl.get_hand_count()])
+	if not counts.is_empty():
+		result += "\n手牌: " + " | ".join(counts)
 	# 补充规则状态
 	if game_manager.get_organic_rules_enabled() or game_manager.get_sequence_rules_enabled():
 		var rules_list: Array = []
@@ -902,12 +918,23 @@ func _update_table_label() -> void:
 			for i in range(cards.size()):
 				card_valences[i] = 0
 
+		# 桌面牌槽位："桌面: …"文字下方的那一行，多张时自动压缩并水平居中
+		var slot_left := 20.0
+		var slot_w := 580.0
+		var slot_y := 186.0
+		if table_label:
+			slot_y = table_label.position.y + table_label.size.y + 4.0
+		var mini_step: float = 80.0
+		if cards.size() > 1:
+			mini_step = min(80.0, (slot_w - 72.0) / float(cards.size() - 1))
+		var row_w: float = 72.0 + mini_step * float(cards.size() - 1)
+		var start_x: float = slot_left + max(0.0, (slot_w - row_w) * 0.5)
 		for i in range(cards.size()):
 			var cv = null
 			if card_valences.has(i):
 				cv = card_valences[i]
 			var mini = _build_mini_card_button(cards[i], cv)
-			mini.position = Vector2(500 + i * 80, 105)
+			mini.position = Vector2(start_x + i * mini_step, slot_y)
 			game_page.add_child(mini)
 			table_card_buttons.append(mini)
 	else:
@@ -946,8 +973,8 @@ func _build_mini_card_button(card, custom_valence = null) -> Button:
 
 	var l_group = Label.new()
 	l_group.text = card.group
-	l_group.add_theme_font_size_override("font_size", 7)
-	l_group.add_theme_color_override("font_color", Color(0.4, 0.4, 0.5, 1))
+	l_group.add_theme_font_size_override("font_size", 8)
+	l_group.add_theme_color_override("font_color", Color(0.32, 0.34, 0.38, 1))
 	l_group.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	l_group.size = Vector2(32, 10)
 	l_group.position = Vector2(37, 2)
@@ -1161,7 +1188,14 @@ func _get_card_color(card) -> Color:
 # ============================================================
 func _update_hand_buttons() -> void:
 	if not hand_container or not game_manager: return
+	# 重建会销毁当前 hover 的按钮，先还原信息栏，避免详情文本滞留
+	_restore_card_info()
+	# 旧按钮即将销毁，悬停状态机必须一并清零，否则会指向失效索引
+	_hover_idx = -1
+	_hover_pending_idx = -1
+	# 先 remove_child 再 queue_free：避免旧牌残留在容器中干扰重叠布局
 	for child in hand_container.get_children():
+		hand_container.remove_child(child)
 		child.queue_free()
 	hand_buttons.clear()
 	ai_triggered = false
@@ -1173,6 +1207,11 @@ func _update_hand_buttons() -> void:
 		var wl = Label.new()
 		wl.text = "等待 %s 行动中..." % cp.player_name
 		wl.add_theme_font_size_override("font_size", 28)
+		# 手牌区背景是浅蓝，默认白色字几乎不可见
+		wl.add_theme_color_override("font_color", Color(0.33, 0.4, 0.5, 1))
+		# Control 容器不会自动布局子节点，需显式定位
+		wl.position = Vector2(200, 20)
+		wl.size = Vector2(420, 48)
 		hand_container.add_child(wl)
 		if not ai_triggered:
 			ai_triggered = true
@@ -1185,12 +1224,236 @@ func _update_hand_buttons() -> void:
 			var btn = _build_card_button(card, i)
 			hand_container.add_child(btn)
 			hand_buttons.append(btn)
+		_layout_hand_cards()
+		_restore_hover_after_rebuild()
+
+
+# -------- 手牌重叠排列：一行居中，牌多时自动压缩间距 --------
+func _layout_hand_cards() -> void:
+	if not hand_container: return
+	var n = hand_buttons.size()
+	if n == 0: return
+	var avail = hand_container.size.x
+	# 不叠卡时能容纳的最大张数；超过后主动叠起（step 上限 CARD_STEP_MAX）
+	var plain_max: int = int((avail + CARD_GAP) / (CARD_W + CARD_GAP))
+	var step := CARD_W + CARD_GAP
+	if n > plain_max and n > 1:
+		step = min(CARD_STEP_MAX, (avail - CARD_W) / float(n - 1))
+	var total = CARD_W + step * (n - 1)
+	var start_x = max(0.0, (avail - total) * 0.5)
+	var base_y = hand_container.size.y - CARD_H - HOVER_LIFT
+	# 重叠到露出不足 72% 时切换紧凑牌面（内容靠左，保证露出的左条整齐可读）
+	var compact = step < CARD_W * 0.72
+	for i in range(n):
+		var btn = hand_buttons[i]
+		if not is_instance_valid(btn): continue
+		btn.size = Vector2(CARD_W, CARD_H)
+		btn.position = Vector2(start_x + i * step, base_y)
+		btn.set_meta("base_pos", btn.position)
+		btn.set_meta("hand_idx", i)
+		btn.z_index = 50 if i in selected_indices else 0
+		_apply_card_compact(btn, compact)
+
+
+# -------- 紧凑牌面：重叠时内容左对齐，保证左侧可见区域信息完整 --------
+func _apply_card_compact(btn: Button, compact: bool) -> void:
+	var sym = btn.get_node_or_null("CardSymbol")
+	if sym:
+		sym.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
+		sym.position = Vector2(6, 22) if compact else Vector2(5, 20)
+		sym.size = Vector2(44, 26) if compact else Vector2(85, 26)
+		sym.add_theme_font_size_override("font_size", 21 if compact else 26)
+	var nm = btn.get_node_or_null("CardName")
+	if nm:
+		nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
+		nm.position = Vector2(6, 49) if compact else Vector2(5, 48)
+		nm.size = Vector2(44, 15) if compact else Vector2(85, 15)
+	var vl = btn.get_node_or_null("CardValence")
+	if vl:
+		vl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
+		vl.position = Vector2(6, 72) if compact else Vector2(5, 72)
+		vl.size = Vector2(44, 18) if compact else Vector2(85, 18)
+
+
+# -------- 悬停判定：固定矩形 + 状态机（不用 mouse_entered/exited） --------
+# 卡牌抬起会改变自身几何。若用引擎 enter/exit 判定就会自激抖动：
+# 抬起 → 让出底部 20px → exited → 落回 → entered → 再抬起 → ……
+# 重叠区还会出现两张牌互相抢 hover。这里改为用「静止坐标」算命中区，
+# 悬停状态永远不参与判定，因此不可能自激。
+func _process(_delta: float) -> void:
+	_update_hand_hover()
+
+
+# 命中区 = 静止位置 ∪ 抬起位置（上扩 HOVER_LIFT）：上浮后的区域仍归属该牌
+func _card_hover_rect(btn: Button) -> Rect2:
+	var base: Vector2 = btn.get_meta("base_pos", btn.position)
+	return Rect2(base - Vector2(0, HOVER_LIFT), Vector2(CARD_W, CARD_H + HOVER_LIFT))
+
+
+# 核心区 = 静止位置中「没被后一张牌盖住」的那一段；重叠区不算 → 实现滞回
+func _card_core_rect(idx: int) -> Rect2:
+	if idx < 0 or idx >= hand_buttons.size(): return Rect2()
+	var btn = hand_buttons[idx]
+	if not is_instance_valid(btn): return Rect2()
+	var base: Vector2 = btn.get_meta("base_pos", btn.position)
+	var w: float = CARD_W
+	if idx + 1 < hand_buttons.size() and is_instance_valid(hand_buttons[idx + 1]):
+		var nb = hand_buttons[idx + 1]
+		var nb_base: Vector2 = nb.get_meta("base_pos", nb.position)
+		w = clampf(nb_base.x - base.x, 8.0, CARD_W)
+	return Rect2(base - Vector2(0, HOVER_LIFT), Vector2(w, CARD_H + HOVER_LIFT))
+
+
+# 鼠标位置命中的牌：越靠后的牌画得越上，重叠区归它（取最大索引）
+func _hover_hit_index(mp: Vector2) -> int:
+	var hit := -1
+	for i in range(hand_buttons.size()):
+		var b = hand_buttons[i]
+		if not is_instance_valid(b): continue
+		if _card_hover_rect(b).has_point(mp):
+			hit = i
+	return hit
+
+
+# 真正执行切换：先落下旧牌再抬起新牌，信息栏顺序才不会串
+func _set_hover_index(idx: int) -> void:
+	if idx == _hover_idx: return
+	if _hover_idx >= 0 and _hover_idx < hand_buttons.size():
+		var old = hand_buttons[_hover_idx]
+		if is_instance_valid(old): _apply_hover(old, false)
+	_hover_idx = idx
+	_hover_pending_idx = -1
+	if idx >= 0 and idx < hand_buttons.size():
+		var nb = hand_buttons[idx]
+		if is_instance_valid(nb): _apply_hover(nb, true)
+
+
+func _update_hand_hover() -> void:
+	if hand_container == null or not is_instance_valid(hand_container): return
+	# headless（自动化测试）没有真实鼠标，跳过轮询，避免 (0,0) 误触发
+	if DisplayServer.get_name() == "headless": return
+	if not hand_container.is_visible_in_tree(): return
+	if hand_buttons.is_empty():
+		_hover_idx = -1
+		_hover_pending_idx = -1
+		return
+	# 离开手牌区立即复位（离开要跟手，不加延迟）
+	if not hand_container.get_global_rect().has_point(get_global_mouse_position()):
+		if _hover_idx != -1: _set_hover_index(-1)
+		_hover_pending_idx = -1
+		return
+	var mp: Vector2 = hand_container.get_local_mouse_position()
+	_update_hover_at(mp)
+
+
+# 核心判定（鼠标位置可注入）：自动化测试用它脱离真实鼠标验证防抖
+func _update_hover_at(mp: Vector2) -> void:
+	var hit := _hover_hit_index(mp)
+	# 仍在当前牌的核心区内（哪怕别的牌也命中）= 保持，重叠窄条处不回跳
+	if _hover_idx >= 0 and _card_core_rect(_hover_idx).has_point(mp):
+		_hover_pending_idx = -1
+		return
+	if hit == _hover_idx:
+		_hover_pending_idx = -1
+		return
+	# 目标必须稳定 HOVER_SWITCH_DELAY_MS 才切换：快速划动不会逐张弹起、信息栏不刷屏
+	if hit != _hover_pending_idx:
+		_hover_pending_idx = hit
+		_hover_pending_at = Time.get_ticks_msec()
+	elif Time.get_ticks_msec() - _hover_pending_at >= HOVER_SWITCH_DELAY_MS:
+		_set_hover_index(hit)
+
+
+# -------- 悬停上浮 + 置顶（公共入口，保留原签名供测试/外部直接调用） --------
+func _on_hand_card_hover(btn: Button, hovered: bool) -> void:
+	if not is_instance_valid(btn): return
+	var idx: int = hand_buttons.find(btn)
+	if hovered:
+		if _hover_idx != idx:
+			if _hover_idx >= 0 and _hover_idx < hand_buttons.size():
+				var old = hand_buttons[_hover_idx]
+				if is_instance_valid(old): _apply_hover(old, false)
+			_hover_idx = idx
+		_apply_hover(btn, true)
+	else:
+		if idx == _hover_idx: _hover_idx = -1
+		_apply_hover(btn, false)
+	_hover_pending_idx = -1
+
+
+# -------- 抬起/落下：位置、层级、边框样式三者同源，避免各自闪烁 --------
+func _apply_hover(btn: Button, hovered: bool) -> void:
+	if not is_instance_valid(btn): return
+	var base: Vector2 = btn.get_meta("base_pos", btn.position)
+	if hovered:
+		btn.z_index = 100
+		btn.position = base - Vector2(0, HOVER_LIFT)
+		_show_card_detail(btn)
+	else:
+		var idx: int = btn.get_meta("hand_idx", -1)
+		btn.z_index = 50 if idx in selected_indices else 0
+		btn.position = base
+		_restore_card_info()
+	# 悬停外观由本状态机驱动（引擎自带 hover 态是另一套判定，会独立闪）。
+	# normal/hover/pressed 三者始终指向同一个 StyleBox：引擎无论认为是否悬停，
+	# 画出来都一样 → 既不会闪，也不会回退到默认深色主题（那就是"选中后发黑"）。
+	# 注意：get_meta 的第二参数不能用 null（Godot 会当作"无默认值"报错）
+	var key: String = "sb_hover" if hovered else "sb_normal"
+	var sb = btn.get_meta(key, false)
+	if sb is StyleBox:
+		btn.add_theme_stylebox_override("normal", sb)
+		btn.add_theme_stylebox_override("hover", sb)
+		btn.add_theme_stylebox_override("pressed", sb)
+
+
+# -------- 悬停详情写进下方固定信息栏（替代原生 tooltip，避免浮框遮挡整排手牌） --------
+func _show_card_detail(btn: Button) -> void:
+	if not card_info_label or not game_manager: return
+	var idx: int = btn.get_meta("hand_idx", -1)
+	var cp = game_manager.get_current_player()
+	if cp == null or idx < 0 or idx >= cp.hand.size(): return
+	if not _card_info_detail_shown:
+		_card_info_backup = card_info_label.text
+		_card_info_detail_shown = true
+	card_info_label.text = _card_summary_text(cp.hand[idx])
+
+
+func _restore_card_info() -> void:
+	if not card_info_label or not _card_info_detail_shown: return
+	card_info_label.text = _card_info_backup
+	_card_info_detail_shown = false
+
+
+# -------- 卡牌详情压成单行，便于在信息栏一次读完 --------
+func _card_summary_text(card) -> String:
+	if card == null: return ""
+	var vs := "N/A"
+	if card.common_valence.size() > 0:
+		var parts: Array = []
+		for v in card.common_valence:
+			parts.append(("+%d" % v) if v > 0 else str(v))
+		vs = " ".join(parts)
+	return "%s %s  |  原子序数 %d  |  族 %s  |  %s  |  化合价 %s  |  相对原子质量 %.2f" % [
+		card.symbol, card.name_cn, card.atomic_number, card.group,
+		card.element_type, vs, card.atomic_weight]
+
+
+# -------- 点击重排后鼠标未移动，需主动恢复悬停状态 --------
+func _restore_hover_after_rebuild() -> void:
+	if hand_buttons.is_empty(): return
+	var mp: Vector2 = hand_container.get_local_mouse_position()
+	# 用与轮询相同的命中矩形和「取最上层」规则，保证两条路径结果一致
+	var hit := _hover_hit_index(mp)
+	if hit >= 0:
+		_set_hover_index(hit)
 
 
 func _build_card_button(card, idx: int) -> Button:
 	var btn = Button.new()
-	btn.custom_minimum_size = Vector2(95, 118)
-	btn.tooltip_text = card.get_full_info()
+	btn.custom_minimum_size = Vector2(CARD_W, CARD_H)
+	btn.size = Vector2(CARD_W, CARD_H)   # Control 容器不分配尺寸，需显式设置
+	btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	# 不用原生 tooltip：它会浮在鼠标旁遮住整排手牌，改由下方 CardInfoLabel 显示
 
 	var style_normal = StyleBoxFlat.new()
 	style_normal.bg_color = Color(0.973, 0.976, 0.988, 1.0)   # #F8F9FC
@@ -1198,22 +1461,17 @@ func _build_card_button(card, idx: int) -> Button:
 	style_normal.border_width_right = 1
 	style_normal.border_width_top = 1
 	style_normal.border_width_bottom = 1
-	style_normal.border_color = Color(0.72, 0.74, 0.78, 1.0)
+	style_normal.border_color = Color(0.63, 0.66, 0.71, 1.0)  # #A1A8B5，比背景深一档
 	style_normal.corner_radius_top_left = 8
 	style_normal.corner_radius_top_right = 8
 	style_normal.corner_radius_bottom_left = 8
 	style_normal.corner_radius_bottom_right = 8
-	btn.add_theme_stylebox_override("normal", style_normal)
+	# 轻投影：让牌面从浅蓝背景上"浮"起来，重叠时也形成自然层次
+	style_normal.shadow_color = Color(0.1, 0.15, 0.22, 0.14)
+	style_normal.shadow_size = 3
+	style_normal.shadow_offset = Vector2(0, 2)
 
-	var style_hover = style_normal.duplicate()
-	style_hover.bg_color = Color(0.9, 0.93, 0.98, 1.0)
-	style_hover.border_color = Color(0.35, 0.55, 0.85, 1.0)
-	style_hover.border_width_left = 2
-	style_hover.border_width_right = 2
-	style_hover.border_width_top = 2
-	style_hover.border_width_bottom = 2
-	btn.add_theme_stylebox_override("hover", style_hover)
-
+	var style_base = style_normal
 	if idx in selected_indices:
 		var style_sel = style_normal.duplicate()
 		style_sel.bg_color = Color(1.0, 1.0, 0.82, 1.0)
@@ -1222,7 +1480,32 @@ func _build_card_button(card, idx: int) -> Button:
 		style_sel.border_width_right = 2
 		style_sel.border_width_top = 2
 		style_sel.border_width_bottom = 2
-		btn.add_theme_stylebox_override("normal", style_sel)
+		style_base = style_sel
+
+	# 悬停样式：未选中 → 浅蓝；已选中 → 保留黄色系（只加深），
+	# 否则悬停会把"已选中"的浅黄整个盖掉，用户看不出哪张被选了
+	var style_hover = style_normal.duplicate()
+	if idx in selected_indices:
+		style_hover.bg_color = Color(1.0, 0.98, 0.72, 1.0)
+		style_hover.border_color = Color(0.85, 0.55, 0.0, 1.0)
+	else:
+		style_hover.bg_color = Color(0.9, 0.93, 0.98, 1.0)
+		style_hover.border_color = Color(0.35, 0.55, 0.85, 1.0)
+	style_hover.border_width_left = 2
+	style_hover.border_width_right = 2
+	style_hover.border_width_top = 2
+	style_hover.border_width_bottom = 2
+
+	btn.add_theme_stylebox_override("normal", style_base)
+	# 引擎的 hover / pressed / focus 态必须一并接管，否则会回退到默认（深色）主题：
+	# 鼠标停在牌上时整张牌被画成半透明深灰 —— 也就是"选中后发黑"的真正原因。
+	# hover / pressed 与 normal 同源，引擎状态切换不可见，判定仍只由状态机负责。
+	btn.add_theme_stylebox_override("hover", style_base)
+	btn.add_theme_stylebox_override("pressed", style_base)
+	btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())   # 去掉点击后的焦点框
+	# 两套样式存进 meta，_apply_hover() 在抬起/落下时切换
+	btn.set_meta("sb_normal", style_base)
+	btn.set_meta("sb_hover", style_hover)
 
 	var l_num = Label.new()
 	l_num.text = str(card.atomic_number)
@@ -1233,14 +1516,16 @@ func _build_card_button(card, idx: int) -> Button:
 
 	var l_group = Label.new()
 	l_group.text = card.group
-	l_group.add_theme_font_size_override("font_size", 9)
-	l_group.add_theme_color_override("font_color", _get_card_color(card))
+	l_group.add_theme_font_size_override("font_size", 11)
+	# 固定深灰：族名用元素类别色时（如稀有气体近白）几乎看不见
+	l_group.add_theme_color_override("font_color", Color(0.3, 0.32, 0.36, 1))
 	l_group.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	l_group.size = Vector2(48, 14)
-	l_group.position = Vector2(43, 3)
+	l_group.size = Vector2(52, 15)
+	l_group.position = Vector2(38, 2)
 	btn.add_child(l_group)
 
 	var l_sym = Label.new()
+	l_sym.name = "CardSymbol"
 	l_sym.text = card.symbol
 	l_sym.add_theme_font_size_override("font_size", 26)
 	l_sym.add_theme_color_override("font_color", _get_card_color(card))
@@ -1252,6 +1537,7 @@ func _build_card_button(card, idx: int) -> Button:
 	btn.add_child(l_sym)
 
 	var l_name = Label.new()
+	l_name.name = "CardName"
 	l_name.text = card.name_cn
 	l_name.add_theme_font_size_override("font_size", 12)
 	l_name.add_theme_color_override("font_color", Color(0.1, 0.12, 0.14, 1))
@@ -1266,12 +1552,13 @@ func _build_card_button(card, idx: int) -> Button:
 		if v > 0: val_str += "+%d" % v
 		else: val_str += "%d" % v
 	var l_val = Label.new()
+	l_val.name = "CardValence"
 	l_val.text = val_str
-	l_val.add_theme_font_size_override("font_size", 11)
+	l_val.add_theme_font_size_override("font_size", 13)
 	l_val.add_theme_color_override("font_color", Color(0.55, 0.2, 0.2, 1))
 	l_val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l_val.size = Vector2(85, 16)
-	l_val.position = Vector2(5, 66)
+	l_val.size = Vector2(85, 18)
+	l_val.position = Vector2(5, 72)
 	btn.add_child(l_val)
 
 	var l_mass = Label.new()
@@ -1282,6 +1569,8 @@ func _build_card_button(card, idx: int) -> Button:
 	btn.add_child(l_mass)
 
 	btn.pressed.connect(_on_card_clicked.bind(idx))
+	# 不再连接 mouse_entered/mouse_exited：悬停由 _update_hand_hover() 轮询固定矩形判定，
+	# 否则卡牌上浮会改变自身拾取几何，导致进入/离开无限翻转（抽搐）
 	return btn
 
 

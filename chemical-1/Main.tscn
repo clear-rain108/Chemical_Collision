@@ -1020,9 +1020,9 @@ text = "化学碰撞"
 [node name="InfoLabel" type="Label" parent="GamePage" unique_id=1255070432]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 42.0
+offset_top = 62.0
 offset_right = 480.0
-offset_bottom = 132.0
+offset_bottom = 150.0
 theme_override_colors/font_color = Color(0, 0, 0, 1)
 theme_override_font_sizes/font_size = 14
 text = "初始化中..."
@@ -1030,29 +1030,30 @@ text = "初始化中..."
 [node name="TableLabel" type="Label" parent="GamePage" unique_id=119699122]
 layout_mode = 0
 offset_left = 20.0
-offset_top = 100.0
+offset_top = 152.0
 offset_right = 600.0
-offset_bottom = 130.0
+offset_bottom = 182.0
 theme_override_colors/font_color = Color(0, 0, 0, 1)
 theme_override_font_sizes/font_size = 18
 text = "桌面: 空"
 
 [node name="HandLabel" type="Label" parent="GamePage" unique_id=1084242871]
 layout_mode = 0
-offset_left = 20.0
-offset_top = 200.0
+offset_left = 16.0
+offset_top = 282.0
 offset_right = 200.0
-offset_bottom = 260.0
+offset_bottom = 310.0
 theme_override_colors/font_color = Color(0, 0, 0, 1)
 theme_override_font_sizes/font_size = 16
 text = "我的手牌:"
 
-[node name="HandContainer" type="HFlowContainer" parent="GamePage" unique_id=582537591]
+[node name="HandContainer" type="Control" parent="GamePage" unique_id=582537591]
 layout_mode = 0
-offset_left = 20.0
-offset_top = 237.0
-offset_right = 920.0
-offset_bottom = 610.0
+offset_left = 16.0
+offset_top = 310.0
+offset_right = 820.0
+offset_bottom = 468.0
+mouse_filter = 2
 
 [node name="ActionPanel" type="HBoxContainer" parent="GamePage" unique_id=36028745]
 layout_mode = 0
@@ -1091,12 +1092,13 @@ text = "退出游戏"
 
 [node name="CardInfoLabel" type="Label" parent="GamePage" unique_id=244830457]
 layout_mode = 0
-offset_left = 424.0
-offset_top = 519.0
-offset_right = 814.0
-offset_bottom = 549.0
+offset_left = 16.0
+offset_top = 478.0
+offset_right = 820.0
+offset_bottom = 526.0
 theme_override_colors/font_color = Color(0, 0, 0, 1)
-theme_override_font_sizes/font_size = 13
+theme_override_font_sizes/font_size = 14
+horizontal_alignment = 1
 autowrap_mode = 3
 
 [node name="TutorialLabel" type="Label" parent="GamePage" unique_id=898111835]
@@ -1121,10 +1123,11 @@ text = "牌库剩余: —"
 
 [node name="LogLabel" type="Label" parent="GamePage" unique_id=12348460]
 layout_mode = 0
-offset_left = 826.0
-offset_top = 41.0
-offset_right = 1216.0
-offset_bottom = 361.0
-theme_override_font_sizes/font_size = 14
+offset_left = 824.0
+offset_top = 100.0
+offset_right = 1136.0
+offset_bottom = 420.0
+theme_override_colors/font_color = Color(0.22, 0.26, 0.32, 1)
+theme_override_font_sizes/font_size = 13
 text = "游戏日志:"
 autowrap_mode = 3
