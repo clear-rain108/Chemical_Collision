@@ -42,6 +42,7 @@ func _run():
 	_test_info_and_tooltip(scene)
 	_test_selected_style(scene)
 	_test_layers(scene)
+	_test_tutorial_layout(scene)
 
 	_test_case(scene, hc, 16, true)
 	_test_case(scene, hc, 8, true)
@@ -135,6 +136,46 @@ func _test_layers(scene) -> void:
 	var ts_before: int = toast.get_child_count()
 	scene.call("_show_center_warning", "层级回归测试")
 	_check(toast.get_child_count() == ts_before + 1, "警告提示挂入 ToastLayer")
+
+
+# ---- 教程引导文本：必须与桌面小卡槽 / 日志区错开 ----
+# 历史 bug：TutorialLabel 原 (225,185)-(1125,225) 与桌面小卡槽 (20,186)-(600,276)
+# 完全重叠，桌面打出牌后小卡直接压掉引导文本第一行；40px 高也装不下
+# 「引导 2 行 + 成功提示 1 行」折行后的 4 行。
+func _test_tutorial_layout(scene) -> void:
+	var gp = scene.get_node_or_null("GamePage")
+	if gp == null:
+		_check(false, "教程文本布局：找不到 GamePage")
+		return
+	var tl = gp.get_node_or_null("TutorialLabel")
+	_check(tl != null, "TutorialLabel 节点存在")
+	if tl == null:
+		return
+	var tr := Rect2(tl.position, tl.size)
+
+	# 桌面小卡槽：\"桌面: …\" 下方一行，单张 72x90，横向 20..600（见 _update_table_label）
+	var tbl = gp.get_node_or_null("TableLabel")
+	_check(tbl != null, "TableLabel 节点存在")
+	if tbl:
+		var slot := Rect2(20.0, tbl.position.y + tbl.size.y + 4.0, 580.0, 90.0)
+		_check(not slot.intersects(tr),
+			"教程文本不与桌面小卡槽重叠 (tutorial=%s slot=%s)" % [str(tr), str(slot)])
+
+	# 右侧日志区：曾经与教程文本同处一段时间，导致文字互相压盖
+	var lg = gp.get_node_or_null("LogLabel")
+	if lg:
+		var lr := Rect2(lg.position, lg.size)
+		_check(not lr.intersects(tr),
+			"教程文本不与日志区重叠 (tutorial=%s log=%s)" % [str(tr), str(lr)])
+
+	for n in ["InfoLabel", "HandLabel", "HandContainer", "CardInfoLabel"]:
+		var c = gp.get_node_or_null(n)
+		if c:
+			_check(not Rect2(c.position, c.size).intersects(tr), "教程文本不与 %s 重叠" % n)
+
+	# 容量：字号 14 / 行高 20，最长引导折行后约 4 行 → 至少 96px 高、480px 宽
+	_check(tr.size.y >= 96.0, "教程文本高度≥96 可容纳 4 行（实际 %.1f）" % tr.size.y)
+	_check(tr.size.x >= 480.0, "教程文本宽度≥480 长句不被切碎（实际 %.1f）" % tr.size.x)
 
 
 func _test_selected_style(scene) -> void:

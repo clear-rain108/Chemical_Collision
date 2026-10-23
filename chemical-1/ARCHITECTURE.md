@@ -370,6 +370,27 @@ Godot 的 `CanvasItem` 排序是 **`z_index` 优先于树顺序**。`GamePage` �
 - 回归测试：`tests/verify_hand_layout.gd → _test_layers()` 断言层 z 序、层铺满、
   顺序弹窗落在 `OverlayLayer`、警告框落在 `ToastLayer`。
 
+### 教程引导文本布局
+
+`TutorialLabel` 显示 `TutorialController.get_tutorial_display()`，即
+`引导文本 + "\n" + 成功提示`，最长折成 **4 行**（14px 字号 + `line_spacing=6` → 98px 高）。
+它必须同时避开三块动态内容：
+
+| 节点 | rect（视口 1152×648） | 说明 |
+|---|---|---|
+| `TutorialLabel` | (620, 186) 505×98 | 桌面小卡槽右侧 |
+| 桌面小卡槽 | (20, 186) 580×90 | `_update_table_label()` 动态生成 72×90 小卡 |
+| `LogLabel` | (824, 300) 312×300 | 右下日志 |
+
+- **历史 bug**：原位置 `(225,185) 900×40` 与桌面小卡槽 `(20,186) 580×90` 完全叠在一起
+  —— 桌面一开始出牌，小卡就压掉引导文本第一行（表现为文字被"打洞"）；40px 高度也只
+  容得下 2 行，「引导 2 行 + ✓ 成功提示 1 行」必然溢出。日志区当时在 `(824,100)`，
+  也与教程文本右半边重叠。
+- **约束**：教程文本改动位置时必须复算「桌面小卡槽（小卡最多 8 张，横向 20..600）」
+  与「日志区」，且高度 ≥ 96px。
+- 回归测试：`verify_hand_layout.gd → _test_tutorial_layout()` 断言教程文本与桌面小卡槽 /
+  日志区 / InfoLabel / HandLabel / HandContainer / CardInfoLabel 均不相交，宽高足够 4 行。
+
 ### 出牌步骤流
 
 ```

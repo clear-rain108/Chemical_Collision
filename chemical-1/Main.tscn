@@ -1103,11 +1103,12 @@ autowrap_mode = 3
 
 [node name="TutorialLabel" type="Label" parent="GamePage" unique_id=898111835]
 layout_mode = 0
-offset_left = 225.0
-offset_top = 185.0
+offset_left = 620.0
+offset_top = 186.0
 offset_right = 1125.0
-offset_bottom = 225.0
+offset_bottom = 284.0
 theme_override_colors/font_color = Color(0, 0, 0, 1)
+theme_override_constants/line_spacing = 6
 theme_override_font_sizes/font_size = 14
 autowrap_mode = 3
 
@@ -1124,9 +1125,9 @@ text = "牌库剩余: —"
 [node name="LogLabel" type="Label" parent="GamePage" unique_id=12348460]
 layout_mode = 0
 offset_left = 824.0
-offset_top = 100.0
+offset_top = 300.0
 offset_right = 1136.0
-offset_bottom = 420.0
+offset_bottom = 600.0
 theme_override_colors/font_color = Color(0.22, 0.26, 0.32, 1)
 theme_override_font_sizes/font_size = 13
 text = "游戏日志:"
