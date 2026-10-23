@@ -41,6 +41,7 @@ func _run():
 		await process_frame
 	_test_info_and_tooltip(scene)
 	_test_selected_style(scene)
+	_test_layers(scene)
 
 	_test_case(scene, hc, 16, true)
 	_test_case(scene, hc, 8, true)
@@ -97,6 +98,45 @@ func _test_info_and_tooltip(scene) -> void:
 
 
 # 选中态：浅黄底 + 橙金边；三个引擎状态同源，绝不会被默认深灰盖掉
+# ---- 层级容器：浮层必须盖住手牌（z_index 优先于树顺序）----
+# 历史 bug：手牌悬停 z=100 / 选中 z=50 会穿透「顺序指定」弹窗与警告提示框
+func _test_layers(scene) -> void:
+	var gp = scene.get_node_or_null("GamePage")
+	_check(gp != null, "GamePage 节点存在")
+	if gp == null:
+		return
+	var content = gp.get_node_or_null("ContentLayer")
+	var overlay = gp.get_node_or_null("OverlayLayer")
+	var toast = gp.get_node_or_null("ToastLayer")
+	_check(content != null and overlay != null and toast != null,
+		"层容器齐全 (ContentLayer / OverlayLayer / ToastLayer)")
+	if content == null or overlay == null or toast == null:
+		return
+	_check(content.z_index == 0, "ContentLayer z=0 (实际 %d)" % content.z_index)
+	_check(overlay.z_index == 100, "OverlayLayer z=100 (实际 %d)" % overlay.z_index)
+	_check(toast.z_index == 110, "ToastLayer z=110 (实际 %d)" % toast.z_index)
+	# 手牌最高 z（悬停 20）必须低于模态层，否则弹窗会被手牌打洞
+	_check(20 < overlay.z_index and overlay.z_index < toast.z_index,
+		"手牌最高 z < 模态层 < 提示层 (overlay=%d toast=%d)" % [overlay.z_index, toast.z_index])
+	_check(content.anchor_right == 1.0 and content.anchor_bottom == 1.0,
+		"层容器铺满全屏")
+	_check(overlay.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"层容器自身不拦截鼠标（事件仍落到子节点）")
+
+	# 顺序指定弹窗必须落在 OverlayLayer（手牌穿透弹窗的回归点）
+	var ov_before: int = overlay.get_child_count()
+	scene.call("_show_sequence_constraint_dialog")
+	_check(overlay.get_child_count() == ov_before + 1, "顺序指定弹窗挂入 OverlayLayer")
+	for ch in overlay.get_children():
+		overlay.remove_child(ch)
+		ch.queue_free()
+
+	# 警告提示必须落在 ToastLayer（警告框被手牌盖住的回归点）
+	var ts_before: int = toast.get_child_count()
+	scene.call("_show_center_warning", "层级回归测试")
+	_check(toast.get_child_count() == ts_before + 1, "警告提示挂入 ToastLayer")
+
+
 func _test_selected_style(scene) -> void:
 	if scene.hand_buttons.is_empty():
 		scene.call("_update_hand_buttons")
@@ -117,7 +157,7 @@ func _test_selected_style(scene) -> void:
 			"选中牌底色为浅黄 (%s)" % str(sb.bg_color))
 		_check(sb.border_color.is_equal_approx(Color(0.9, 0.65, 0.1, 1.0)),
 			"选中牌边框为橙金 (%s)" % str(sb.border_color))
-	_check(b.z_index == 50, "选中牌置于相邻牌之上 (z_index=%d)" % b.z_index)
+	_check(b.z_index == 10, "选中牌置于相邻牌之上 (z_index=%d)" % b.z_index)
 	_check(b.get_theme_stylebox("hover") == sb, "选中牌 hover 与 normal 同源")
 	_check(b.get_theme_stylebox("pressed") == sb, "选中牌 pressed 与 normal 同源")
 	_check(b.get_theme_stylebox("focus") is StyleBoxEmpty, "选中牌无焦点框")
@@ -190,12 +230,12 @@ func _test_case(scene, hc: Control, n: int, expect_overlap: bool) -> void:
 		_check(sym.horizontal_alignment == want,
 			"n=%d 紧凑模式=%s（符号对齐正确）" % [n, str(expect_compact)])
 
-	# 选中牌置顶（z_index=50）
+	# 选中牌置顶（z_index=10，仅在手牌内部置顶；模态层 z=100 在其之上）
 	scene.selected_indices = [1]
 	scene.call("_layout_hand_cards")
 	if n > 1:
 		var b1: Button = arr[1]
-		_check(b1.z_index == 50, "n=%d 被选中的牌 z_index=50（浮于未选中牌之上）" % n)
+		_check(b1.z_index == 10, "n=%d 被选中的牌 z_index=10（浮于未选中牌之上）" % n)
 		_check(arr[0].z_index == 0, "n=%d 未选中的牌 z_index=0" % n)
 	scene.selected_indices = []
 
@@ -203,8 +243,8 @@ func _test_case(scene, hc: Control, n: int, expect_overlap: bool) -> void:
 	var b0: Button = arr[0]
 	var base: Vector2 = b0.get_meta("base_pos", Vector2.ZERO)
 	scene.call("_on_hand_card_hover", b0, true)
-	_check(abs(b0.position.y - (base.y - 20.0)) < 0.01 and b0.z_index == 100,
-		"n=%d 悬停：上浮 20 且 z_index=100" % n)
+	_check(abs(b0.position.y - (base.y - 20.0)) < 0.01 and b0.z_index == 20,
+		"n=%d 悬停：上浮 20 且 z_index=20" % n)
 	_check(b0.position.y >= -0.01, "n=%d 悬停后未越出容器顶部 (y=%.2f)" % [n, b0.position.y])
 	scene.call("_on_hand_card_hover", b0, false)
 	_check(abs(b0.position.y - base.y) < 0.01 and b0.z_index == 0,
@@ -287,5 +327,5 @@ func _test_hover_debounce(scene, hc: Control) -> void:
 	_hover_settle(scene, core)
 	var lifted := 0
 	for b in arr:
-		if b.z_index == 100: lifted += 1
+		if b.z_index == 20: lifted += 1
 	_check(lifted <= 1, "任意时刻最多一张牌处于抬起态 (lifted=%d)" % lifted)

@@ -77,6 +77,21 @@ const HOVER_LIFT := 20.0                # 悬停上浮高度
 const CARD_STEP_MAX := 60.0             # 叠卡时每张最多露出的宽度（0.63×牌宽）
 const HOVER_SWITCH_DELAY_MS := 110      # 悬停牌切换需稳定的毫秒数（防快速划动时逐张弹起）
 
+# ---- GamePage 内的 CanvasItem 层级 ----
+# z_index 优先于树顺序：运行时新增的浮层必须挂进对应层容器，
+# 否则任何抬高 z 的节点（手牌选中 10 / 悬停 20）都会穿透浮层
+# （历史 bug：手牌穿透「顺序指定」弹窗、警告框被手牌打洞）
+const Z_CONTENT := 0            # 内容层：桌面小卡 / 顶部状态栏 / 规则提醒
+const Z_HAND_SELECTED := 10     # 选中手牌
+const Z_HAND_HOVER := 20        # 悬停手牌（手牌内部最高）
+const Z_SCRIM := 100            # 模态层：全屏遮罩 + 弹窗
+const Z_TOAST := 110            # 提示层：警告框 / 引导提示（压在模态之上）
+
+# 三个层容器（GamePage 的直接子节点，_ensure_layers() 幂等创建）
+var content_layer: Control = null
+var overlay_layer: Control = null
+var toast_layer: Control = null
+
 # ============================================================
 # 第零关覆盖层 (Phase 1: UI介绍, Phase 2: 流程说明)
 # ============================================================
@@ -202,6 +217,7 @@ func _setup_pages() -> void:
 		help_btn = game_page.get_node_or_null("HelpBtn")
 		tutorial_label = game_page.get_node_or_null("TutorialLabel")
 		deck_count_label = game_page.get_node_or_null("DeckCountLabel")
+		_ensure_layers()
 		_build_status_bar()
 		if hint_button:
 			hint_button.toggled.connect(_on_hint_toggled)
@@ -209,6 +225,51 @@ func _setup_pages() -> void:
 			quit_button.pressed.connect(_on_quit_game)
 		if help_btn:
 			help_btn.pressed.connect(_on_show_help)
+
+
+# ============================================================
+# 四之二、层容器（Content / Overlay / Toast）
+# ============================================================
+# Main.tscn 里的静态节点全在 z=0；运行时新增节点按语义挂进三个层：
+#   ContentLayer(z=0)   → 与静态节点同层，靠树序叠在静态节点之上
+#   OverlayLayer(z=100) → 模态弹窗 + 全屏遮罩，必须盖住手牌（手牌最高 z=20）
+#   ToastLayer(z=110)   → 警告 / 提示，必须盖住模态层
+func _ensure_layers() -> void:
+	if not game_page:
+		return
+	if not is_instance_valid(content_layer):
+		content_layer = _make_layer("ContentLayer", Z_CONTENT)
+	if not is_instance_valid(overlay_layer):
+		overlay_layer = _make_layer("OverlayLayer", Z_SCRIM)
+	if not is_instance_valid(toast_layer):
+		toast_layer = _make_layer("ToastLayer", Z_TOAST)
+
+
+func _make_layer(layer_name: String, z: int) -> Control:
+	var layer := Control.new()
+	layer.name = layer_name
+	layer.z_index = z
+	# 层自身不参与鼠标拾取，事件仍会落到其子节点
+	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	layer.anchor_left = 0
+	layer.anchor_top = 0
+	layer.anchor_right = 1
+	layer.anchor_bottom = 1
+	layer.offset_left = 0
+	layer.offset_top = 0
+	layer.offset_right = 0
+	layer.offset_bottom = 0
+	game_page.add_child(layer)
+	return layer
+
+
+# 取层时必须保证已创建（脚本内各处直接调用，避免 _ready 之外的入口拿到 null）
+func _layer(kind: int) -> Control:
+	_ensure_layers()
+	match kind:
+		1: return overlay_layer
+		2: return toast_layer
+		_: return content_layer
 
 
 # ============================================================
@@ -549,9 +610,9 @@ func _level0_ensure_overlay() -> void:
 		level0_overlay.anchor_top = 0
 		level0_overlay.anchor_right = 1
 		level0_overlay.anchor_bottom = 1
-		game_page.add_child(level0_overlay)
+		_layer(1).add_child(level0_overlay)
 	elif not level0_overlay.is_inside_tree():
-		game_page.add_child(level0_overlay)
+		_layer(1).add_child(level0_overlay)
 
 
 # ============================================================
@@ -652,7 +713,7 @@ func _level0_start_phase3() -> void:
 	_level0_create_rule_tips()
 
 	var intro_tip = _level0_make_tip_box("对局开始！请尝试出牌吧。\nAI默认只出单质和化合物。", 3.0)
-	game_page.add_child(intro_tip)
+	_layer(2).add_child(intro_tip)
 
 
 var level0_rule_tip_label: Label = null
@@ -668,7 +729,7 @@ func _level0_create_rule_tips() -> void:
 	level0_rule_tip_label.add_theme_color_override("font_color", Color(0, 0, 0, 1))
 	level0_rule_tip_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	level0_rule_tip_label.text = ""
-	game_page.add_child(level0_rule_tip_label)
+	_layer(0).add_child(level0_rule_tip_label)
 	_level0_update_rule_tips()
 
 
@@ -762,7 +823,7 @@ func _build_status_bar() -> void:
 	bar.color = Color(0.173, 0.243, 0.314, 1.0)   # #2C3E50
 	bar.position = Vector2(0, 0)
 	bar.size = Vector2(1152, 60)
-	game_page.add_child(bar)
+	_layer(0).add_child(bar)
 
 	# 状态栏文字
 	var lbl = Label.new()
@@ -771,7 +832,7 @@ func _build_status_bar() -> void:
 	lbl.add_theme_font_size_override("font_size", 16)
 	lbl.add_theme_color_override("font_color", Color(1, 1, 1, 1))
 	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	game_page.add_child(lbl)
+	_layer(0).add_child(lbl)
 	status_bar_label = lbl
 
 	# 状态栏已整合信息，隐藏被遮挡/冗余的旧标签
@@ -935,7 +996,7 @@ func _update_table_label() -> void:
 				cv = card_valences[i]
 			var mini = _build_mini_card_button(cards[i], cv)
 			mini.position = Vector2(start_x + i * mini_step, slot_y)
-			game_page.add_child(mini)
+			_layer(0).add_child(mini)
 			table_card_buttons.append(mini)
 	else:
 		table_label.text = "桌面: 空"
@@ -1251,7 +1312,7 @@ func _layout_hand_cards() -> void:
 		btn.position = Vector2(start_x + i * step, base_y)
 		btn.set_meta("base_pos", btn.position)
 		btn.set_meta("hand_idx", i)
-		btn.z_index = 50 if i in selected_indices else 0
+		btn.z_index = Z_HAND_SELECTED if i in selected_indices else 0
 		_apply_card_compact(btn, compact)
 
 
@@ -1386,12 +1447,12 @@ func _apply_hover(btn: Button, hovered: bool) -> void:
 	if not is_instance_valid(btn): return
 	var base: Vector2 = btn.get_meta("base_pos", btn.position)
 	if hovered:
-		btn.z_index = 100
+		btn.z_index = Z_HAND_HOVER
 		btn.position = base - Vector2(0, HOVER_LIFT)
 		_show_card_detail(btn)
 	else:
 		var idx: int = btn.get_meta("hand_idx", -1)
-		btn.z_index = 50 if idx in selected_indices else 0
+		btn.z_index = Z_HAND_SELECTED if idx in selected_indices else 0
 		btn.position = base
 		_restore_card_info()
 	# 悬停外观由本状态机驱动（引擎自带 hover 态是另一套判定，会独立闪）。
@@ -1859,10 +1920,10 @@ func _handle_result(result: int) -> void:
 			var tip = game_manager.level0_rule_tip
 			if tip == "越大越小":
 				var tip_box = _level0_make_tip_box("【越大越小】\n同牌型比较时，原子序数和越小的牌越大。桌面牌必须被你出的牌压过（你的牌要更大）！", 4.0)
-				game_page.add_child(tip_box)
+				_layer(2).add_child(tip_box)
 			elif tip == "牌权争夺":
 				var tip_box = _level0_make_tip_box("【牌权争夺】\n你打出了族炸！族炸可以超越牌型限制，直接抢到牌权。但注意：打出族炸后进入冷却❄，需要用化合物解除。", 4.5)
-				game_page.add_child(tip_box)
+				_layer(2).add_child(tip_box)
 
 		_step_reset()
 		_refresh_ui()
@@ -1957,7 +2018,7 @@ func _show_sequence_constraint_dialog() -> void:
 	)
 	overlay.add_child(cancel_btn)
 
-	game_page.add_child(overlay)
+	_layer(1).add_child(overlay)
 
 
 # ============================================================
@@ -2001,7 +2062,7 @@ func _show_center_warning(text: String) -> void:
 	var timer = get_tree().create_timer(2.5)
 	timer.timeout.connect(box.queue_free)
 
-	game_page.add_child(box)
+	_layer(2).add_child(box)
 
 func _show_end_page(custom_text: String) -> void:
 	var tut_page = get_node_or_null("TutorialPage")

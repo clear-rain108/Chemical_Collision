@@ -1,6 +1,6 @@
 # 化学碰撞 — 程序架构与实现文档
 
-> **版本**: 14.1  
+> **版本**: 14.2  
 > **日期**: 2026-10-23  
 > **引擎**: Godot 4.x / GDScript
 
@@ -346,6 +346,29 @@ AIPlayer.auto_play(game_manager, ui_refresh)
   —— 这正是"选中后卡牌发黑"的根因（自动化截图直接调 `_apply_hover` 绕过了引擎 hover 态，所以没暴露）。
 - **选中牌的悬停保留黄色系**（只加深、换深橙边），否则悬停的浅蓝会把"已选中"的浅黄整个盖掉，
   用户看不出哪张被选了。
+
+### 层级与浮层（Content / Overlay / Toast）
+
+Godot 的 `CanvasItem` 排序是 **`z_index` 优先于树顺序**。`GamePage` 下的静态节点全在 z=0，
+运行时新增的浮层若也留 z=0，就会被任何抬高 z 的节点穿透 —— 历史 bug：悬停手牌 z=100 /
+选中手牌 z=50 直接跑到「顺序指定」弹窗与警告框之上（表现为弹窗被牌"打洞"、警告框被手牌
+半遮半掩），而且弹窗遮罩的 `mouse_filter=STOP` 也拦不住它们（点得到牌）。
+
+统一约定（`GameUI.gd` 顶部常量）：
+
+| 层 | z_index | 承载内容 | 挂载方式 |
+|---|---|---|---|
+| `ContentLayer` | `Z_CONTENT = 0` | 顶部状态栏、桌面小卡、第零关规则提醒 | `_layer(0)` |
+| 手牌（`HandContainer` 内） | 选中 `Z_HAND_SELECTED = 10` / 悬停 `Z_HAND_HOVER = 20` | 只在手牌内部相对置顶 | `_layout_hand_cards()` / `_apply_hover()` |
+| `OverlayLayer` | `Z_SCRIM = 100` | 全屏遮罩 + 模态弹窗（第零关引导、顺序指定弹窗） | `_layer(1)` |
+| `ToastLayer` | `Z_TOAST = 110` | 警告框 / 引导提示（`_show_center_warning`、`_level0_make_tip_box`） | `_layer(2)` |
+
+- 三个层由 `_ensure_layers()` 幂等创建（`_setup_pages()` 内调用），都是 `GamePage` 的直接子节点、
+  全屏 anchor、`mouse_filter = IGNORE`（层自身不拦截，事件仍落到子节点）。
+- **新增运行时浮层必须挂进对应层**，不要直接 `game_page.add_child()`；手牌 z 只允许 0 / 10 / 20，
+  且必须小于 `Z_SCRIM`，否则会重现穿透。
+- 回归测试：`tests/verify_hand_layout.gd → _test_layers()` 断言层 z 序、层铺满、
+  顺序弹窗落在 `OverlayLayer`、警告框落在 `ToastLayer`。
 
 ### 出牌步骤流
 
