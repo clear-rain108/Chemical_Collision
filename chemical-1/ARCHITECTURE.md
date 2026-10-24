@@ -319,16 +319,34 @@ AIPlayer.auto_play(game_manager, ui_refresh)
 | 判定几何固定 | `_card_hover_rect()` = 静止位置 ∪ 抬起位置 `{base-(0,20), 115×138}`，只用 `base_pos` 算 | 若命中区随"抬起"变化，会出现 抬起→让出底部20px→移出→落回→再进入 的自激抖动 |
 | 不用引擎信号 | 不连 `mouse_entered/mouse_exited`，改由 `_process → _update_hand_hover()` 轮询 | 引擎 pick 结果会随 `position`/`z_index` 变化翻转 |
 | 重叠归属 | 命中重叠时取索引最大（最上层）；但鼠标仍在当前牌"核心区"`_card_core_rect()` 内则保持 | 重叠窄条处两张牌互相抢 hover，表现为抽搐 |
-| 切换延迟 | 目标需稳定 `HOVER_SWITCH_DELAY_MS = 110ms`；移出容器立即复位 | 快速划过时不逐张弹起、信息栏不刷屏 |
+| 抬起牌优先 | 已抬起的牌以 `z=20` 压住相邻牌，`_card_raised_rect()`（= 静止位置上方 20px 的绘制矩形）命中时直接保持，不再走静态规则 | 否则指针明明在抬起牌画出来的区域里，静态规则却判给被压住的后一张 → 沿顶栏滑过时逐张乱跳 |
+| 分级切换延迟 | 命中某张牌 `HOVER_SWITCH_DELAY_MS = 60ms`；仍在容器内但不在任何牌上（牌列下方）`HOVER_LEAVE_DELAY_MS = 140ms` | 60ms 跟手；140ms 让底边轻微抖动不落牌。旧的固定 110ms 对核心区也生效，显得迟钝 |
+| 顶边容错 | `_hover_keep_above()`：抬起牌顶边与容器顶边重合，越界 14px（`HOVER_EXIT_GRACE`）内仍算在牌上 | 贴边滑过时不再「越界 1px 就落牌、回来再等延迟」 |
+| 升降动画 | `_tween_card_y()`：`HOVER_ANIM_MS = 80ms`、`TRANS_CUBIC/EASE_OUT`；`z_index` 仍立即切换；每张牌只保留一个 tween，`_layout_hand_cards()` 重排前先 kill | 位置瞬移是「生硬」的主因；重排不 kill 会把牌拉回旧坐标 |
 | 样式同源 | `_apply_hover()` 同时改 `position / z_index` 与 **normal / hover / pressed 三个主题项**（三者指向同一 StyleBox） | 引擎 `hover` 态是第二套判定；未覆盖时会回退到默认深色主题（`bg=(0.225,0.225,0.225,0.6)`）——鼠标一停到牌上，整张牌就被盖成半透明深灰 |
 
 - 状态字段：`_hover_idx`（当前抬起）/ `_hover_pending_idx`（待稳定目标）/ `_hover_pending_at`（时间戳）
-- 按钮 meta：`base_pos` / `hand_idx` / `sb_normal` / `sb_hover`（后两者供样式切换）
+- 按钮 meta：`base_pos` / `hand_idx` / `sb_normal` / `sb_hover` / `hover_tween`（后者存当前升降补间）
 - `_update_hover_at(mp)` 是可注入鼠标位置的核心判定，自动化测试据此验证防抖；
   `_on_hand_card_hover(btn, bool)` 保留为公共入口（测试与外部直接调用）
 - headless 环境（自动化测试）跳过 `_process` 轮询，避免 `(0,0)` 误触发
+- 测试等待补间**不能**用固定 `create_timer`（headless 下单帧可能就超过等待时长，补间一步未走）；
+  `_wait_hover_anim()` 轮询 `hover_tween.is_running()` 直到全部结束
 
 ### 卡牌状态样式（选中 / 悬停 / 焦点）
+
+**唯一来源**：所有 `StyleBoxFlat`（手牌四态 / 桌面小卡 / 操作按钮 / toast）都由
+`_make_panel_style(kind)` 产出，`_style_base()` 统一填底色、描边宽度、圆角、阴影。
+调用点只允许 `duplicate()` 后改 `bg_color` / `border_color`（hover / pressed / disabled），
+**禁止再手写** `border_width_*` / `corner_radius_*` / `shadow_*` —— 这三类数值一旦分散，
+就会出现"同样的牌圆角 6/8 混用、有的有投影有的没有"。
+
+| kind | 圆角 | 描边 | 阴影 | 用途 |
+|---|---|---|---|---|
+| `card` / `card_selected` / `card_hover` / `card_hover_selected` | 8 | 1px 中性 / 2px 橙金 / 2px 蓝 / 2px 深橙 | 3px | 手牌四态 |
+| `mini_card` / `mini_card_hover` | 8 | 1px 中性 / 1px 蓝 | 无（密度高） | 桌面小卡 |
+| `button` | 8 | 1px 蓝灰 + 内边距 10/6 | 3px | 操作面板 / 顺序指定弹窗 |
+| `toast_warning` / `toast_info` | 10 | 2px 警告红 / 2px 橙 | 3px | 右栏警告 toast / 第零关提示框 |
 
 `_build_card_button()` 为每张牌生成样式并**显式覆盖 Button 的全部状态项**：
 
@@ -361,7 +379,12 @@ Godot 的 `CanvasItem` 排序是 **`z_index` 优先于树顺序**。`GamePage` �
 | `ContentLayer` | `Z_CONTENT = 0` | 顶部状态栏、桌面小卡、第零关规则提醒 | `_layer(0)` |
 | 手牌（`HandContainer` 内） | 选中 `Z_HAND_SELECTED = 10` / 悬停 `Z_HAND_HOVER = 20` | 只在手牌内部相对置顶 | `_layout_hand_cards()` / `_apply_hover()` |
 | `OverlayLayer` | `Z_SCRIM = 100` | 全屏遮罩 + 模态弹窗（第零关引导、顺序指定弹窗） | `_layer(1)` |
-| `ToastLayer` | `Z_TOAST = 110` | 警告框 / 引导提示（`_show_center_warning`、`_level0_make_tip_box`） | `_layer(2)` |
+| `ToastLayer` | `Z_TOAST = 110` | 警告 toast / 引导提示（`_show_center_warning`、`_level0_make_tip_box`） | `_layer(2)` |
+
+- 警告 toast 固定落在右栏上部空白格 `WARNING_TOAST_RECT = (824,62,312,116)`（见「视觉规范工厂」），
+  `LogLabel` 从 y=300 起、`TutorialLabel` 从 y=186 起、`InfoLabel` 只到 x=480 → 不与任何静态节点相交。
+  `_show_center_warning()` 单例复用同一个 `Panel`：连续报错只更新文本并用 `_warning_seq` 作废旧计时器，
+  不会叠框也不会被上一条提前熄灭；`_init_game()` / `_on_start_tutorial()` 调 `_hide_warning_toast()` 清场。
 
 - 三个层由 `_ensure_layers()` 幂等创建（`_setup_pages()` 内调用），都是 `GamePage` 的直接子节点、
   全屏 anchor、`mouse_filter = IGNORE`（层自身不拦截，事件仍落到子节点）。

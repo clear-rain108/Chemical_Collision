@@ -75,7 +75,10 @@ const CARD_H := 118.0                   # 卡牌高度
 const CARD_GAP := 8.0                   # 不重叠时的间隙
 const HOVER_LIFT := 20.0                # 悬停上浮高度
 const CARD_STEP_MAX := 60.0             # 叠卡时每张最多露出的宽度（0.63×牌宽）
-const HOVER_SWITCH_DELAY_MS := 110      # 悬停牌切换需稳定的毫秒数（防快速划动时逐张弹起）
+const HOVER_SWITCH_DELAY_MS := 60       # 命中某张牌后需稳定的毫秒数（跟手，不再等 110ms）
+const HOVER_LEAVE_DELAY_MS := 140       # 仍在手牌容器内但已不在任何牌上（牌列下方）时的留出延迟
+const HOVER_ANIM_MS := 80               # 抬起 / 落下补间时长（三次缓出）
+const HOVER_EXIT_GRACE := 14.0          # 手牌上沿容错带：抬起牌顶边与容器顶边重合，贴边滑过不落牌
 
 # ---- GamePage 内的 CanvasItem 层级 ----
 # z_index 优先于树顺序：运行时新增的浮层必须挂进对应层容器，
@@ -87,10 +90,37 @@ const Z_HAND_HOVER := 20        # 悬停手牌（手牌内部最高）
 const Z_SCRIM := 100            # 模态层：全屏遮罩 + 弹窗
 const Z_TOAST := 110            # 提示层：警告框 / 引导提示（压在模态之上）
 
+# ---- 视觉规范（P2）：圆角 / 描边 / 阴影的唯一来源 ----
+# 所有 StyleBoxFlat 必须由 _make_panel_style(kind) 产出；
+# 调用点只允许改 bg_color（hover/pressed/disabled），不要再手写 border / radius / shadow。
+const CARD_RADIUS := 8          # 卡牌（含桌面小卡）
+const PANEL_RADIUS := 10        # 面板 / 提示框
+const BORDER_W := 1             # 普通元素描边
+const BORDER_W_ACTIVE := 2      # 选中 / 焦点 / 警告描边
+const BORDER_NEUTRAL := Color(0.63, 0.66, 0.71, 1.0)    # #A1A8B5
+const BORDER_FOCUS := Color(0.35, 0.55, 0.85, 1.0)      # 主题蓝
+const BORDER_SELECT := Color(0.9, 0.65, 0.1, 1.0)       # 橙金
+const BORDER_SELECT_HOVER := Color(0.85, 0.55, 0.0, 1.0)
+const BORDER_WARN := Color(0.906, 0.298, 0.235, 1.0)    # #E74C3C
+const SHADOW_COLOR := Color(0.1, 0.15, 0.22, 0.14)
+const SHADOW_SIZE := 3
+const SHADOW_OFFSET := Vector2(0, 2)
+
+# ---- 警告 toast：右栏上部空白格 ----
+# LogLabel 从 y=300 起、TutorialLabel 从 y=186 起、InfoLabel 只到 x=480，
+# 因此 (824,62)-(1136,178) 不与任何静态节点相交，也就不会遮住手牌。
+const TOAST_DURATION := 2.5
+const WARNING_TOAST_RECT := Rect2(824, 62, 312, 116)
+
 # 三个层容器（GamePage 的直接子节点，_ensure_layers() 幂等创建）
 var content_layer: Control = null
 var overlay_layer: Control = null
 var toast_layer: Control = null
+
+# 警告 toast（单例复用：连续报错只更新文本并重置计时，不叠框、不被旧计时器提前熄灭）
+var _warning_toast: Control = null
+var _warning_label: Label = null
+var _warning_seq: int = 0
 
 # ============================================================
 # 第零关覆盖层 (Phase 1: UI介绍, Phase 2: 流程说明)
@@ -263,6 +293,51 @@ func _make_layer(layer_name: String, z: int) -> Control:
 	return layer
 
 
+# -------- 视觉规范工厂：卡牌 / 面板 / 按钮 / toast 的唯一样式来源 --------
+# kind: card / card_selected / card_hover / card_hover_selected
+#       mini_card / mini_card_hover / button / toast_warning / toast_info
+func _make_panel_style(kind: String) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	match kind:
+		"card":
+			_style_base(sb, Color(0.973, 0.976, 0.988, 1.0), BORDER_NEUTRAL, BORDER_W, CARD_RADIUS, true)
+		"card_selected":
+			_style_base(sb, Color(1.0, 1.0, 0.82, 1.0), BORDER_SELECT, BORDER_W_ACTIVE, CARD_RADIUS, true)
+		"card_hover":
+			_style_base(sb, Color(0.9, 0.93, 0.98, 1.0), BORDER_FOCUS, BORDER_W_ACTIVE, CARD_RADIUS, true)
+		"card_hover_selected":
+			_style_base(sb, Color(1.0, 0.98, 0.72, 1.0), BORDER_SELECT_HOVER, BORDER_W_ACTIVE, CARD_RADIUS, true)
+		"mini_card":
+			_style_base(sb, Color(0.973, 0.976, 0.988, 0.92), BORDER_NEUTRAL, BORDER_W, CARD_RADIUS, false)
+		"mini_card_hover":
+			_style_base(sb, Color(0.9, 0.93, 0.98, 0.95), BORDER_FOCUS, BORDER_W, CARD_RADIUS, false)
+		"button":
+			_style_base(sb, Color(0.173, 0.243, 0.314, 1.0), Color(0.4, 0.55, 0.7, 1.0), BORDER_W, CARD_RADIUS, true)
+			sb.content_margin_left = 10
+			sb.content_margin_right = 10
+			sb.content_margin_top = 6
+			sb.content_margin_bottom = 6
+		"toast_warning":
+			_style_base(sb, Color(1.0, 0.953, 0.851, 0.97), BORDER_WARN, BORDER_W_ACTIVE, PANEL_RADIUS, true)
+		"toast_info":
+			_style_base(sb, Color(1.0, 1.0, 0.85, 0.95), Color(1.0, 0.6, 0.0, 1.0), BORDER_W_ACTIVE, PANEL_RADIUS, true)
+		_:
+			_style_base(sb, Color(0.973, 0.976, 0.988, 1.0), BORDER_NEUTRAL, BORDER_W, CARD_RADIUS, true)
+	return sb
+
+
+# 统一填充底色 / 描边 / 圆角 / 阴影，避免各调用点各写一套数值
+func _style_base(sb: StyleBoxFlat, bg: Color, border: Color, width: int, radius: int, shadow: bool) -> void:
+	sb.bg_color = bg
+	sb.border_color = border
+	sb.set_border_width_all(width)
+	sb.set_corner_radius_all(radius)
+	if shadow:
+		sb.shadow_color = SHADOW_COLOR
+		sb.shadow_size = SHADOW_SIZE
+		sb.shadow_offset = SHADOW_OFFSET
+
+
 # 取层时必须保证已创建（脚本内各处直接调用，避免 _ready 之外的入口拿到 null）
 func _layer(kind: int) -> Control:
 	_ensure_layers()
@@ -377,6 +452,7 @@ func _on_start_tutorial(level: int) -> void:
 	if help_page_rules: help_page_rules.visible = false
 	if help_page_cards: help_page_cards.visible = false
 	_step_reset()
+	_hide_warning_toast()   # 清掉上一局残留的警告 toast
 
 	if level == 0:
 		_level0_start_phase1()
@@ -420,6 +496,7 @@ func _init_game(total: int = 4, ai: int = 3) -> void:
 			_show_end_page("初始化失败")
 			return
 	_step_reset()
+	_hide_warning_toast()   # 新一局开始：隐藏上一局残留的警告 toast
 	_refresh_ui()
 
 
@@ -764,14 +841,12 @@ func _level0_make_tip_box(text: String, duration: float = 2.5) -> Control:
 	var box = Control.new()
 	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
-	var bg = ColorRect.new()
-	bg.color = Color(1, 1, 0.85, 0.95)
+	var bg = Panel.new()
 	bg.position = Vector2(200, 350)
 	bg.size = Vector2(700, 70)
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.add_theme_stylebox_override("panel", _make_panel_style("toast_info"))
 	box.add_child(bg)
-
-	var border = _level0_make_outline_rect(Vector2(200, 350), Vector2(700, 70), Color(1, 0.6, 0, 1), 3)
-	box.add_child(border)
 
 	var lbl = Label.new()
 	lbl.text = text
@@ -1007,23 +1082,13 @@ func _build_mini_card_button(card, custom_valence = null) -> Button:
 	btn.custom_minimum_size = Vector2(72, 90)
 	btn.tooltip_text = card.get_full_info()
 
-	var style_normal = StyleBoxFlat.new()
-	style_normal.bg_color = Color(0.973, 0.976, 0.988, 0.92)   # #F8F9FC 半透明
-	style_normal.border_width_left = 1
-	style_normal.border_width_right = 1
-	style_normal.border_width_top = 1
-	style_normal.border_width_bottom = 1
-	style_normal.border_color = Color(0.72, 0.74, 0.78, 0.9)
-	style_normal.corner_radius_top_left = 6
-	style_normal.corner_radius_top_right = 6
-	style_normal.corner_radius_bottom_left = 6
-	style_normal.corner_radius_bottom_right = 6
+	var style_normal = _make_panel_style("mini_card")
 	btn.add_theme_stylebox_override("normal", style_normal)
+	btn.add_theme_stylebox_override("pressed", style_normal)
 
-	var style_hover = style_normal.duplicate()
-	style_hover.bg_color = Color(0.9, 0.93, 0.98, 0.95)
-	style_hover.border_color = Color(0.35, 0.55, 0.85, 1.0)
+	var style_hover = _make_panel_style("mini_card_hover")
 	btn.add_theme_stylebox_override("hover", style_hover)
+	btn.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 
 	var l_num = Label.new()
 	l_num.text = str(card.atomic_number)
@@ -1175,22 +1240,8 @@ func _mkb(text: String, cb: Callable, dis: bool) -> Button:
 	b.add_theme_color_override("font_color", Color(1, 1, 1, 1))
 	b.disabled = dis
 
-	# 深蓝灰圆角按钮样式
-	var style_normal = StyleBoxFlat.new()
-	style_normal.bg_color = Color(0.173, 0.243, 0.314, 1.0)   # #2C3E50
-	style_normal.corner_radius_top_left = 6
-	style_normal.corner_radius_top_right = 6
-	style_normal.corner_radius_bottom_left = 6
-	style_normal.corner_radius_bottom_right = 6
-	style_normal.border_width_left = 1
-	style_normal.border_width_right = 1
-	style_normal.border_width_top = 1
-	style_normal.border_width_bottom = 1
-	style_normal.border_color = Color(0.4, 0.55, 0.7, 1.0)
-	style_normal.content_margin_left = 10
-	style_normal.content_margin_right = 10
-	style_normal.content_margin_top = 6
-	style_normal.content_margin_bottom = 6
+	# 深蓝灰圆角按钮样式（P2：统一由 _make_panel_style("button") 产出）
+	var style_normal = _make_panel_style("button")
 	b.add_theme_stylebox_override("normal", style_normal)
 
 	# 悬停：背景变亮
@@ -1309,6 +1360,8 @@ func _layout_hand_cards() -> void:
 		var btn = hand_buttons[i]
 		if not is_instance_valid(btn): continue
 		btn.size = Vector2(CARD_W, CARD_H)
+		# 重排会覆盖 position：先杀掉进行中的升降补间，否则动画会把牌拉回旧位置
+		_kill_hover_tween(btn)
 		btn.position = Vector2(start_x + i * step, base_y)
 		btn.set_meta("base_pos", btn.position)
 		btn.set_meta("hand_idx", i)
@@ -1349,6 +1402,14 @@ func _process(_delta: float) -> void:
 func _card_hover_rect(btn: Button) -> Rect2:
 	var base: Vector2 = btn.get_meta("base_pos", btn.position)
 	return Rect2(base - Vector2(0, HOVER_LIFT), Vector2(CARD_W, CARD_H + HOVER_LIFT))
+
+
+# 抬起牌的"实际绘制矩形"：z_index=20 让抬起牌压住相邻牌，
+# 因此这块区域里的指针必须归它，否则视觉在 A 上、判定却给了 B（顶栏滑过时逐张乱跳）
+func _card_raised_rect(btn: Button) -> Rect2:
+	if not is_instance_valid(btn): return Rect2()
+	var base: Vector2 = btn.get_meta("base_pos", btn.position)
+	return Rect2(base - Vector2(0, HOVER_LIFT), Vector2(CARD_W, CARD_H))
 
 
 # 核心区 = 静止位置中「没被后一张牌盖住」的那一段；重叠区不算 → 实现滞回
@@ -1399,7 +1460,13 @@ func _update_hand_hover() -> void:
 		_hover_pending_idx = -1
 		return
 	# 离开手牌区立即复位（离开要跟手，不加延迟）
-	if not hand_container.get_global_rect().has_point(get_global_mouse_position()):
+	var gr: Rect2 = hand_container.get_global_rect()
+	var gmp: Vector2 = get_global_mouse_position()
+	if not gr.has_point(gmp):
+		# 抬起牌顶边正好与容器顶边重合：沿顶边滑动时给 HOVER_EXIT_GRACE 的容错带，
+		# 否则越界 1px 就落牌、再回来又要等一次延迟，表现为"抖动"
+		if _hover_idx >= 0 and _hover_keep_above(gmp, gr):
+			return
 		if _hover_idx != -1: _set_hover_index(-1)
 		_hover_pending_idx = -1
 		return
@@ -1407,21 +1474,39 @@ func _update_hand_hover() -> void:
 	_update_hover_at(mp)
 
 
+# 顶边容错带：横向仍在手牌范围内，纵向略微越过容器的上沿
+func _hover_keep_above(gmp: Vector2, gr: Rect2) -> bool:
+	return gmp.y < gr.position.y \
+		and gmp.y >= gr.position.y - HOVER_EXIT_GRACE \
+		and gmp.x >= gr.position.x and gmp.x < gr.end.x
+
+
 # 核心判定（鼠标位置可注入）：自动化测试用它脱离真实鼠标验证防抖
 func _update_hover_at(mp: Vector2) -> void:
-	var hit := _hover_hit_index(mp)
-	# 仍在当前牌的核心区内（哪怕别的牌也命中）= 保持，重叠窄条处不回跳
+	# 1) 已抬起的牌以 z=20 压住相邻牌：它画出来的矩形内必须归它自己，
+	#    否则鼠标沿顶栏滑过时会不断判给被压住的后一张，形成来回跳
+	if _hover_idx >= 0 and _hover_idx < hand_buttons.size():
+		var cur = hand_buttons[_hover_idx]
+		if is_instance_valid(cur) and _card_raised_rect(cur).has_point(mp):
+			_hover_pending_idx = -1
+			return
+	# 2) 仍在当前牌核心区内（哪怕别的牌也命中）= 保持，重叠窄条处不回跳
 	if _hover_idx >= 0 and _card_core_rect(_hover_idx).has_point(mp):
 		_hover_pending_idx = -1
 		return
+	var hit := _hover_hit_index(mp)
 	if hit == _hover_idx:
 		_hover_pending_idx = -1
 		return
-	# 目标必须稳定 HOVER_SWITCH_DELAY_MS 才切换：快速划动不会逐张弹起、信息栏不刷屏
+	# 3) 分级稳定时间：命中某张牌 60ms（跟手）；
+	#    仍在容器内但不在任何牌上（牌列下方）140ms，避免底边轻微抖动就落牌
+	var delay := HOVER_LEAVE_DELAY_MS
+	if hit >= 0 and _card_core_rect(hit).has_point(mp):
+		delay = HOVER_SWITCH_DELAY_MS
 	if hit != _hover_pending_idx:
 		_hover_pending_idx = hit
 		_hover_pending_at = Time.get_ticks_msec()
-	elif Time.get_ticks_msec() - _hover_pending_at >= HOVER_SWITCH_DELAY_MS:
+	elif Time.get_ticks_msec() - _hover_pending_at >= delay:
 		_set_hover_index(hit)
 
 
@@ -1448,12 +1533,13 @@ func _apply_hover(btn: Button, hovered: bool) -> void:
 	var base: Vector2 = btn.get_meta("base_pos", btn.position)
 	if hovered:
 		btn.z_index = Z_HAND_HOVER
-		btn.position = base - Vector2(0, HOVER_LIFT)
+		# 层级立即生效，位置交给补间： 80ms 三次缓出，抬起/落下不再一格跳
+		_tween_card_y(btn, base.y - HOVER_LIFT)
 		_show_card_detail(btn)
 	else:
 		var idx: int = btn.get_meta("hand_idx", -1)
 		btn.z_index = Z_HAND_SELECTED if idx in selected_indices else 0
-		btn.position = base
+		_tween_card_y(btn, base.y)
 		_restore_card_info()
 	# 悬停外观由本状态机驱动（引擎自带 hover 态是另一套判定，会独立闪）。
 	# normal/hover/pressed 三者始终指向同一个 StyleBox：引擎无论认为是否悬停，
@@ -1465,6 +1551,26 @@ func _apply_hover(btn: Button, hovered: bool) -> void:
 		btn.add_theme_stylebox_override("normal", sb)
 		btn.add_theme_stylebox_override("hover", sb)
 		btn.add_theme_stylebox_override("pressed", sb)
+
+
+# -------- 升降补间：每张牌只保留一个 tween，重排 / 反向移动时先 kill --------
+# 本工程首个 Tween 用法，注意两点：
+#   1) tween 由节点创建，节点释放后 tween 自动失效，回调里不必再判空；
+#   2) meta 的第二参数不能用 null（Godot 会当作"无默认值"报错），这里用 false 兜底。
+func _tween_card_y(btn: Button, target_y: float) -> void:
+	if not is_instance_valid(btn): return
+	_kill_hover_tween(btn)
+	var tw := create_tween()
+	tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(btn, "position:y", target_y, HOVER_ANIM_MS / 1000.0)
+	btn.set_meta("hover_tween", tw)
+
+
+func _kill_hover_tween(btn: Button) -> void:
+	if not is_instance_valid(btn): return
+	var tw = btn.get_meta("hover_tween", false)
+	if tw is Tween and tw.is_valid():
+		tw.kill()
 
 
 # -------- 悬停详情写进下方固定信息栏（替代原生 tooltip，避免浮框遮挡整排手牌） --------
@@ -1516,46 +1622,13 @@ func _build_card_button(card, idx: int) -> Button:
 	btn.mouse_filter = Control.MOUSE_FILTER_STOP
 	# 不用原生 tooltip：它会浮在鼠标旁遮住整排手牌，改由下方 CardInfoLabel 显示
 
-	var style_normal = StyleBoxFlat.new()
-	style_normal.bg_color = Color(0.973, 0.976, 0.988, 1.0)   # #F8F9FC
-	style_normal.border_width_left = 1
-	style_normal.border_width_right = 1
-	style_normal.border_width_top = 1
-	style_normal.border_width_bottom = 1
-	style_normal.border_color = Color(0.63, 0.66, 0.71, 1.0)  # #A1A8B5，比背景深一档
-	style_normal.corner_radius_top_left = 8
-	style_normal.corner_radius_top_right = 8
-	style_normal.corner_radius_bottom_left = 8
-	style_normal.corner_radius_bottom_right = 8
-	# 轻投影：让牌面从浅蓝背景上"浮"起来，重叠时也形成自然层次
-	style_normal.shadow_color = Color(0.1, 0.15, 0.22, 0.14)
-	style_normal.shadow_size = 3
-	style_normal.shadow_offset = Vector2(0, 2)
-
-	var style_base = style_normal
-	if idx in selected_indices:
-		var style_sel = style_normal.duplicate()
-		style_sel.bg_color = Color(1.0, 1.0, 0.82, 1.0)
-		style_sel.border_color = Color(0.9, 0.65, 0.1, 1.0)
-		style_sel.border_width_left = 2
-		style_sel.border_width_right = 2
-		style_sel.border_width_top = 2
-		style_sel.border_width_bottom = 2
-		style_base = style_sel
+	var is_selected: bool = idx in selected_indices
+	# 正常态 / 选中态走同一套规范（圆角 8、1px 中性边 / 2px 橙金边、轻投影）
+	var style_base = _make_panel_style("card_selected" if is_selected else "card")
 
 	# 悬停样式：未选中 → 浅蓝；已选中 → 保留黄色系（只加深），
 	# 否则悬停会把"已选中"的浅黄整个盖掉，用户看不出哪张被选了
-	var style_hover = style_normal.duplicate()
-	if idx in selected_indices:
-		style_hover.bg_color = Color(1.0, 0.98, 0.72, 1.0)
-		style_hover.border_color = Color(0.85, 0.55, 0.0, 1.0)
-	else:
-		style_hover.bg_color = Color(0.9, 0.93, 0.98, 1.0)
-		style_hover.border_color = Color(0.35, 0.55, 0.85, 1.0)
-	style_hover.border_width_left = 2
-	style_hover.border_width_right = 2
-	style_hover.border_width_top = 2
-	style_hover.border_width_bottom = 2
+	var style_hover = _make_panel_style("card_hover_selected" if is_selected else "card_hover")
 
 	btn.add_theme_stylebox_override("normal", style_base)
 	# 引擎的 hover / pressed / focus 态必须一并接管，否则会回退到默认（深色）主题：
@@ -1990,32 +2063,29 @@ func _show_sequence_constraint_dialog() -> void:
 	]
 
 	for i in range(patterns.size()):
-		var btn = Button.new()
-		btn.text = patterns[i].name
-		btn.custom_minimum_size = Vector2(140, 40)
-		btn.add_theme_font_size_override("font_size", 15)
-		btn.position = Vector2(320 + (i % 3) * 150, 370 + (i / 3) * 50)
 		var p = patterns[i].pattern
-		btn.pressed.connect(func():
+		var choose := func():
 			game_manager.set_sequence_constraint(p)
 			overlay.queue_free()
 			_refresh_ui()
-		)
+		# 与操作面板同一套按钮样式（P2 统一）
+		var btn = _mkb(patterns[i].name, choose, false)
+		btn.custom_minimum_size = Vector2(140, 40)
+		btn.add_theme_font_size_override("font_size", 15)
+		btn.position = Vector2(320 + (i % 3) * 150, 370 + (i / 3) * 50)
 		overlay.add_child(btn)
 
 	# 取消按钮（不指定，视为放弃权利）
-	var cancel_btn = Button.new()
-	cancel_btn.text = "跳过指定"
-	cancel_btn.custom_minimum_size = Vector2(140, 40)
-	cancel_btn.add_theme_font_size_override("font_size", 14)
-	cancel_btn.position = Vector2(470, 370 + patterns.size() / 3 * 50 + 10)
-	cancel_btn.pressed.connect(func():
+	var cancel_cb := func():
 		game_manager.sequence_constraint_active = false
 		game_manager.sequence_constraint = -1
 		game_manager.next_turn()
 		overlay.queue_free()
 		_refresh_ui()
-	)
+	var cancel_btn = _mkb("跳过指定", cancel_cb, false)
+	cancel_btn.custom_minimum_size = Vector2(140, 40)
+	cancel_btn.add_theme_font_size_override("font_size", 14)
+	cancel_btn.position = Vector2(470, 370 + patterns.size() / 3 * 50 + 10)
 	overlay.add_child(cancel_btn)
 
 	_layer(1).add_child(overlay)
@@ -2034,35 +2104,58 @@ func _show_info(text: String) -> void:
 	_show_center_warning(text)
 
 
-# 屏幕中央的大号警告提示框（黄底橙边，2.5秒自动消失）
+# 右栏警告 toast（黄底橙红边，2.5 秒自动消失）
+# 位置固定在右栏上部空白格，不再压在手牌 / 操作区 / 卡牌信息之上。
+# 单例复用：连续报错只更新文本并重置计时，不叠框、也不会被上一次的计时器提前熄灭。
 func _show_center_warning(text: String) -> void:
-	var box = Control.new()
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_ensure_warning_toast()
+	if not is_instance_valid(_warning_toast) or not is_instance_valid(_warning_label):
+		return
+	_warning_label.text = text
+	_warning_toast.visible = true
+	_warning_seq += 1
+	var seq := _warning_seq
+	var timer := get_tree().create_timer(TOAST_DURATION)
+	timer.timeout.connect(func():
+		# 期间又弹了新提示（seq 变了）→ 这次计时作废
+		if seq == _warning_seq and is_instance_valid(_warning_toast):
+			_warning_toast.visible = false
+	)
 
-	var bg = ColorRect.new()
-	bg.color = Color(1, 0.9, 0.6, 0.96)
-	bg.position = Vector2(300, 360)
-	bg.size = Vector2(800, 110)
-	box.add_child(bg)
 
-	var border = _level0_make_outline_rect(Vector2(300, 360), Vector2(800, 110), Color(0.906, 0.298, 0.235, 1), 4)
-	box.add_child(border)
+func _ensure_warning_toast() -> void:
+	if is_instance_valid(_warning_toast):
+		return
 
-	var lbl = Label.new()
-	lbl.text = text
-	lbl.add_theme_font_size_override("font_size", 20)
-	lbl.add_theme_color_override("font_color", Color(0.5, 0.05, 0.05, 1))
-	lbl.position = Vector2(320, 365)
-	lbl.size = Vector2(760, 100)
+	var panel := Panel.new()
+	panel.name = "WarningToast"
+	panel.position = WARNING_TOAST_RECT.position
+	panel.size = WARNING_TOAST_RECT.size
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.visible = false
+	panel.add_theme_stylebox_override("panel", _make_panel_style("toast_warning"))
+
+	var lbl := Label.new()
+	lbl.position = Vector2(12, 8)
+	lbl.size = WARNING_TOAST_RECT.size - Vector2(24, 16)
+	lbl.add_theme_font_size_override("font_size", 14)
+	lbl.add_theme_color_override("font_color", Color(0.5, 0.05, 0.05, 1.0))
 	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	box.add_child(lbl)
+	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(lbl)
 
-	var timer = get_tree().create_timer(2.5)
-	timer.timeout.connect(box.queue_free)
+	_layer(2).add_child(panel)
+	_warning_toast = panel
+	_warning_label = lbl
 
-	_layer(2).add_child(box)
+
+# 开局 / 进教程时清掉上一局残留的警告；seq 自增让未到期的计时器失效
+func _hide_warning_toast() -> void:
+	_warning_seq += 1
+	if is_instance_valid(_warning_toast):
+		_warning_toast.visible = false
 
 func _show_end_page(custom_text: String) -> void:
 	var tut_page = get_node_or_null("TutorialPage")

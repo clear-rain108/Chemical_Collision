@@ -33,7 +33,9 @@ func _run():
 
 	# 防抖验证必须在开赛之前：开赛后 AI 回合会刷新重建手牌，
 	# 导致测试持有的按钮引用脱离 hand_buttons，观测不到状态机
-	_test_hover_debounce(scene, hc)
+	await _test_hover_debounce(scene, hc)
+	# 流畅化验证复用上面这 8 张合成牌（开赛后引用会失效）
+	await _test_hover_smoothness(scene)
 
 	# 开始对局，生成真实手牌后再检查信息栏 / tooltip 行为
 	scene.call("_on_start_game")
@@ -43,11 +45,13 @@ func _run():
 	_test_selected_style(scene)
 	_test_layers(scene)
 	_test_tutorial_layout(scene)
+	_test_warning_toast(scene)
+	_test_style_factory(scene)
 
-	_test_case(scene, hc, 16, true)
-	_test_case(scene, hc, 8, true)
-	_test_case(scene, hc, 7, false)
-	_test_case(scene, hc, 3, false)
+	await _test_case(scene, hc, 16, true)
+	await _test_case(scene, hc, 8, true)
+	await _test_case(scene, hc, 7, false)
+	await _test_case(scene, hc, 3, false)
 
 	if fails == 0:
 		print("ALL HAND LAYOUT TESTS PASSED")
@@ -280,16 +284,22 @@ func _test_case(scene, hc: Control, n: int, expect_overlap: bool) -> void:
 		_check(arr[0].z_index == 0, "n=%d 未选中的牌 z_index=0" % n)
 	scene.selected_indices = []
 
-	# 悬停上浮 / 复位
+	# 悬停上浮 / 复位（位置由 80ms 补间推进，z_index 立即切换）
 	var b0: Button = arr[0]
 	var base: Vector2 = b0.get_meta("base_pos", Vector2.ZERO)
 	scene.call("_on_hand_card_hover", b0, true)
-	_check(abs(b0.position.y - (base.y - 20.0)) < 0.01 and b0.z_index == 20,
-		"n=%d 悬停：上浮 20 且 z_index=20" % n)
+	_check(b0.z_index == 20, "n=%d 悬停：z_index=20 立即生效" % n)
+	_check(abs(b0.position.y - base.y) < 0.01,
+		"n=%d 悬停：位置由补间推进而非瞬移 (y=%.2f)" % [n, b0.position.y])
+	await _wait_hover_anim(scene)
+	_check(abs(b0.position.y - (base.y - 20.0)) < 0.01,
+		"n=%d 悬停：补间结束上浮 20 (y=%.2f)" % [n, b0.position.y])
 	_check(b0.position.y >= -0.01, "n=%d 悬停后未越出容器顶部 (y=%.2f)" % [n, b0.position.y])
 	scene.call("_on_hand_card_hover", b0, false)
-	_check(abs(b0.position.y - base.y) < 0.01 and b0.z_index == 0,
-		"n=%d 移出：位置复位且 z_index=0" % n)
+	_check(b0.z_index == 0, "n=%d 移出：z_index 立即归 0" % n)
+	await _wait_hover_anim(scene)
+	_check(abs(b0.position.y - base.y) < 0.01,
+		"n=%d 移出：补间结束复位 (y=%.2f)" % [n, b0.position.y])
 
 	# ---- 防抖：命中判定必须基于静止坐标，且覆盖上浮后的区域 ----
 	# 若命中区随“抬起”变化，鼠标停在牌下沿时会出现 抬起→离开→落回→进入 的死循环
@@ -354,14 +364,24 @@ func _test_hover_debounce(scene, hc: Control) -> void:
 	_check(int(scene.get("_hover_idx")) == -1 and abs(arr[0].position.y - base.y) < 0.01,
 		"命中首帧不立即抬起（需稳定 %d ms）" % int(scene.HOVER_SWITCH_DELAY_MS))
 
-	# 3) 目标稳定后抬起（用确定性时间推进，不依赖真实等待）
+	# 3) 目标稳定后抬起（位置由补间推进，等动画结束再断言）
 	_hover_settle(scene, core)
-	_check(int(scene.get("_hover_idx")) == 0 and abs(arr[0].position.y - (base.y - 20.0)) < 0.01,
-		"目标稳定后抬起该牌 (idx=%d y=%.1f)" % [int(scene.get("_hover_idx")), arr[0].position.y])
+	_check(int(scene.get("_hover_idx")) == 0, "目标稳定后抬起该牌 (idx=0)")
+	await _wait_hover_anim(scene)
+	_check(abs(arr[0].position.y - (base.y - 20.0)) < 0.01,
+		"抬起补间结束到达上浮位 (y=%.1f)" % arr[0].position.y)
 
-	# 4) 移进重叠区（仍在牌0命中矩形内、但已不在其核心区）→ 可自然切到后一张
+	# 4a) 指针仍在抬起牌画出来的矩形里（重叠窄条）→ 视觉与判定一致，保持不跳
 	_hover_settle(scene, probe)
-	_check(int(scene.get("_hover_idx")) == 1, "重叠区可切换到后一张 (idx=%d)" % int(scene.get("_hover_idx")))
+	_check(int(scene.get("_hover_idx")) == 0,
+		"抬起牌覆盖的重叠区不再判给后一张（视觉一致，idx=%d）" % int(scene.get("_hover_idx")))
+
+	# 4b) 越过抬起牌右边缘 → 才自然切到后一张
+	var beyond: Vector2 = base + Vector2(95.0 + 4.0, 30.0)
+	_hover_settle(scene, beyond)
+	_check(int(scene.get("_hover_idx")) == 1,
+		"越过抬起牌右边缘后切换到后一张 (idx=%d)" % int(scene.get("_hover_idx")))
+	await _wait_hover_anim(scene)
 	_check(abs(arr[0].position.y - base.y) < 0.01, "切换后前一张已落下（无残留抬起）")
 
 	# 5) 回到牌0核心区：任意时刻不得"两牌同时抬起"
@@ -370,3 +390,246 @@ func _test_hover_debounce(scene, hc: Control) -> void:
 	for b in arr:
 		if b.z_index == 20: lifted += 1
 	_check(lifted <= 1, "任意时刻最多一张牌处于抬起态 (lifted=%d)" % lifted)
+
+
+# 等升降补间跑完。
+# Tween 以帧步进（delta 累加），headless 下单帧可能极慢也可能极快，
+# 固定 create_timer 会在"一帧就超过 140ms"时提前返回、补间却一步都没走。
+# 这里直接轮询 hand_buttons 上的升降补间，直到都不再运行为止（带帧数兜底）。
+func _wait_hover_anim(scene) -> void:
+	for _i in range(300):
+		var busy := false
+		for b in scene.hand_buttons:
+			if not is_instance_valid(b):
+				continue
+			var tw = b.get_meta("hover_tween", false)
+			if tw is Tween and tw.is_valid() and tw.is_running():
+				busy = true
+				break
+		if not busy:
+			return
+		await scene.get_tree().process_frame
+
+
+# ---- 悬停流畅化：R1 视觉一致 / R2 分级延迟 / R3 补间 / R4 顶边容错 ----
+# 复用 _test_hover_debounce 造出的 8 张合成牌（开赛后引用会失效）
+func _test_hover_smoothness(scene) -> void:
+	var arr: Array = scene.hand_buttons
+	if arr.size() < 3:
+		_check(false, "流畅化测试：手牌不足 3 张")
+		return
+	var b0: Button = arr[0]
+	var base: Vector2 = b0.get_meta("base_pos", Vector2.ZERO)
+
+	# 复位上个用例可能留下的抬起态
+	scene.set("_hover_idx", -1)
+	scene.set("_hover_pending_idx", -1)
+	for i in range(arr.size()):
+		var b: Button = arr[i]
+		scene.call("_kill_hover_tween", b)
+		b.position.y = b.get_meta("base_pos", b.position).y
+		b.z_index = 0
+
+	# R1：抬起牌"画出来的矩形"内必须归它自己（视觉与判定一致）
+	scene.call("_on_hand_card_hover", b0, true)
+	var raised_probe: Vector2 = base + Vector2(80.0, -8.0)   # 静止规则会判给后一张
+	_check(int(scene.call("_hover_hit_index", raised_probe)) == 1,
+		"R1 前提：静止命中规则在该点判给后一张")
+	scene.call("_update_hover_at", raised_probe)
+	_check(int(scene.get("_hover_idx")) == 0, "R1 抬起牌覆盖区域内保持自身（不跳到后一张）")
+	var stable_r1 := true
+	for _i in range(40):
+		scene.call("_update_hover_at", raised_probe)
+		if int(scene.get("_hover_idx")) != 0:
+			stable_r1 = false
+	_check(stable_r1, "R1 连续 40 次判定恒定（无自激抖动）")
+
+	# R1b：越过抬起牌右边缘 → 才切到后一张，且前一张落回
+	var leave_probe: Vector2 = base + Vector2(95.0 + 4.0, 30.0)
+	_hover_settle(scene, leave_probe)
+	_check(int(scene.get("_hover_idx")) == 1,
+		"R1b 离开抬起牌绘制区后切换到后一张 (idx=%d)" % int(scene.get("_hover_idx")))
+	await _wait_hover_anim(scene)
+	_check(abs(b0.position.y - base.y) < 0.01, "R1b 切换后前一张已落回")
+
+	# R2：命中某张牌 60ms 即切换（旧实现固定 110ms，跟手性差）
+	scene.set("_hover_idx", -1)
+	scene.set("_hover_pending_idx", -1)
+	scene.call("_kill_hover_tween", b0)
+	b0.position.y = base.y
+	var core: Vector2 = base + Vector2(20.0, 40.0)
+	scene.call("_update_hover_at", core)
+	scene.set("_hover_pending_at",
+		int(scene.get("_hover_pending_at")) - (int(scene.HOVER_SWITCH_DELAY_MS) + 1))
+	scene.call("_update_hover_at", core)
+	_check(int(scene.get("_hover_idx")) == 0,
+		"R2 命中牌 %dms 即切换（跟手）" % int(scene.HOVER_SWITCH_DELAY_MS))
+	_check(int(scene.HOVER_SWITCH_DELAY_MS) < 110, "R2 切换阈值已从 110ms 下调")
+
+	# R2b：容器内但不在任何牌上（牌列下方）→ 用留出档延迟，底边抖动不落牌
+	var below: Vector2 = base + Vector2(20.0, 140.0)
+	scene.call("_update_hover_at", below)
+	scene.set("_hover_pending_at",
+		int(scene.get("_hover_pending_at")) - (int(scene.HOVER_SWITCH_DELAY_MS) + 1))
+	scene.call("_update_hover_at", below)
+	_check(int(scene.get("_hover_idx")) == 0, "R2b 牌列下方未达留出延迟，保持抬起")
+	scene.set("_hover_pending_at",
+		int(scene.get("_hover_pending_at")) - (int(scene.HOVER_LEAVE_DELAY_MS) + 1))
+	scene.call("_update_hover_at", below)
+	_check(int(scene.get("_hover_idx")) == -1, "R2b 超过留出延迟后落回")
+	_check(int(scene.HOVER_LEAVE_DELAY_MS) > int(scene.HOVER_SWITCH_DELAY_MS),
+		"R2b 留出档比切换档更保守")
+
+	# R3：位置由补间推进，不再同帧瞬移
+	scene.set("_hover_idx", -1)
+	scene.call("_kill_hover_tween", b0)
+	b0.position.y = base.y
+	scene.call("_on_hand_card_hover", b0, true)
+	_check(abs(b0.position.y - base.y) < 0.01, "R3 悬停当帧不瞬移（补间推进）")
+	await _wait_hover_anim(scene)
+	_check(abs(b0.position.y - (base.y - 20.0)) < 0.01,
+		"R3 补间结束到达上浮位 (y=%.2f)" % b0.position.y)
+	scene.call("_on_hand_card_hover", b0, false)
+	await _wait_hover_anim(scene)
+	_check(abs(b0.position.y - base.y) < 0.01, "R3 落下补间结束复位 (y=%.2f)" % b0.position.y)
+
+	# R3b：重排必须先杀补间，否则牌会被动画拉回旧坐标
+	scene.call("_on_hand_card_hover", b0, true)
+	scene.call("_layout_hand_cards")
+	_check(abs(b0.position.y - base.y) < 0.01, "R3b 重排立即覆盖补间位置（无回弹）")
+	await _wait_hover_anim(scene)
+	_check(abs(b0.position.y - base.y) < 0.01,
+		"R3b 补间已终止，重排后位置稳定 (y=%.2f)" % b0.position.y)
+	scene.set("_hover_idx", -1)
+
+	# R4：手牌上沿 14px 容错带（贴边滑过不落牌，越界才复位）
+	var gr: Rect2 = scene.hand_container.get_global_rect()
+	_check(bool(scene.call("_hover_keep_above",
+			Vector2(gr.position.x + 10.0, gr.position.y - 8.0), gr)),
+		"R4 顶边 8px 内仍视为在牌上")
+	_check(not bool(scene.call("_hover_keep_above",
+			Vector2(gr.position.x + 10.0, gr.position.y - int(scene.HOVER_EXIT_GRACE) - 1.0), gr)),
+		"R4 超出容错带即复位")
+	_check(not bool(scene.call("_hover_keep_above",
+			Vector2(gr.position.x - 2.0, gr.position.y - 8.0), gr)),
+		"R4 横向移出牌列不复位判定（交回常规路径）")
+
+
+# ---- 警告 toast：右栏空白格，不压手牌 / 操作区 / 日志 ----
+func _test_warning_toast(scene) -> void:
+	var gp = scene.get_node_or_null("GamePage")
+	var toast = gp.get_node_or_null("ToastLayer") if gp else null
+	_check(toast != null, "警告 toast：ToastLayer 存在")
+	if toast == null:
+		return
+
+	scene.call("_show_center_warning", "第一行提示\n第二行提示")
+	var box = scene.get("_warning_toast")
+	_check(box != null and is_instance_valid(box), "警告 toast 已创建")
+	if box == null or not is_instance_valid(box):
+		return
+	_check(box.get_parent() == toast, "警告 toast 挂在 ToastLayer")
+	_check(box.visible, "警告 toast 显示")
+
+	var want: Rect2 = scene.WARNING_TOAST_RECT
+	var got := Rect2(box.position, box.size)
+	_check(got.position.is_equal_approx(want.position) and got.size.is_equal_approx(want.size),
+		"toast 位于右栏空白格 %s（实际 %s）" % [str(want), str(got)])
+	_check(box.mouse_filter == Control.MOUSE_FILTER_IGNORE,
+		"toast 不拦截鼠标（不挡手牌点击）")
+
+	var sb = box.get_theme_stylebox("panel")
+	_check(sb is StyleBoxFlat, "toast 使用 StyleBoxFlat")
+	if sb is StyleBoxFlat:
+		_check(sb.corner_radius_top_left == int(scene.PANEL_RADIUS)
+			and sb.border_width_left == int(scene.BORDER_W_ACTIVE),
+			"toast 走视觉规范（圆角 %d / 描边 %dpx）"
+				% [int(scene.PANEL_RADIUS), int(scene.BORDER_W_ACTIVE)])
+		_check(sb.border_color.is_equal_approx(Color(0.906, 0.298, 0.235, 1.0)),
+			"toast 描边为警告红 (%s)" % str(sb.border_color))
+
+	for n in ["HandContainer", "ActionPanel", "CardInfoLabel", "InfoLabel",
+			"LogLabel", "TutorialLabel", "TableLabel", "DeckCountLabel"]:
+		var c = gp.get_node_or_null(n)
+		if c == null or not c.visible:
+			continue
+		var cr := Rect2(c.position, c.size)
+		_check(not cr.intersects(got),
+			"toast 不与 %s 重叠 (toast=%s node=%s)" % [n, str(got), str(cr)])
+
+	var vp: Rect2 = scene.get_viewport_rect()
+	_check(vp.encloses(got), "toast 完整落在窗口内")
+
+	# 单例复用：连续报错只更新文本，不叠框
+	var cnt: int = toast.get_child_count()
+	scene.call("_show_center_warning", "第二条（覆盖前一条）")
+	_check(toast.get_child_count() == cnt,
+		"连续报错不叠框（子节点数 %d）" % toast.get_child_count())
+	var lbl = scene.get("_warning_label")
+	_check(lbl != null and lbl.text == "第二条（覆盖前一条）", "toast 文本更新为最新一条")
+
+	scene.call("_hide_warning_toast")
+	_check(not box.visible, "开局/收尾时警告 toast 可隐藏")
+
+
+# ---- 视觉规范工厂：卡牌 / 按钮 / 提示框共用同一套圆角 · 描边 · 阴影 ----
+func _test_style_factory(scene) -> void:
+	var card = scene.call("_make_panel_style", "card")
+	_check(card is StyleBoxFlat, "工厂返回 StyleBoxFlat")
+	if not (card is StyleBoxFlat):
+		return
+	_check(card.corner_radius_top_left == int(scene.CARD_RADIUS)
+		and card.corner_radius_bottom_right == int(scene.CARD_RADIUS),
+		"卡牌圆角统一为 %d" % int(scene.CARD_RADIUS))
+	_check(card.border_width_left == int(scene.BORDER_W), "卡牌描边 1px")
+	_check(card.shadow_size == int(scene.SHADOW_SIZE), "卡牌带轻投影")
+	_check(card.bg_color.is_equal_approx(Color(0.973, 0.976, 0.988, 1.0)),
+		"卡牌底色 #F8F9FC 未变")
+	_check(card.border_color.is_equal_approx(Color(0.63, 0.66, 0.71, 1.0)),
+		"卡牌描边 #A1A8B5 未变")
+
+	var sel = scene.call("_make_panel_style", "card_selected")
+	_check(sel.bg_color.is_equal_approx(Color(1.0, 1.0, 0.82, 1.0))
+		and sel.border_color.is_equal_approx(Color(0.9, 0.65, 0.1, 1.0)),
+		"选中态颜色不变（浅黄 / 橙金）")
+	_check(sel.border_width_left == int(scene.BORDER_W_ACTIVE), "选中态描边 2px")
+
+	var hov = scene.call("_make_panel_style", "card_hover")
+	_check(hov.bg_color.is_equal_approx(Color(0.9, 0.93, 0.98, 1.0))
+		and hov.border_color.is_equal_approx(Color(0.35, 0.55, 0.85, 1.0)),
+		"悬停态颜色不变（浅蓝 / 主题蓝）")
+	var hsel = scene.call("_make_panel_style", "card_hover_selected")
+	_check(hsel.bg_color.is_equal_approx(Color(1.0, 0.98, 0.72, 1.0))
+		and hsel.border_color.is_equal_approx(Color(0.85, 0.55, 0.0, 1.0)),
+		"选中悬停仍是黄色系（不盖掉选中态）")
+
+	var mini = scene.call("_make_panel_style", "mini_card")
+	_check(mini.corner_radius_top_left == int(scene.CARD_RADIUS) and mini.shadow_size == 0,
+		"桌面小卡同圆角、无投影（密度高）")
+	var mini_h = scene.call("_make_panel_style", "mini_card_hover")
+	_check(mini_h.bg_color.is_equal_approx(Color(0.9, 0.93, 0.98, 0.95)),
+		"小卡悬停底色不变")
+
+	var btn = scene.call("_make_panel_style", "button")
+	_check(btn.corner_radius_top_left == int(scene.CARD_RADIUS)
+		and btn.shadow_size == int(scene.SHADOW_SIZE),
+		"按钮与卡牌同一圆角 / 投影规范")
+	_check(btn.content_margin_left == 10 and btn.content_margin_top == 6, "按钮内边距 10/6")
+
+	var warn = scene.call("_make_panel_style", "toast_warning")
+	var info = scene.call("_make_panel_style", "toast_info")
+	_check(warn.corner_radius_top_left == int(scene.PANEL_RADIUS)
+		and info.corner_radius_top_left == int(scene.PANEL_RADIUS),
+		"提示框圆角走面板规范 %d" % int(scene.PANEL_RADIUS))
+	_check(warn.border_width_left == int(scene.BORDER_W_ACTIVE)
+		and info.border_width_left == int(scene.BORDER_W_ACTIVE),
+		"提示框描边 2px")
+
+	# 真实控件必须来自工厂
+	if not scene.hand_buttons.is_empty():
+		var sb = scene.hand_buttons[0].get_theme_stylebox("normal")
+		_check(sb is StyleBoxFlat and sb.corner_radius_top_left == int(scene.CARD_RADIUS),
+			"手牌实际样式来自工厂（圆角 %d）" % int(scene.CARD_RADIUS))
+
+
+

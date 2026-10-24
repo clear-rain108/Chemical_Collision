@@ -1,7 +1,7 @@
 # UI 视觉打磨推进计划
 
-> **最后更新**: 2026-10-23  
-> **当前状态**: P1 完成（含悬停交互修复 + 选中发黑修复），等待 P2 启动确认  
+> **最后更新**: 2026-10-24  
+> **当前状态**: P1 / P1.x / P2 完成（P2 追加：警告 toast 右移 + 样式工厂 + 悬停流畅化）  
 > **相关文档**: [ARCHITECTURE.md](./ARCHITECTURE.md) 第 8 节「表现层 - GameUI.gd」
 
 ---
@@ -12,7 +12,8 @@
 |------|------|------|
 | **P1** | 可读性与布局打磨（9 项） | ✅ 完成 |
 | **P1.x** | 手牌悬停抖动 / 切换过敏 / 选中后发黑 | ✅ 完成（本轮追加） |
-| P2 | 面板与卡牌描边 / 圆角 / 阴影统一 | ⏳ 待开始 |
+| **P2** | 面板与卡牌描边 / 圆角 / 阴影统一 + 警告 toast 右移 | ✅ 完成（2026-10-24） |
+| **P2.x** | 手牌悬停切换流畅化（4 个根因） | ✅ 完成（2026-10-24） |
 | P4 / P5 / P7 | 内容待与使用者逐条确认后细化 | ⏳ 未展开 |
 
 ---
@@ -111,8 +112,8 @@
 （三层存在 / z 序 / 铺满全屏 / 层不拦鼠标 / 顺序弹窗落在 OverlayLayer / 警告框落在 ToastLayer）；
 11 个套件全绿，`--quit-after 300` 无 ERROR；截图确认弹窗与警告框完整覆盖手牌。
 
-**遗留（P2）**：`_show_center_warning()` 位置仍是写死的 `(300,360) 800×110`，正好压在手牌区上
-（会被遮挡 2.5s）。层级已正确，若要连"遮挡"一起消除，需把它改成顶部横幅或右对齐 toast。
+**遗留（P2，已解决）**：`_show_center_warning()` 位置仍是写死的 `(300,360) 800×110`，正好压在手牌区上
+（会被遮挡 2.5s）。层级已正确，若要连"遮挡"一起消除，已在 3.5 改为右栏 toast。
 
 ---
 
@@ -146,7 +147,76 @@ InfoLabel / HandLabel / HandContainer / CardInfoLabel 均不相交，宽 ≥480�
 
 ---
 
-## 4. P2 计划（草案）
+## 3.4 手牌悬停切换流畅化（4 个根因）
+
+**现象**：鼠标沿手牌上沿横向滑过时，抬起的牌频繁"掉下来又上去"；从一张牌移到相邻牌有时要
+停顿半拍才响应；抬起/落下是一格一跳的瞬移，不跟手。
+
+**根因与修复**：
+
+| # | 根因 | 修复 |
+|---|------|------|
+| R1 | 抬起牌 `z_index=20` 压住相邻牌，但命中仍用静止规则（重叠取索引最大）→ 指针明明在抬起牌画出来的区域里，判定却给被压住的后一张，于是"落下→后一张抬起→再判回"来回翻 | `_card_raised_rect()`：已抬起牌的绘制矩形优先命中，命中即保持 |
+| R2 | 固定 `HOVER_SWITCH_DELAY_MS = 110ms` 对"明确进入目标牌核心区"也生效，显得迟钝 | 分级：命中某张牌 `60ms`；仍在容器内但不在任何牌上（牌列下方）`HOVER_LEAVE_DELAY_MS = 140ms` |
+| R3 | `_apply_hover()` 直接 `btn.position = …`，一格跳变 | `_tween_card_y()`：`HOVER_ANIM_MS = 80ms` + `TRANS_CUBIC/EASE_OUT`；`z_index` 仍立即切换；每张牌只保留一个 tween，`_layout_hand_cards()` 重排前 `_kill_hover_tween()`，否则动画会把牌拉回旧坐标 |
+| R4 | 抬起牌顶边与容器顶边重合（`base_y = 20 = HOVER_LIFT`），沿顶边滑动时越界 1px 就落牌、回来再等一次延迟 | `_hover_keep_above()`：横向仍在牌列、纵向越界 ≤ `HOVER_EXIT_GRACE = 14px` 时保持 |
+
+**行为变化（有意）**：抬起牌覆盖的重叠窄条现在归抬起牌自己（视觉与判定一致）。
+要切到后一张，指针需越过抬起牌的右边缘 —— 之前"一进窄条就换牌"会让指针还压在抬起牌上时它就落下。
+
+**验证**：`verify_hand_layout.gd → _test_hover_smoothness()` 18 条断言（R1 优先级 / 40 次判定恒定 /
+R1b 越界切换 / R2 60ms 生效 / R2b 140ms 留出 / R3 当帧不瞬移 + 补间到达 / R3b 重排杀补间 /
+R4 容错带内外与横向越界），既有 `_test_case()` / `_test_hover_debounce()` 的位置断言改为
+`await _wait_hover_anim()` 后再比。
+
+**测试注意**：Tween 以帧步进，headless 下单帧可能就超过固定等待时长（补间一步未走）。
+`_wait_hover_anim()` 改为轮询 `hover_tween.is_running()`，不用 `create_timer`。
+
+---
+
+## 3.5 警告提示右移 + 视觉规范工厂（P2）
+
+**现象**：① 出牌不合理时的黄底红框提示写死在 `(300,360) 800×110`，正好盖住手牌 / 卡牌信息栏 /
+操作区 2.5 秒；且每次报错 `new` 一个节点，连续报错会叠框、上一条的计时器还会把新框提前关掉。
+② 圆角/描边/阴影散落在 `_build_card_button` / `_build_mini_card_button` / `_mkb` /
+`_level0_make_tip_box` 四处，同一类元素出现 6px 与 8px 混用。
+
+**修复**：
+
+| 项 | 内容 |
+|---|---|
+| 位置 | `_show_center_warning()` 改为右栏 toast：`WARNING_TOAST_RECT = (824,62,312,116)`（LogLabel 从 y=300 起、TutorialLabel 从 y=186 起、InfoLabel 只到 x=480 → 不与任何静态节点相交） |
+| 生命周期 | 单例复用同一个 `Panel`（`_ensure_warning_toast()` 幂等创建），连续报错只更新文本；`_warning_seq` 自增让旧 `SceneTreeTimer` 作废；`_init_game()` / `_on_start_tutorial()` 调 `_hide_warning_toast()` |
+| 样式 | `_make_panel_style(kind)` + `_style_base()` 成为唯一来源：`card` / `card_selected` / `card_hover` / `card_hover_selected` / `mini_card` / `mini_card_hover` / `button` / `toast_warning` / `toast_info` |
+| 数值 | 圆角 8（卡 / 按钮）/ 10（面板 toast）、描边 1px `#A1A8B5` / 2px（选中·焦点·警告）、阴影 `(0.1,0.15,0.22,0.14)` size 3 offset (0,2)；小卡无投影 |
+| 颜色 | **原值不变**：`#F8F9FC` / `#FFFFD1` / `#E6EEFA` / `#FFFAB8`，边框 `#A1A8B5` / `#E6A61A` / `#5989D9` / `#D98C00`；既有 4 态断言全部保留 |
+| 顺带 | 顺序指定弹窗的按钮改用 `_mkb()`（与操作面板同一套样式）；第零关提示框由 `ColorRect + 描边矩形` 改为 `Panel + toast_info` |
+
+**验证**：`_test_warning_toast()` 约 20 条（位置/尺寸、不拦鼠标、toast_warning 样式、与 8 个静态节点均不相交、
+在窗口内、连续报错不叠框、文本更新、可隐藏）；`_test_style_factory()` 17 条（各 kind 圆角/描边/阴影/内边距、
+4 态颜色锁死、真实手牌样式来自工厂）。
+
+---
+
+## 4. P2 完成清单
+
+**目标**：GamePage 内所有面板与卡牌的描边、圆角、阴影统一到一套视觉规范。
+
+| # | 项 | 实现 |
+|---|---|---|
+| 1 | 样式工厂 | `_make_panel_style(kind)` / `_style_base()`，kind 见 3.5 |
+| 2 | 三级描边 | 普通 1px `#A1A8B5`；选中/焦点 2px 橙金·主题蓝；警告 2px `#E74C3C` |
+| 3 | 圆角 / 阴影 | 卡牌与按钮 8、面板/toast 10；阴影统一 size 3 offset (0,2)，桌面小卡无投影 |
+| 4 | 调用点收敛 | 手牌、桌面小卡、操作按钮、顺序指定弹窗、第零关提示框、警告 toast 全部走工厂 |
+| 5 | 警告提示 | 居中大框 → 右栏 toast（见 3.5） |
+
+**不做**：`Main.tscn` 里静态节点的布局与颜色、`_apply_hover()` 的 `sb_normal/sb_hover` meta 机制保持不变。
+
+**验收**：11 个测试套件全绿（`verify_hand_layout` 100+ 条）、`--quit-after 300` 无 ERROR。
+
+---
+
+## 4.1 原 P2 草案（存档）
 
 **目标**：GamePage 内所有面板（状态栏、信息栏、桌面栏、日志、操作区）与卡牌的描边、圆角、阴影统一到一套视觉规范。
 
@@ -170,7 +240,7 @@ for %f in (hand_layout hand_runtime integration constraint logger organic refact
 
 | 测试 | 覆盖 |
 |------|------|
-| `verify_hand_layout` | 手牌尺寸/居中/叠卡步长/紧凑牌面/悬停上浮/**防抖状态机**/**选中与悬停样式**（100+ 条） |
+| `verify_hand_layout` | 手牌尺寸/居中/叠卡步长/紧凑牌面/悬停上浮/**防抖状态机**/**选中与悬停样式**/**悬停流畅化（R1–R4）**/**警告 toast 布局**/**样式工厂**（120+ 条） |
 | `verify_hand_runtime` | 真实手牌渲染与点击流程 |
 | `verify_integration` | 端到端对局 |
 | `verify_constraint` | 化合价与牌型约束 |
