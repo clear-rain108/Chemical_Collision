@@ -72,7 +72,9 @@ chemical-1/
 │   ├── verify_integration.gd          ← 集成测试（GameManager + AIPlayer）
 │   ├── verify_logger.gd               ← 日志转发测试
 │   ├── verify_tutorial.gd             ← 教程控制器集成测试
-│   └── verify_ai_discard.gd           ← AI 上限自动弃牌测试（Q1+Q2）
+│   ├── verify_ai_discard.gd           ← AI 上限自动弃牌测试（Q1+Q2）
+│   ├── verify_hand_layout.gd          ← 手牌布局 / 悬停状态机 / 样式工厂 / 警告 toast
+│   └── verify_motion.gd               ← 动效与排版：页面淡入 / 按钮缩放 / 卡牌字号
 ├── CHEMICAL_COLLISION_GAME.md         ← 游戏设计文档
 ├── GAMEPLAY_RULES.md                  ← 玩法规则文档
 ├── ARCHITECTURE.md                    ← 本文档
@@ -301,10 +303,24 @@ AIPlayer.auto_play(game_manager, ui_refresh)
 | GamePage | 游戏主界面（牌面+操作） |
 | EndPage | 结束页 |
 
+**页面淡入**（P3）：根节点下有一个常驻同色底 `PageBackdrop`（`#E6F0FA`、`z_index = -100`、首个子节点、
+`MOUSE_FILTER_IGNORE`），由 `_ensure_page_backdrop()` 在 `_ready` 里幂等创建（必须早于任何淡入）。
+跨页切换调用 `_fade_in_page(page)`：先把**其余页**的 `modulate.a` 复位为 1，再把目标页
+`modulate.a` 从 0 补间到 1（220ms `TRANS_QUAD / EASE_OUT`，全局单例 `_page_fade_tween`，重复调用先 `kill()`）。
+
+| 约束 | 原因 |
+|---|---|
+| `visible` 仍**同步**设置，不延迟隐藏旧页 | 真正的交叉淡化必须延迟隐藏旧页，而 `_on_help_back()` 会**同步**读 `*.visible` 判断返回到哪一页，延迟隐藏会引入竞态 |
+| 常驻同色底必须在根节点、且先于所有页面绘制 | 淡入瞬间 alpha=0，露出的必须是同色背景，否则会闪出窗口清屏色（深灰） |
+| 帮助页内部 tab（规则 / 图鉴 / 补充）不淡入 | 同层即时切换更自然，每次点标签闪一下反而劣化 |
+
 ### 手牌渲染
 
-`_build_card_button()` — 95×118px 白底圆角牌面：
+`_build_card_button()` — 95×118px 白底圆角牌面（字号层级：符号 28 / 中文名 14 / 化合价 13 / 族 11 / 序数 12 / 质量 9）：
 - 左上：原子序数 | 右上：族 | 中上：元素符号(着色) | 中：中文名 | 中下：化合价(±标注) | 左下：相对原子质量
+- **字号要在 `_apply_card_compact()` 里再写一遍**：只改 `_build_card_button()` 会在下次重排时被覆盖；
+  紧凑牌面用 符号 21 / 中文名 12（左对齐，保证露出的窄条可读）
+- `Label.size` 会被字体最小高度撑大，但字形仍自顶部绘制 —— 判断是否压字要按**字号**算，不要按 `size` 算
 
 布局 `_layout_hand_cards()`：一行居中；张数超过"不重叠容量"后按
 `step = min(CARD_STEP_MAX=60, (可用宽 - 牌宽) / (n-1))` 压缩重叠，
@@ -364,6 +380,21 @@ AIPlayer.auto_play(game_manager, ui_refresh)
   —— 这正是"选中后卡牌发黑"的根因（自动化截图直接调 `_apply_hover` 绕过了引擎 hover 态，所以没暴露）。
 - **选中牌的悬停保留黄色系**（只加深、换深橙边），否则悬停的浅蓝会把"已选中"的浅黄整个盖掉，
   用户看不出哪张被选了。
+
+### 按钮交互（`_mkb`：缩放 + 悬停发光，P3）
+
+操作面板与弹窗按钮统一由 `_mkb(text, cb, dis)` 产出，并接上缩放补间：
+
+| 项 | 实现 |
+|---|---|
+| 缩放 | 悬停 1.05、按下 0.96，90ms `TRANS_CUBIC`；`pivot_offset` 居中（`custom_minimum_size * 0.5`，`resized` 时跟随实际 size） |
+| 发光 | 悬停 StyleBox 用 `shadow_color = (0.35, 0.55, 0.85, 0.55)` + `shadow_size = 6` + `offset = 0` 模拟光晕（`StyleBoxFlat` 没有真发光，只能靠外扩阴影） |
+| 单补间 | 每按钮只保留一个补间（meta `btn_scale_tween`，起新动画前先 `kill()`），与手牌 `hover_tween` 同一约束 |
+| 不自激 | 缩放只向外扩，不会把指针挤出原边界 → `mouse_entered / mouse_exited` 不会反复翻转 |
+| 禁用 | `disabled` 直接早退，不缩放也不发光（避免暗示可点击） |
+
+> 手牌按钮**不走** `_mkb()`：它由 `_build_card_button()` 生成，悬停由 `_process` 轮询状态机驱动，
+> 不能接 `mouse_entered / mouse_exited`（会自激，见上一节）。
 
 ### 层级与浮层（Content / Overlay / Toast）
 

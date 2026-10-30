@@ -106,6 +106,16 @@ const SHADOW_COLOR := Color(0.1, 0.15, 0.22, 0.14)
 const SHADOW_SIZE := 3
 const SHADOW_OFFSET := Vector2(0, 2)
 
+# ---- 动效规范（P3）：页面淡入 / 按钮缩放 ----
+# 页面淡入采用「根节点常驻同色底 + 目标页 modulate 0→1」，不改 visible 语义：
+# 交叉淡化必须延迟隐藏旧页，而 _on_help_back() 等处会同步读 *.visible 判断去向，
+# 延迟隐藏会引入竞态，故一律保持 visible 同步，只做视觉层淡入。
+const PAGE_BG_COLOR := Color(0.902, 0.941, 0.98, 1.0)   # #E6F0FA，与各页背景同色
+const PAGE_FADE_MS := 220                                # 页面淡入时长
+const BUTTON_HOVER_SCALE := 1.05                         # 按钮悬停放大
+const BUTTON_PRESS_SCALE := 0.96                         # 按钮按下回缩
+const BUTTON_SCALE_MS := 90                              # 缩放补间时长
+
 # ---- 警告 toast：右栏上部空白格 ----
 # LogLabel 从 y=300 起、TutorialLabel 从 y=186 起、InfoLabel 只到 x=480，
 # 因此 (824,62)-(1136,178) 不与任何静态节点相交，也就不会遮住手牌。
@@ -122,6 +132,9 @@ var _warning_toast: Control = null
 var _warning_label: Label = null
 var _warning_seq: int = 0
 
+# 页面淡入补间（全局单例：同一时刻只允许一个页面在淡入）
+var _page_fade_tween: Tween = null
+
 # ============================================================
 # 第零关覆盖层 (Phase 1: UI介绍, Phase 2: 流程说明)
 # ============================================================
@@ -137,6 +150,7 @@ var level0_flow_index: int = 0
 # 四、初始化
 # ============================================================
 func _ready() -> void:
+	_ensure_page_backdrop()   # 必须先于任何页面淡入，否则第一帧会闪出窗口清屏色
 	_setup_pages()
 	_show_start_page()
 
@@ -350,6 +364,46 @@ func _layer(kind: int) -> Control:
 # ============================================================
 # 五、页面切换
 # ============================================================
+# -------- 页面淡入基础设施（P4） --------
+# 根节点下的常驻同色底：页面淡入时 alpha 降到 0 露出的仍是 #E6F0FA，
+# 因此不会闪出窗口默认清屏色（深灰）。挂在根节点而非 GamePage，
+# 因为 GamePage 自身在切换时会被隐藏。
+func _ensure_page_backdrop() -> void:
+	if get_node_or_null("PageBackdrop") != null:
+		return
+	var bg := ColorRect.new()
+	bg.name = "PageBackdrop"
+	bg.color = PAGE_BG_COLOR
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	bg.z_index = -100
+	add_child(bg)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	move_child(bg, 0)
+
+
+func _all_pages() -> Array:
+	return [
+		start_page, game_page, end_page,
+		help_page_rules, help_page_cards, help_page_supp,
+		get_node_or_null("TutorialPage"),
+	]
+
+
+# 目标页淡入；其余页 alpha 复位（避免「淡入中途被切走」留下半透明页）
+func _fade_in_page(page) -> void:
+	if page == null or not is_instance_valid(page):
+		return
+	for p in _all_pages():
+		if p != null and is_instance_valid(p) and p != page:
+			p.modulate.a = 1.0
+	if _page_fade_tween != null and _page_fade_tween.is_valid():
+		_page_fade_tween.kill()
+	page.modulate.a = 0.0
+	_page_fade_tween = create_tween()
+	_page_fade_tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	_page_fade_tween.tween_property(page, "modulate:a", 1.0, PAGE_FADE_MS / 1000.0)
+
+
 func _show_start_page() -> void:
 	if start_page: start_page.visible = true
 	if game_page: game_page.visible = false
@@ -365,22 +419,26 @@ func _show_start_page() -> void:
 	log_lines.clear()
 	if log_label:
 		log_label.text = "游戏日志:"
+	_fade_in_page(start_page)
 
 func _on_show_help() -> void:
 	if help_page_rules: help_page_rules.visible = true
 	if game_page: game_page.visible = false
+	_fade_in_page(help_page_rules)
 
 func _on_show_tutorial_page() -> void:
 	var tut_page = get_node_or_null("TutorialPage")
 	if tut_page: tut_page.visible = true
 	if start_page: start_page.visible = false
 	if end_page: end_page.visible = false
+	_fade_in_page(tut_page)
 
 func _on_tutorial_back() -> void:
 	var tut_page = get_node_or_null("TutorialPage")
 	if tut_page: tut_page.visible = false
 	if start_page: start_page.visible = true
 	if end_page: end_page.visible = false
+	_fade_in_page(start_page)
 
 func _on_help_back() -> void:
 	if help_page_rules: help_page_rules.visible = false
@@ -392,6 +450,9 @@ func _on_help_back() -> void:
 		game_page.visible = true  # 游戏中的帮助，返回游戏页
 	else:
 		if game_page: game_page.visible = true
+	# 只有「游戏页从隐藏 → 可见」需要淡入；从开始页打开帮助时开始页一直在下层，无需动画
+	if game_page and game_page.visible:
+		_fade_in_page(game_page)
 
 func _on_help_show_cards() -> void:
 	if help_page_rules: help_page_rules.visible = false
@@ -437,6 +498,7 @@ func _on_start_game() -> void:
 	end_page.visible = false
 	if help_page_rules: help_page_rules.visible = false
 	if help_page_cards: help_page_cards.visible = false
+	_fade_in_page(game_page)
 	_init_game(total, ai)
 
 
@@ -451,6 +513,7 @@ func _on_start_tutorial(level: int) -> void:
 	end_page.visible = false
 	if help_page_rules: help_page_rules.visible = false
 	if help_page_cards: help_page_cards.visible = false
+	_fade_in_page(game_page)
 	_step_reset()
 	_hide_warning_toast()   # 清掉上一局残留的警告 toast
 
@@ -1244,10 +1307,14 @@ func _mkb(text: String, cb: Callable, dis: bool) -> Button:
 	var style_normal = _make_panel_style("button")
 	b.add_theme_stylebox_override("normal", style_normal)
 
-	# 悬停：背景变亮
+	# 悬停：背景变亮 + 主题蓝发光（P3 · 美术文档 §5.4「悬停时亮色发光」）
+	# StyleBoxFlat 的 shadow 是背景外扩绘制，配合半透明亮蓝即可当光晕用
 	var style_hover = style_normal.duplicate()
 	style_hover.bg_color = Color(0.27, 0.38, 0.5, 1.0)
 	style_hover.border_color = Color(0.55, 0.75, 0.95, 1.0)
+	style_hover.shadow_color = Color(0.35, 0.55, 0.85, 0.55)
+	style_hover.shadow_size = 6
+	style_hover.shadow_offset = Vector2.ZERO
 	b.add_theme_stylebox_override("hover", style_hover)
 
 	# 按下：略暗
@@ -1260,8 +1327,46 @@ func _mkb(text: String, cb: Callable, dis: bool) -> Button:
 	style_disabled.bg_color = Color(0.173, 0.243, 0.314, 0.35)
 	b.add_theme_stylebox_override("disabled", style_disabled)
 
+	# 缩放交互（P3 · 美术文档 §7.4）：pivot 居中，悬停 1.05 / 按下 0.96
+	# 缩放只向外扩，不会把指针挤出原边界，因此 entered/exited 不会自激抖动
+	b.pivot_offset = b.custom_minimum_size * 0.5
+	b.resized.connect(func() -> void: b.pivot_offset = b.size * 0.5)
+	b.mouse_entered.connect(_on_button_hover_scale.bind(b, true))
+	b.mouse_exited.connect(_on_button_hover_scale.bind(b, false))
+	b.button_down.connect(_on_button_press_scale.bind(b, true))
+	b.button_up.connect(_on_button_press_scale.bind(b, false))
+
 	b.pressed.connect(cb)
 	return b
+
+
+# -------- 按钮缩放补间（P3）：每个按钮只保留一个 tween --------
+func _tween_button_scale(btn: Button, target: float) -> void:
+	if not is_instance_valid(btn):
+		return
+	var tw = btn.get_meta("btn_scale_tween", false)
+	if tw is Tween and tw.is_valid():
+		tw.kill()
+	tw = create_tween()
+	tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(btn, "scale", Vector2.ONE * target, BUTTON_SCALE_MS / 1000.0)
+	btn.set_meta("btn_scale_tween", tw)
+
+
+func _on_button_hover_scale(btn: Button, entered: bool) -> void:
+	if not is_instance_valid(btn) or btn.disabled:
+		return
+	_tween_button_scale(btn, BUTTON_HOVER_SCALE if entered else 1.0)
+
+
+func _on_button_press_scale(btn: Button, down: bool) -> void:
+	if not is_instance_valid(btn) or btn.disabled:
+		return
+	if down:
+		_tween_button_scale(btn, BUTTON_PRESS_SCALE)
+	else:
+		# 松开后指针通常仍在按钮内（说明还悬停着），回到悬停尺寸
+		_tween_button_scale(btn, BUTTON_HOVER_SCALE if btn.is_hovered() else 1.0)
 
 
 # ============================================================
@@ -1376,12 +1481,13 @@ func _apply_card_compact(btn: Button, compact: bool) -> void:
 		sym.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
 		sym.position = Vector2(6, 22) if compact else Vector2(5, 20)
 		sym.size = Vector2(44, 26) if compact else Vector2(85, 26)
-		sym.add_theme_font_size_override("font_size", 21 if compact else 26)
+		sym.add_theme_font_size_override("font_size", 21 if compact else 28)
 	var nm = btn.get_node_or_null("CardName")
 	if nm:
 		nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
 		nm.position = Vector2(6, 49) if compact else Vector2(5, 48)
 		nm.size = Vector2(44, 15) if compact else Vector2(85, 15)
+		nm.add_theme_font_size_override("font_size", 12 if compact else 14)
 	var vl = btn.get_node_or_null("CardValence")
 	if vl:
 		vl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
@@ -1661,7 +1767,7 @@ func _build_card_button(card, idx: int) -> Button:
 	var l_sym = Label.new()
 	l_sym.name = "CardSymbol"
 	l_sym.text = card.symbol
-	l_sym.add_theme_font_size_override("font_size", 26)
+	l_sym.add_theme_font_size_override("font_size", 28)
 	l_sym.add_theme_color_override("font_color", _get_card_color(card))
 	l_sym.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.25))
 	l_sym.add_theme_constant_override("outline_size", 2)
@@ -1673,7 +1779,7 @@ func _build_card_button(card, idx: int) -> Button:
 	var l_name = Label.new()
 	l_name.name = "CardName"
 	l_name.text = card.name_cn
-	l_name.add_theme_font_size_override("font_size", 12)
+	l_name.add_theme_font_size_override("font_size", 14)
 	l_name.add_theme_color_override("font_color", Color(0.1, 0.12, 0.14, 1))
 	l_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l_name.size = Vector2(85, 15)
@@ -2165,6 +2271,8 @@ func _show_end_page(custom_text: String) -> void:
 	if help_page_rules: help_page_rules.visible = false
 	if help_page_cards: help_page_cards.visible = false
 	if help_page_supp: help_page_supp.visible = false
+	# 放在 visible 之后、提前 return 之前，保证「有获胜者」分支也能淡入
+	_fade_in_page(end_page)
 	var is_tutorial = (game_manager != null and (game_manager.tutorial_level >= 1 or game_manager.tutorial_level0_phase >= 1))
 	if end_label:
 		if game_manager:
