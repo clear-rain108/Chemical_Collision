@@ -1,7 +1,7 @@
 # UI 视觉打磨推进计划
 
 > **最后更新**: 2026-10-30  
-> **当前状态**: P1 / P1.x / P2 / P3 完成（P3：页面淡入 + 按钮缩放发光 + 卡牌字号）  
+> **当前状态**: P1 / P1.x / P2 / P3 / P5 完成（P5：帮助中心 3 页合并为单页 3 Tab + 卡片）  
 > **相关文档**: [ARCHITECTURE.md](./ARCHITECTURE.md) 第 8 节「表现层 - GameUI.gd」
 
 ---
@@ -15,6 +15,7 @@
 | **P2** | 面板与卡牌描边 / 圆角 / 阴影统一 + 警告 toast 右移 | ✅ 完成（2026-10-24） |
 | **P2.x** | 手牌悬停切换流畅化（4 个根因） | ✅ 完成（2026-10-24） |
 | **P3** | 动效与排版：页面淡入 / 按钮缩放发光 / 卡牌字号 | ✅ 完成（2026-10-30，见 §4.1） |
+| **P5** | 帮助中心重构：3 个独立页合并为单页 3 Tab + 滚动 + 卡片（Plan B 新手向） | ✅ 完成（2026-10-30，见 §7） |
 | P4 / P5 / P7 | 美术升级方向文档的其余条目（卡牌重绘 / 字体 / 图标 / 音频） | ⏳ 未展开（核对结果见 §6） |
 
 ---
@@ -273,11 +274,11 @@ R4 容错带内外与横向越界），既有 `_test_case()` / `_test_hover_debo
 
 ## 5. 验证基线
 
-12 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
+13 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
 
 ```bat
 set GD=D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe
-for %f in (hand_layout hand_runtime integration constraint logger organic refactor sequence sequence_table tutorial ai_discard motion) do (
+for %f in (hand_layout hand_runtime integration constraint logger organic refactor sequence sequence_table tutorial ai_discard motion help_page) do (
   %GD% --path . --headless --script res://tests/verify_%f.gd
 )
 ```
@@ -295,6 +296,7 @@ for %f in (hand_layout hand_runtime integration constraint logger organic refact
 | `verify_sequence` / `verify_sequence_table` | 顺序牌型与桌面判定 |
 | `verify_tutorial` | 教程关卡状态机 |
 | `verify_ai_discard` | 手牌上限自动弃牌 |
+| `verify_help_page` | **帮助中心 P5**（结构 / Tab 懒加载 / 2 列卡片 + 7 列图鉴 / 字号 ≥11 / 无空格对齐 / 29 种 182 张 / 旧页备份）（57 条） |
 
 > 已知非缺陷：测试进程退出时固定报 `572 ObjectDB instances were leaked at exit`，在 P3 之前的
 > `88cfe60` 上同样存在（已用 `git stash` 做过基线对比），与本轮改动无关。
@@ -352,3 +354,44 @@ for %f in (hand_layout hand_runtime integration constraint logger organic refact
 - **批次 B（需美术 / 音频资源）**：5 个功能图标、四角仪器轮廓 + 周期表网格、卡牌纹理与内阴影、
   族炸全屏光晕 + 震屏、化合物原子聚合、BGM + SFX。
   > 音频需先确认是否允许提交 ogg 资源；项目当前无 `default_bus_layout.tres`，需要新建 BGM / SFX 两条总线。
+
+---
+
+## 7. P5 完成清单（帮助中心重构，Plan B 新手向）
+
+**问题**：3 个独立帮助页（`Main.tscn:404-616`）被用户评为"看不懂"——
+4 栏横排 1112px 挤在一屏、正文字号 11/12px、用空格对齐列（比例字体下必然错位）、
+`□` 被误读成复选框、5 种前缀符号同一字号堆叠、按钮是默认灰底、
+三页返回按钮坐标各不相同、规则与补充内容互相重复，且数据写错（28 种 / 172 张）。
+
+**方案**：合并为 **1 个 HelpPage**，3 个 Tab（游戏规则 / 卡牌图鉴 / 补充规则）+ 滚动容器 + 卡片布局。
+
+| 改动 | 位置 | 要点 |
+|---|---|---|
+| `HelpContent.gd`（新增 290 行） | `scripts/` | 3 个 Tab 的纯数据：9 张规则卡、4 张图鉴卡 + 元素派生、4 张补充卡；行样式 `sub/p/li/ex/warn/gap/demo` |
+| `_build_help_page()` + 14 个辅助函数（新增约 460 行） | `scripts/GameUI.gd` §五之二 | 标题栏 56px `#2C3E50` / Tab 栏 48px 白底 + 选中 3px 蓝下划线 / 3 个 ScrollContainer / 2 列卡片 / 7 列图鉴网格 / 懒加载 |
+| 旧 3 页引用全删 | `scripts/GameUI.gd` | 9 个按钮变量 + 3 处 `get_node` + 9 处 `visible=false` 全部收敛成 `help_page` |
+| `tab_on` / `tab_off` 两种 stylebox | `_make_panel_style()` | 遵守"样式唯一来源"，不手写 StyleBoxFlat |
+| 牌库数字修正 | `HelpContent.gd` / `CardDatabase.gd:22` | 28 种 / 172 张 → **29 种 / 182 张**，且改为从 `CardDatabase` 派生，不再硬编码 |
+| `verify_help_page.gd`（新增） | `tests/` | 57 条断言 |
+
+**排版规则**（治"空格对齐"和"字号过小"）：
+
+| 层级 | 表现 |
+|---|---|
+| 卡片标题 | 17px `#2C3E50` + 左侧 4px 强调色条 + 1px 分隔线 |
+| 小标题 | 15px `#2C3E50`，无前缀 |
+| 正文 / 条目 | 14px `#2B3340`；条目自动加「· 」，缩进 4 |
+| 示例 / 化学式 | 13px `#6B7280`，缩进 14 |
+| 警示 | 14px `#C0392B`，自动加「⚠ 」 |
+| 列对齐 | **一律用 `GridContainer` / `HBoxContainer` 布局**，不再用连续空格 |
+| 字号下限 | 帮助页任何文字 ≥ 11px（测试锁死） |
+
+**刻意不做**：
+
+- 不改 `Main.tscn`（旧 3 页原样保留，`visible=false`，作为文案校对备份；确认无需回查后可整段删除）
+- 不引入切 Tab 动画（避免与 `verify_motion` 的"切 Tab 不淡入"断言冲突）
+- 不给图鉴迷你卡加 hover / 点击交互（图鉴是查阅用的静态页）
+
+**验收**：13 个测试套件全绿（新增 `verify_help_page` 57 条）；真实窗口 `--quit-after 240` 无 ERROR/WARNING；
+6 张真实截图（3 Tab 顶部 + 滚动到底）逐张核对排版。

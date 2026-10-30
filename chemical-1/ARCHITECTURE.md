@@ -66,6 +66,7 @@ chemical-1/
 │   ├── AIPlayer.gd                    ← AI决策：出牌策略（族炸/化合物/双原子/单质/接顺序）
 │   ├── TutorialController.gd          ← 教程状态机：关卡初始化/预设手牌/进度检查
 │   ├── TutorialUI.gd                  ← 教程内容：引导文本/成功提示（静态）
+│   ├── HelpContent.gd                 ← 帮助中心内容：3 Tab 卡片数据（静态）
 │   └── GameUI.gd                      ← UI控制器：页面切换/牌面渲染/步骤流/着色
 ├── tests/
 │   ├── verify_refactor.gd             ← 模块单测（牌型/化合物/日志/玩家/Q4牌型选择）
@@ -74,7 +75,8 @@ chemical-1/
 │   ├── verify_tutorial.gd             ← 教程控制器集成测试
 │   ├── verify_ai_discard.gd           ← AI 上限自动弃牌测试（Q1+Q2）
 │   ├── verify_hand_layout.gd          ← 手牌布局 / 悬停状态机 / 样式工厂 / 警告 toast
-│   └── verify_motion.gd               ← 动效与排版：页面淡入 / 按钮缩放 / 卡牌字号
+│   ├── verify_motion.gd               ← 动效与排版：页面淡入 / 按钮缩放 / 卡牌字号
+│   └── verify_help_page.gd            ← 帮助中心：结构 / Tab 懒加载 / 字号 / 牌库数字
 ├── CHEMICAL_COLLISION_GAME.md         ← 游戏设计文档
 ├── GAMEPLAY_RULES.md                  ← 玩法规则文档
 ├── ARCHITECTURE.md                    ← 本文档
@@ -298,8 +300,8 @@ AIPlayer.auto_play(game_manager, ui_refresh)
 |----------|------|
 | StartPage | 开始页（模式选择+教学引导入口） |
 | TutorialPage | 教学引导页（关卡选择） |
-| HelpPage_Rules | 规则介绍（4栏横排） |
-| HelpPage_Cards | 卡牌图鉴（4栏横排） |
+| HelpPage | 帮助中心（P5：单页 + 3 Tab + 滚动 + 卡片，**全部代码生成**） |
+| HelpPage_Rules / _Cards / _Supp | 旧帮助页，仍在 Main.tscn 但 `visible=false`；代码已不引用，仅作文案校对备份 |
 | GamePage | 游戏主界面（牌面+操作） |
 | EndPage | 结束页 |
 
@@ -312,7 +314,59 @@ AIPlayer.auto_play(game_manager, ui_refresh)
 |---|---|
 | `visible` 仍**同步**设置，不延迟隐藏旧页 | 真正的交叉淡化必须延迟隐藏旧页，而 `_on_help_back()` 会**同步**读 `*.visible` 判断返回到哪一页，延迟隐藏会引入竞态 |
 | 常驻同色底必须在根节点、且先于所有页面绘制 | 淡入瞬间 alpha=0，露出的必须是同色背景，否则会闪出窗口清屏色（深灰） |
-| 帮助页内部 tab（规则 / 图鉴 / 补充）不淡入 | 同层即时切换更自然，每次点标签闪一下反而劣化 |
+| 帮助页内部 tab（规则 / 图鉴 / 补充）不淡入 | 同层即时切换更自然，每次点标签闪一下反而劣化。P5 后这条由「切 Tab 只改 Scroll `visible`」结构性保证（`_set_help_tab` 不碰 `_fade_in_page`），`verify_motion` / `verify_help_page` 各有一条断言锁死 |
+
+### 帮助中心（P5：单页 + 3 Tab + 滚动 + 卡片）
+
+**动机**：原 3 个独立帮助页（`Main.tscn:404-616`）用 4 栏横排 + 11/12px 字号 + 空格对齐，
+新手读不动；且按钮坐标三页各不相同（返回按钮位置逐页漂移）。
+
+**结构**（`_build_help_page()` 一次性生成，`Main.tscn` 零改动）：
+
+```
+HelpPage (Control, full rect, visible=false)
+├ HelpBg        ColorRect #E6F0FA（与 PAGE_BG_COLOR 同色）
+├ HelpHeader    ColorRect #2C3E50, h=56
+│  ├ Label "帮助中心" 20px 白字
+│  └ HelpBackBtn  _mkb("← 返回游戏") 132×36，锚右
+├ HelpTabBar    ColorRect 白色, y=56, h=48 + 底部 1px 分隔线
+│  └ HelpTabRow HBox ×3 HelpTab{0,1,2}（180×40，选中=白底 3px 蓝下划线 + 蓝字 17px）
+└ HelpScroll{0,1,2}  ScrollContainer y=116, 左右 24, 底 16（横向滚动禁用）
+   └ HelpBody{0,1,2}  VBoxContainer（separation 16）
+```
+
+**设计约束**：
+
+| 约束 | 原因 |
+|---|---|
+| 每个 Tab 一个独立 `ScrollContainer` | 切换只改 `visible`，三个 Tab 各自保留滚动位置，不会互相顶到顶部 |
+| 懒加载（`_help_filled`） | 开局不建 20+ 卡片；`_on_show_help()` / `_open_help_at_tab()` 首次进入才调 `_fill_help_tab()` |
+| `_set_help_tab()` 不调 `_fade_in_page()` | `verify_motion.gd:101` 断言切 Tab 不新建淡入补间 |
+| 方法名 `_on_help_show_cards/supp/rules` 保持不变 | `verify_motion.gd:99` 直接调用；内部改为 `_open_help_at_tab(1/2/0)` |
+| 卡片高度按内容自适应，行内两列由 `GridContainer` 拉平 | 不做固定高度，避免中文长句被裁 |
+| 图鉴 29 张迷你卡用 `GridContainer(columns=7)` | 1152 宽下每列约 148px，5 行；`size_flags_horizontal = EXPAND_FILL` 让卡宽随列宽自适应 |
+
+**文案与数据**：全部在 `scripts/HelpContent.gd`（`extends RefCounted`，纯静态数据，零 UI 依赖，
+与 `TutorialUI.gd` 同风格），行格式 `{"k", "t"}`：
+
+| k | 渲染 | 字色 / 字号 |
+|---|---|---|
+| `sub` | 卡内小标题 | `#2C3E50` / 15px |
+| `p` | 正文 | `#2B3340` / 14px |
+| `li` | 条目（自动加「· 」） | `#2B3340` / 14px，缩进 4 |
+| `ex` | 示例 / 化学式 | `#6B7280` / 13px，缩进 14 |
+| `warn` | 警示（自动加「⚠ 」） | `#C0392B` / 14px，缩进 4 |
+| `gap` | 8px 空白 | — |
+| `demo` | 一行迷你卡（图鉴「看三张典型牌」） | 96×124 |
+
+`get_element_cards()` / `get_total_cards()` / `get_element_copies(sym)` 从 `CardDatabase.get_element_data()`
+派生，**牌库数字只有一个来源**：29 种 / 182 张（卤族 ×10、H·O·S ×8、主族 ×6、副族 ×4）。
+旧文案里的「28 种 / 172 张」已修正，`verify_help_page` 断言文案中不再出现这两个数字。
+
+**图鉴符号色**：`_help_symbol_color(card)` 在原 `_get_card_color()` 之上做一次兜底 ——
+亮度 > 0.90（稀有气体的 `(0.95,0.95,0.95)`）统一 `darkened(0.5)`，
+否则白底卡面上的 He / Ne / Ar 几乎不可见。
+
 
 ### 手牌渲染
 
