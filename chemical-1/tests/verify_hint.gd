@@ -199,6 +199,22 @@ func _run() -> void:
 		"compound_valence_for(Na,Cl) = {Na:1, Cl:-1}")
 	_check(HintScript.compound_valence_for([_card("Fe")]).is_empty(), "单张牌给不出化合物化合价 → {}")
 
+	# 纯卤素手牌（F+Cl）：默认只能建议族炸 —— 化合物路径被「禁止卤族互化」拦掉
+	var gm_h = _gm_with_hand(["F", "Cl"])
+	var adv_h: Dictionary = HintScript.suggest(gm_h)
+	_check(int(adv_h.get("pattern", -1)) == CardPatternsScript.CardPattern.CLAN_BOMB,
+		"F+Cl 只建议族炸，不建议化合物（实际牌型 %d）" % int(adv_h.get("pattern", -1)))
+	_check_suggestion(gm_h, adv_h, "纯卤素 F+Cl")
+
+	# 族炸冷却 + 补充规则「允许卤族互化」打开 → 才建议 ClF 化合物
+	var gm_h2 = _gm_with_hand(["F", "Cl"])
+	gm_h2.get_current_player().clan_bomb_cooling = true
+	gm_h2.halogen_exchange_allowed = true
+	var adv_h2: Dictionary = HintScript.suggest(gm_h2)
+	_check(int(adv_h2.get("pattern", -1)) == CardPatternsScript.CardPattern.COMPOUND,
+		"开关打开+冷却：F+Cl 才建议化合物（实际牌型 %d）" % int(adv_h2.get("pattern", -1)))
+	_check_suggestion(gm_h2, adv_h2, "允许卤族互化 ClF")
+
 	await _run_ui()
 	_finish()
 

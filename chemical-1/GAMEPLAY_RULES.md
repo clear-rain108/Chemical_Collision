@@ -1,6 +1,6 @@
 # 化学碰撞 — 玩法规则与程序实现文档
 
-> **版本**: 16.2  
+> **版本**: 16.3  
 > **日期**: 2026-10-31  
 > **引擎**: Godot 4.x / GDScript
 
@@ -144,12 +144,18 @@ detect_pattern(cards, skip_clan_bomb=false) 判定优先级:
 
 ## 9. 化合物限制规则
 
-**卤族互化禁止**：F、Cl、Br、I 四种卤族元素之间不允许互相化合。
+**卤族互化禁止**（默认规则）：F、Cl、Br、I 四种卤族元素之间不允许互相**化合**。
 
-- F + Cl / F + Br / F + I → ❌ "卤族元素之间不可互相化合！"
+- F + Cl / F + Br / F + I → ❌ "卤族元素(F/Cl/Br/I)之间不可互相化合！"
 - Cl + Br / Cl + I / Br + I → ❌
 - Na + F → ✅ NaF（卤族 + 金属可以）
-- **AI 同样遵守此规则**（通过 `_is_ai_halogen_pair()` 跳过纯卤族对）
+- **判定点在引擎**：`GameManager.play_cards()` 只在 `pattern == COMPOUND` 时检查
+  （`is_halogen_mix()`，非法返回 `-7`）。人类「合成化合物」、AI、提示按钮三条路径共用
+  这一条规则，不再各写一份补丁（旧版的 `AIPlayer._is_ai_halogen_pair()` 只是局部补丁）
+- **不误伤族炸**：F + Cl 同属 VIIA 族，两张一起打出本身是**族炸**（不是化合），始终合法；
+  只有带化合价（`custom_valences`）走「化合物」时才会被拦
+- **可由补充规则放行**：开始页勾选「允许卤族互化」（`HalogenCheckBox`）后，
+  卤素之间可以组成化合物（如 ClF），见 §16.3
 
 ---
 
@@ -207,13 +213,15 @@ detect_pattern(cards, skip_clan_bomb=false) 判定优先级:
 
 游戏内 TutorialLabel 实时显示当前步骤引导和成功反馈（✓）。
 <br>第零关在 GamePage 上使用覆盖层（Overlay）实现 UI 标注和流程对话。
+<br>教程局一律禁止卤族互化（`init_tutorial()` 复位 `halogen_exchange_allowed = false`），
+不受开始页该开关影响。
 
 ---
 
 ## 13. 游戏流程
 
 ```
-Start Page → 选择模式（自由/第一关/第二关）→ 勾选「有机物胜利规则」/「顺序牌型规则」（两个独立开关）
+Start Page → 选择模式（自由/第一关/第二关）→ 勾选「有机物胜利规则」/「顺序牌型规则」/「允许卤族互化」（三个独立开关）
   ↓
 GameManager.init_game / init_tutorial
   ├── 172 张牌洗牌 → 每人发 8 张（或预设手牌）
@@ -237,7 +245,7 @@ GameManager.init_game / init_tutorial
 
 | 页面 | 功能 | 背景色 |
 |------|------|--------|
-| StartPage | 标题 + 人数/AI 数 + 补充规则开关 + 教学引导 + 补充规则入口（P6：子节点全部代码生成；人数与 AI 数联动，AI 最多 = 总人数 - 1） | 浅蓝白 |
+| StartPage | 标题 + 人数/AI 数 + 三个补充规则开关（有机物 / 顺序 / 允许卤族互化）+ 教学引导 + 补充规则入口（P6：子节点全部代码生成；人数与 AI 数联动，AI 最多 = 总人数 - 1） | 浅蓝白 |
 | HelpPage | 帮助中心（单页 + 3 Tab：游戏规则 / 卡牌图鉴 / 补充规则，代码生成）| 白色标题栏 + 浅蓝白内容 |
 | ~~HelpPage_Rules / _Cards / _Supp~~ | P6 已从 Main.tscn 删除，统一由 HelpPage 的 3 个 Tab 承载 | — |
 | GamePage | 游戏主界面（牌面+操作面板+桌面迷你卡牌+规则提示）| 浅蓝白 |
@@ -294,9 +302,9 @@ GameManager.init_game / init_tutorial
 | `scripts/GameManager.gd` | play_cards / 牌权轮转 / 接炸链 / 溢出化合物 / 接炸跳过摸牌 / 有机物胜利 / 顺序反转方向+指定牌型 / 记录桌面实际化合价 table_custom_valences |
 | `scripts/PlayerManager.gd` | 人数规划 / PlayerInfo / 发牌 / 手牌上限 |
 | `scripts/GameLogger.gd` | 信息记录（统一日志）|
-| `scripts/AIPlayer.gd` | AI 出牌策略（化合价取公式配平结果）|
+| `scripts/AIPlayer.gd` | AI 出牌策略（化合价：默认配平 + 一正一负兜底，卤族互化读开关）|
 | `scripts/TutorialUI.gd` | 教程内容与引导 |
-| `scripts/GameUI.gd` | 卡牌牌面渲染（桌面迷你卡牌按化学式顺序）/ 步骤流 / 卤族互化(玩家) / 教程显示 / 有机物按钮 / 顺序指定弹窗 |
+| `scripts/GameUI.gd` | 卡牌牌面渲染（桌面迷你卡牌按化学式顺序）/ 步骤流 / 卤族互化预检（真正规则在引擎，-7）/ 教程显示 / 有机物按钮 / 顺序指定弹窗 |
 | `scripts/CardData.gd` | 卡牌属性 + 序列化 + 族常量 |
 | `scripts/CardDatabase.gd` | 牌库生成（卤族10/高张数8/主族6/副族4）= 182 张 |
 | `Main.tscn` | 6 页场景布局（统一浅蓝白背景）|
@@ -308,15 +316,17 @@ GameManager.init_game / init_tutorial
 
 ## 16. 补充规则
 
-补充规则由开始页设置卡里的**两个独立开关**控制（互不影响）：
+补充规则由开始页设置卡里的**三个独立开关**控制（互不影响）：
 
 | 开关 | 节点名 | 开启后 |
 |------|--------|--------|
 | 有机物胜利规则 | `OrganicCheckBox` | 允许打出有机物，且打出即获胜 |
 | 顺序牌型规则 | `SequenceCheckBox` | 允许打出顺序牌，触发方向反转 + 指定牌型 |
+| 允许卤族互化 | `HalogenCheckBox` | 卤素之间可以组成化合物（默认禁止，见 §16.3） |
 
-两个开关的状态在开局时写入 `GameManager.organic_rules_enabled` / `sequence_rules_enabled`；
-任一开启，游戏页信息栏会显示"【补充规则】有机物胜利 + 顺序牌型"提示。
+三个开关的状态在开局时写入 `GameManager.organic_rules_enabled` / `sequence_rules_enabled` /
+`halogen_exchange_allowed`（`_init_game()` 从勾选框读入）；任一开启，游戏页信息栏会显示
+"【补充规则】有机物胜利 + 顺序牌型 + 允许卤族互化"，结算页「本局规则」也会给出 ✓/✗。
 
 ### 16.1 有机物胜利规则
 
@@ -389,6 +399,35 @@ GameManager.init_game / init_tutorial
 - UI 弹窗：`GameUI.gd` 中的 `_show_sequence_constraint_dialog()` 提供选择界面
 - 牌权轮转：`next_turn()` 和 `_get_next_index_in_direction()` 已支持方向切换
 
+### 16.3 允许卤族互化
+
+#### 定义
+
+「卤族互化」指 F、Cl、Br、I 之间互相组成化合物（如 ClF、BrCl）。默认是**硬规则禁止**，
+勾选本开关后放开，仅影响「化合物」牌型。
+
+#### 行为
+
+| 局面 | 默认（不勾选） | 勾选「允许卤族互化」 |
+|------|----------------|----------------------|
+| F + Cl 走「合成化合物」 | ❌ `play_cards()` 返回 `-7` | ✅ 可出 ClF（一氟化氯） |
+| F + Cl 走「作为族炸打出」 | ✅ 合法（族炸不是化合） | ✅ 合法（不受开关影响） |
+| Na + F / Ca + Cl | ✅ 合法 | ✅ 合法 |
+| AI 两元素化合物尝试 | 跳过纯卤族对 | 可合成 ClF（`AIPlayer._pair_valences()` 配价） |
+| 「提示」按钮 | 只建议族炸，不给 ClF | 可给出 ClF 化合物提示 |
+
+#### 实现
+
+- 状态变量：`GameManager.halogen_exchange_allowed`（默认 `false`，`get_halogen_exchange_allowed()` 只读访问）
+- 唯一判据：`GameManager.is_halogen_mix(cards)`（牌组中出现 ≥2 种卤素即命中），
+  `HintAdvisor._check()` / `AIPlayer` / `GameUI._is_halogen_only()` 全部对齐同一语义
+- 引擎拦截：`play_cards()` 在 `pattern == COMPOUND` 且开关关闭时返回 `-7`；
+  `GameUI._handle_result()` 显示"卤族元素(F/Cl/Br/I)之间不可互相化合！"
+- 人类预检：`GameUI._on_choose_compound()` 在进化合价面板之前挡一次，给出同样的文案（体验优化，不是判定点）
+- 提示层：`HintAdvisor._compound_candidates()` 在开关关闭时不生成纯卤素候选，`_check()` 二次兜底
+- 教程局：`init_tutorial()` 复位为 `false`（教程永远禁止卤族互化）
+- 回归：`tests/verify_halogen.gd`（引擎 / 提示 / AI / UI / 教程五层）
+
 ---
 
 ## 17. 结算页信息
@@ -402,7 +441,7 @@ GameManager.init_game / init_tutorial
 | 总回合 | 本局累计换手次数 | `GameManager.turn_count`（`next_turn()` 每次 +1，`init_game` / `init_tutorial` 归零） |
 | 剩余牌库 | 牌库剩余张数 | `get_database().get_remaining_count()` |
 | 剩余手牌 | 获胜者手牌数；无胜者时取玩家 1 | `PlayerInfo.hand.size()` |
-| 本局规则 | 有机物 ✓/✗、顺序 ✓/✗ | `get_organic_rules_enabled()` / `get_sequence_rules_enabled()` |
+| 本局规则 | 有机物 ✓/✗、顺序 ✓/✗、卤族互化 ✓/✗ | `get_organic_rules_enabled()` / `get_sequence_rules_enabled()` / `get_halogen_exchange_allowed()` |
 
 按钮去向随局面切换：
 
@@ -415,5 +454,5 @@ GameManager.init_game / init_tutorial
 
 ---
 
-**文档版本**: 16.2  
+**文档版本**: 16.3  
 **最后更新**: 2026-10-31

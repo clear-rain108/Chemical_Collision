@@ -63,7 +63,7 @@ chemical-1/
 │   ├── CardPatterns.gd                ← 牌型计算：detect_pattern/族炸/顺序/比大小
 │   ├── CompoundSolver.gd              ← 化合物形成：配平/IUPAC命名/有机物识别
 │   ├── GameManager.gd                 ← 规则引擎：play_cards/牌权/接炸/上限弃牌
-│   ├── AIPlayer.gd                    ← AI决策：出牌策略（族炸/化合物/双原子/单质/接顺序）
+│   ├── AIPlayer.gd                    ← AI决策：出牌策略（族炸/化合物/双原子/单质/接顺序；卤族互化读开关）
 │   ├── TutorialController.gd          ← 教程状态机：关卡初始化/预设手牌/进度检查
 │   ├── TutorialUI.gd                  ← 教程内容：引导文本/成功提示（静态）
 │   ├── HelpContent.gd                 ← 帮助中心内容：3 Tab 卡片数据（静态）
@@ -78,7 +78,8 @@ chemical-1/
 │   ├── verify_hand_reorder.gd         ← 手牌拖拽重排（手动排列 / 按序恢复 / 选中索引进→对象）
 │   ├── verify_motion.gd               ← 动效与排版：页面淡入 / 按钮缩放 / 卡牌字号
 │   ├── verify_help_page.gd            ← 帮助中心：结构 / Tab 懒加载 / 字号 / 牌库数字
-│   └── verify_end_page.gd             ← 结束页 / 教学页：结构画风 / 四态文案 / 按钮去向 / 统计数字
+│   ├── verify_end_page.gd             ← 结束页 / 教学页：结构画风 / 四态文案 / 按钮去向 / 统计数字
+│   └── verify_halogen.gd              ← 卤族互化：引擎 -7 / 族炸不误伤 / 提示 / AI / UI / 教程
 ├── CHEMICAL_COLLISION_GAME.md         ← 游戏设计文档
 ├── GAMEPLAY_RULES.md                  ← 玩法规则文档
 ├── ARCHITECTURE.md                    ← 本文档
@@ -233,6 +234,9 @@ PlayerManager.PlayerInfo
 | tutorial_step | 当前教程步骤 |
 | turn_count | 本局累计换手次数（`next_turn()` 每次推进 +1，`init_game` / `init_tutorial` 归零）；结束页「总回合」的唯一来源 |
 | compound_immune | 溢出化合物免疫族炸 |
+| organic_rules_enabled | 补充规则：有机物胜利（开始页 `OrganicCheckBox` 写入） |
+| sequence_rules_enabled | 补充规则：顺序牌型（开始页 `SequenceCheckBox` 写入） |
+| halogen_exchange_allowed | 补充规则：允许卤族互化（默认 `false`；只放开 COMPOUND，族炸始终合法） |
 | table_custom_valences | 桌面化合物实际化合价（play_cards 出牌时保存，渲染化学式/排序/化合价显示用）|
 | _get_hand_limit() | min(players×4, 18) |
 
@@ -242,6 +246,7 @@ PlayerManager.PlayerInfo
 init_game(total, ai) → bool
 play_cards(idx, cards, cv) → int
   ├─ detect_pattern → 族炸/非族炸判定
+  ├─ 化合物 + 开关关闭 + 含≥2种卤素 → -7（卤族互化，is_halogen_mix）
   ├─ 族炸: 冷却/免疫/接炸比较 → next_turn()（牌权移交）
   ├─ 化合物: 比例校验 → 保存 table_custom_valences → 溢出检查
   └─ 非族炸: 牌型匹配 → 比大小
@@ -278,7 +283,7 @@ _check_tutorial_progress(pattern, human) → 进度检查
 AIPlayer.auto_play(game_manager, ui_refresh)
   ├─ 第0关：仅出基础牌，AI 不抽牌
   ├─ 族炸链：冷却→跳过 / 否则出更大族炸
-  └─ 常规：族炸→化合物 O(n²)→双原子→单质→pass
+  └─ 常规：族炸→化合物 O(n²)（`halogen_exchange_allowed` 关闭时跳过纯卤素对）→双原子→单质→pass
 ```
 
 ### 7.4 TutorialController.gd（教程控制）
@@ -426,15 +431,16 @@ HelpPage (Control, full rect, visible=false)
 
 | 模块 | 职责 |
 |---|---|
-| `scripts/HintAdvisor.gd`（全 `static`，**只读**） | `suggest()` / `is_playable()` / `compound_valence_for()`；候选覆盖单质、双原子、族炸、顺序、有机物、2/3 元素化合物 |
+| `scripts/HintAdvisor.gd`（全 `static`，**只读**） | `suggest()` / `is_playable()` / `compound_valence_for()`；候选覆盖单质、双原子、族炸、顺序、有机物、2/3 元素化合物（卤族互化关闭时不生成纯卤素化合物候选） |
 | `GameUI._apply_hint()` | 把建议落到 `selected_indices` / `compound_selections` / `step_mode`，并 `_update_hand_buttons()` |
 | `GameUI._clear_hint()` | 清空 `_hint_text` 并 `hint_button.set_pressed_no_signal(false)` |
 | `_update_card_info_label()` | `_hint_text` 非空时优先显示；`_hint_owner` / `_hint_hand_size` 变化即作废回默认「可用牌型」 |
 
 **铁律**：`HintAdvisor._check()` 必须与 `GameManager.play_cards()` 的校验逐条一致，否则玩家照着提示点会得到
-「非法出牌」。最容易漏的一条是 **桌面是化合物时，有机物也会被判 `-4`（牌型不匹配）**，
-提示必须跟着过滤。`tests/verify_hint.gd` 对每条建议都用「全新 GameManager + 同样参数」再跑一次
-`play_cards` 做交叉验证（返回必须 ≥ 0）。
+「非法出牌」。最容易漏的两条是 **桌面是化合物时，有机物也会被判 `-4`（牌型不匹配）**，
+以及 **`pattern == COMPOUND` 且开关关闭时纯卤素组合返回 `-7`（卤族互化）**，提示必须跟着过滤。
+`tests/verify_hint.gd` 对每条建议都用「全新 GameManager + 同样参数」再跑一次
+`play_cards` 做交叉验证（返回必须 ≥ 0）；`tests/verify_halogen.gd` 专门锁死 F+Cl 只能建议族炸。
 
 作废时机：`_on_card_clicked`（玩家自己动牌）、`_on_back`、`_step_reset`（出牌后/新一局）、
 以及局面变化（换人 / 手牌数变化）。返回时 `selected_indices` 仍保留（原行为，方便换牌型重出）。
@@ -624,7 +630,8 @@ AIPlayer.auto_play(game_manager, ui_refresh):
   否则 → _try_play():
 	├─ 接顺序（仅桌面是顺序时出顺序，不主动出）
 	├─ 族炸尝试（同族≥2张）
-	├─ 化合物配对 O(n²)（跳过卤族互化对；化合价直接取公式配平结果，如 HCl 中 H=+1、Cl=-1）
+	├─ 化合物配对 O(n²)（`halogen_exchange_allowed` 关闭时跳过纯卤素对；化合价优先取公式配平结果，
+	│   失败时遍历常见价找一正一负兜底 → 卤族互化打开后可出 ClF）
 	├─ 双原子分子配对
 	├─ 单质单张
 	└─ 全部失败 → player_pass()（达上限时自动弃1张）

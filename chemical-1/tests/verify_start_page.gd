@@ -47,6 +47,7 @@ func _run() -> void:
 	_check(scene.start_button != null, "StartButton 绑定成功")
 	_check(scene._start_child("OrganicCheckBox") != null, "OrganicCheckBox 可取到")
 	_check(scene._start_child("SequenceCheckBox") != null, "SequenceCheckBox 可取到")
+	_check(scene._start_child("HalogenCheckBox") != null, "HalogenCheckBox 可取到")
 	_check(scene._start_child("SupplementaryHelpBtn") != null, "SupplementaryHelpBtn 可取到")
 	if scene.player_spin == null or scene.ai_spin == null:
 		_finish()
@@ -102,6 +103,8 @@ func _run() -> void:
 		_check(scene.game_manager.organic_rules_enabled, "有机物规则按开关生效")
 		_check(not scene.game_manager.get_sequence_rules_enabled(),
 			"只勾有机物时，顺序规则保持关闭（两条开关互不影响）")
+		_check(not scene.game_manager.get_halogen_exchange_allowed(),
+			"只勾有机物时，卤族互化保持禁止（默认值）")
 		_check(_count_ai(scene.game_manager) == 2,
 			"AI 人数按设置生效 = 2（实际 %d）" % _count_ai(scene.game_manager))
 
@@ -124,6 +127,29 @@ func _run() -> void:
 	_check(scene.game_manager != null and scene.game_manager.get_sequence_rules_enabled()
 			and not scene.game_manager.get_organic_rules_enabled(),
 		"只勾顺序时，顺序规则生效且有机物规则关闭")
+
+	# 第三局：卤族互化开关独立生效（默认禁止，勾选后放行）
+	scene._show_start_page()
+	await process_frame
+	seq_cb.button_pressed = false
+	var halogen_cb = scene._start_child("HalogenCheckBox")
+	_check(halogen_cb != null and halogen_cb.toggle_mode, "HalogenCheckBox 是 toggle 按钮")
+	if halogen_cb:
+		var hal_rect := Rect2(halogen_cb.position, halogen_cb.size)
+		var supp_node = scene._start_child("SupplementaryHelpBtn")
+		var supp_rect := Rect2(supp_node.position, supp_node.size)
+		_check(not hal_rect.intersects(supp_rect),
+			"卤族开关与「查看补充规则」不重叠 %s / %s" % [str(hal_rect), str(supp_rect)])
+		_check(hal_rect.end.x <= 580.0, "卤族开关在设置卡内（右边界 %.0f）" % hal_rect.end.x)
+		halogen_cb.button_pressed = true
+	await process_frame
+	scene._on_start_game()
+	await process_frame
+	_check(scene.game_manager != null and scene.game_manager.get_halogen_exchange_allowed(),
+		"卤族互化开关按设置生效（勾选后允许）")
+	_check(scene.game_manager != null and not scene.game_manager.get_organic_rules_enabled()
+			and not scene.game_manager.get_sequence_rules_enabled(),
+		"只勾卤族互化时，另两条规则保持关闭")
 
 	# ---------------- 5. 帮助页示例牌：化合价 vs 张数 ----------------
 	scene._open_help_at_tab(1)

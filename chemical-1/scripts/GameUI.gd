@@ -228,13 +228,16 @@ func _setup_pages() -> void:
 		if tut2: tut2.pressed.connect(_on_start_tutorial.bind(2))
 		if tut_back: tut_back.pressed.connect(_on_tutorial_back)
 
-	# 补充规则勾选框（两个独立勾选框）
+	# 补充规则勾选框（三个独立勾选框）
 	var organic_cb = _start_child("OrganicCheckBox")
 	if organic_cb:
 		organic_cb.toggled.connect(_on_organic_toggled)
 	var seq_cb = _start_child("SequenceCheckBox")
 	if seq_cb:
 		seq_cb.toggled.connect(_on_sequence_toggled)
+	var halogen_cb = _start_child("HalogenCheckBox")
+	if halogen_cb:
+		halogen_cb.toggled.connect(_on_halogen_toggled)
 
 	if end_page:
 		# 结束页子节点全在结算卡 EndCard 之内（P8）
@@ -758,8 +761,11 @@ func _start_page_settings() -> void:
 	card.add_child(organic)
 	var seq := _start_make_toggle("SequenceCheckBox", "顺序牌型规则", Vector2(318, 132))
 	card.add_child(seq)
+	var halogen := _start_make_toggle("HalogenCheckBox", "允许卤族互化", Vector2(32, 168))
+	halogen.tooltip_text = "F/Cl/Br/I 之间可以互相化合（如 ClF）。不勾选时仅族炸可用"
+	card.add_child(halogen)
 
-	var supp := _start_make_ghost("SupplementaryHelpBtn", "查看补充规则 >", Vector2(32, 168), Vector2(180, 30))
+	var supp := _start_make_ghost("SupplementaryHelpBtn", "查看补充规则 >", Vector2(318, 168), Vector2(240, 30))
 	card.add_child(supp)
 
 	# 勾选反馈写在这里：开始页看不到 GamePage 的 InfoLabel
@@ -1799,7 +1805,8 @@ func _fill_end_page(custom_text: String) -> void:
 		if game_manager:
 			var org := "有机物 ✓" if game_manager.get_organic_rules_enabled() else "有机物 ✗"
 			var seq := "顺序 ✓" if game_manager.get_sequence_rules_enabled() else "顺序 ✗"
-			_end_rule_note.text = "本局规则：%s    %s" % [org, seq]
+			var hal := "卤族互化 ✓" if game_manager.get_halogen_exchange_allowed() else "卤族互化 ✗"
+			_end_rule_note.text = "本局规则：%s    %s    %s" % [org, seq, hal]
 		else:
 			_end_rule_note.text = ""
 
@@ -1991,6 +1998,14 @@ func _on_sequence_toggled(pressed: bool) -> void:
 		_show_info_simple("已禁用顺序牌型规则")
 	_start_flash_rule_hint("已启用顺序牌型规则" if pressed else "已禁用顺序牌型规则")
 
+# 允许卤族互化（补充规则）：默认关闭 = 沿用硬规则「F/Cl/Br/I 之间不可化合」
+func _on_halogen_toggled(pressed: bool) -> void:
+	if pressed:
+		_show_info_simple("已允许卤族互化（F/Cl/Br/I 之间可互相化合）")
+	else:
+		_show_info_simple("已禁止卤族互化")
+	_start_flash_rule_hint("已允许卤族互化" if pressed else "已禁止卤族互化")
+
 # 总人数变化 → AI 上限跟着变（AI 至少给人类留 1 个座位）
 # 例：总人数 4 → AI 最多 3；把总人数改回 3 时 AI 会自动从 3 降到 2
 func _on_player_count_changed(value: float) -> void:
@@ -2065,13 +2080,16 @@ func _show_info_simple(text: String) -> void:
 
 func _init_game(total: int = 4, ai: int = 3) -> void:
 	game_manager = GameManagerScript.new()
-	# 读取开始页的补充规则勾选框状态（两个独立勾选框，嵌在 SettingsCard 内）
+	# 读取开始页的补充规则勾选框状态（三个独立勾选框，嵌在 SettingsCard 内）
 	var organic_cb = _start_child("OrganicCheckBox")
 	if organic_cb:
 		game_manager.organic_rules_enabled = organic_cb.button_pressed
 	var seq_cb_node = _start_child("SequenceCheckBox")
 	if seq_cb_node:
 		game_manager.sequence_rules_enabled = seq_cb_node.button_pressed
+	var halogen_cb_node = _start_child("HalogenCheckBox")
+	if halogen_cb_node:
+		game_manager.halogen_exchange_allowed = halogen_cb_node.button_pressed
 	var ok = game_manager.init_game(total, ai)
 	if not ok:
 		push_error("init_game failed with total=%d ai=%d, retrying defaults" % [total, ai])
@@ -2556,10 +2574,12 @@ func _format_player_status() -> String:
 	if not counts.is_empty():
 		result += "\n手牌: " + " | ".join(counts)
 	# 补充规则状态
-	if game_manager.get_organic_rules_enabled() or game_manager.get_sequence_rules_enabled():
+	if game_manager.get_organic_rules_enabled() or game_manager.get_sequence_rules_enabled() \
+			or game_manager.get_halogen_exchange_allowed():
 		var rules_list: Array = []
 		if game_manager.get_organic_rules_enabled(): rules_list.append("有机物胜利")
 		if game_manager.get_sequence_rules_enabled(): rules_list.append("顺序牌型")
+		if game_manager.get_halogen_exchange_allowed(): rules_list.append("允许卤族互化")
 		result += "\n【补充规则】" + " + ".join(rules_list)
 	if not game_manager.get_direction_clockwise():
 		result += "\n方向: ← 逆时针"
@@ -3852,8 +3872,10 @@ func _on_choose_compound() -> void:
 		_show_info("化合物至少需要两种不同元素！")
 		_on_back()
 		return
-	if _is_halogen_only(symbols):
-		_show_info("卤族元素(F/Cl/Br/I)之间不可互相化合！请加入金属或其他非金属元素。")
+	# 卤族互化：默认禁止（硬规则）；开始页勾选「允许卤族互化」后放行。
+	# 引擎侧 play_cards() 同样会拦（返回 -7），这里只是提前给出更友好的提示。
+	if not game_manager.get_halogen_exchange_allowed() and _is_halogen_only(symbols):
+		_show_info("卤族元素(F/Cl/Br/I)之间不可互相化合！请加入金属或其他非金属元素，或在开始页勾选『允许卤族互化』。")
 		_on_back()
 		return
 
@@ -4052,6 +4074,7 @@ func _handle_result(result: int) -> void:
 	elif result == -3: msg = "不能出族炸！"
 	elif result == -4: msg = "牌型不匹配！"
 	elif result == -6: msg = "不符合顺序指定的牌型约束！"
+	elif result == -7: msg = "卤族元素(F/Cl/Br/I)之间不可互相化合！（可在开始页勾选『允许卤族互化』）"
 	_show_info(msg)
 	_on_back()
 
@@ -4241,6 +4264,8 @@ func _ai_auto_play() -> void:
 # ============================================================
 # 十七、验证函数（卤族互化检查）
 # ============================================================
+# UI 侧预检（符号数组）：与引擎 GameManager.is_halogen_mix(cards) 判据一致。
+# 真正的规则判定在 play_cards()（返回 -7），这里只为「合成化合物」按钮提前挡住。
 func _is_halogen_only(symbols: Array) -> bool:
 	var halogen = ["F", "Cl", "Br", "I"]
 	for sym in symbols:

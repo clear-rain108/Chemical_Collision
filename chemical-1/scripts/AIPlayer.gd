@@ -47,17 +47,11 @@ static func _try_play_level0(game_manager, p, gm_idx: int) -> void:
 	for i in range(p.hand.size()):
 		for j in range(i + 1, p.hand.size()):
 			var pair = [p.hand[i], p.hand[j]]
-			if _is_ai_halogen_pair(pair):
+			# 卤族互化：默认禁止（与 play_cards 的 -7 一致），补充规则开启后放行
+			if not game_manager.halogen_exchange_allowed and _is_ai_halogen_pair(pair):
 				continue
-			var fi = CompoundSolverScript.get_compound_formula(pair)
-			if not fi.is_empty() and fi.get("ratio_ok", false):
-				# 化合价直接取公式中已配平的正/负价（如 HCl 中 H=+1、Cl=-1）
-				var cv: Dictionary = {}
-				for e in fi.get("pos_list", []):
-					cv[e.symbol] = e.ox_state
-				for e in fi.get("neg_list", []):
-					cv[e.symbol] = e.ox_state
-				if game_manager.play_cards(gm_idx, pair, cv) == 0: return
+			var cv: Dictionary = _pair_valences(pair)
+			if not cv.is_empty() and game_manager.play_cards(gm_idx, pair, cv) == 0: return
 
 	for i in range(p.hand.size()):
 		var c = p.hand[i]
@@ -113,17 +107,11 @@ static func _try_play(game_manager, p, gm_idx: int) -> void:
 	for i in range(p.hand.size()):
 		for j in range(i + 1, p.hand.size()):
 			var pair = [p.hand[i], p.hand[j]]
-			if _is_ai_halogen_pair(pair):
+			# 卤族互化：默认禁止（与 play_cards 的 -7 一致），补充规则开启后放行
+			if not game_manager.halogen_exchange_allowed and _is_ai_halogen_pair(pair):
 				continue
-			var fi = CompoundSolverScript.get_compound_formula(pair)
-			if not fi.is_empty() and fi.get("ratio_ok", false):
-				# 化合价直接取公式中已配平的正/负价（如 HCl 中 H=+1、Cl=-1）
-				var cv: Dictionary = {}
-				for e in fi.get("pos_list", []):
-					cv[e.symbol] = e.ox_state
-				for e in fi.get("neg_list", []):
-					cv[e.symbol] = e.ox_state
-				if game_manager.play_cards(gm_idx, pair, cv) == 0: return
+			var cv: Dictionary = _pair_valences(pair)
+			if not cv.is_empty() and game_manager.play_cards(gm_idx, pair, cv) == 0: return
 
 	for i in range(p.hand.size()):
 		var c = p.hand[i]
@@ -183,6 +171,32 @@ static func _group_by_group(hand: Array) -> Dictionary:
 	return r
 
 
+# 两元素化合物的化合价：优先用默认配平（金属/非金属自动分正负价）；
+# 默认配平失败时遍历常见价找一正一负，再用 get_compound_formula 复核比例。
+# 例：F(只有 -1) + Cl(可 +1) —— 卤族互化开关打开后才有机会走到这里。
+static func _pair_valences(pair: Array) -> Dictionary:
+	var fi = CompoundSolverScript.get_compound_formula(pair)
+	if not fi.is_empty() and fi.get("ratio_ok", false):
+		var cv: Dictionary = {}
+		for e in fi.get("pos_list", []):
+			cv[e.symbol] = e.ox_state
+		for e in fi.get("neg_list", []):
+			cv[e.symbol] = e.ox_state
+		return cv
+	var a = pair[0]
+	var b = pair[1]
+	for va in a.common_valence:
+		for vb in b.common_valence:
+			if (va > 0 and vb < 0) or (va < 0 and vb > 0):
+				var cv2: Dictionary = {a.symbol: va, b.symbol: vb}
+				var fi2 = CompoundSolverScript.get_compound_formula(pair, cv2)
+				if not fi2.is_empty() and fi2.get("ratio_ok", false):
+					return cv2
+	return {}
+
+
+# 纯卤族对（F+Cl / F+Br / Cl+Br …）——只用于「化合物」尝试路径。
+# 族炸（_group_by_group）不是化合，按规则始终合法，因此这里不参与族炸过滤。
 static func _is_ai_halogen_pair(pair: Array) -> bool:
 	var halogen = ["F", "Cl", "Br", "I"]
 	if pair[0].symbol != pair[1].symbol and pair[0].symbol in halogen and pair[1].symbol in halogen:

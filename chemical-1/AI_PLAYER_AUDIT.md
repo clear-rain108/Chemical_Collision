@@ -51,7 +51,7 @@ play_cards(player_index, cards, custom_valences) → int
 | 牌型匹配检查 | `play_cards()` 中 pattern match | 同样走 `play_cards()` | ✅ |
 | 比大小检查 | `play_cards()` 中 compare_cards | 同样走 `play_cards()` | ✅ |
 | 化合物比例校验 | `play_cards()` 中 ratio_ok | 同样走 `play_cards()` | ✅ |
-| **卤族互化检查** | `_on_choose_compound()` 中 `_is_halogen_only()` 拦截 | `AIPlayer._try_play()` 中 `_is_ai_halogen_pair()` 跳过 | ✅ |
+| **卤族互化检查** | `play_cards()`: `pattern==COMPOUND && !halogen_exchange_allowed && is_halogen_mix → -7`（`_on_choose_compound()` 另有预检，只为提前提示） | 同样走 `play_cards()`；AI 侧 `_is_ai_halogen_pair()` 只是少做无用尝试 | ✅ |
 | 单质牌型检测 | `_on_element()`: `detect_pattern == ELEMENT` | 内联在 `play_cards()` 中 | ✅ |
 | 族炸牌型检测 | `_on_clan_bomb()`: `detect_pattern == CLAN_BOMB` | 内联在 `play_cards()` 中 | ✅ |
 | 化合物化合价选择 | 玩家逐元素选择 → custom_valences | AI自动检测金属/非金属 → cv | 🔶 |
@@ -95,9 +95,17 @@ play_cards(player_index, cards, custom_valences) → int
 
 **建议修复**: 在 `player_pass()` 中增加通用的上限检查（对所有玩家生效），或在 AI 层增加检查。
 
-### 4.4 🟢 卤族互化检查 ✅ 已修复
+### 4.4 🟢 卤族互化检查 ✅ 已统一到引擎
 
-AI 现在通过 `AIPlayer._is_ai_halogen_pair()` 跳过纯卤族对（F+Cl, F+Br, Cl+Br），与玩家的 `_is_halogen_only()` 检查行为一致。
+旧实现是两处**局部补丁**（`GameUI._is_halogen_only()` + `AIPlayer._is_ai_halogen_pair()`），
+「提示」按钮和族炸路径都没被覆盖，导致 F+Cl 能以化合物形式打出。
+
+现在规则只写在一个地方：`GameManager.play_cards()` 在 `pattern == COMPOUND` 且
+`halogen_exchange_allowed == false` 时用 `is_halogen_mix(cards)` 判定并返回 `-7`。
+人类 / AI / 提示三条路径共用；F+Cl 作为**族炸**始终合法（B 方案）。
+开始页勾选「允许卤族互化」后放行，AI 也能通过 `_pair_valences()` 合成 ClF。
+
+回归：`tests/verify_halogen.gd`。
 
 ---
 
@@ -125,6 +133,7 @@ AI 现在通过 `AIPlayer._is_ai_halogen_pair()` 跳过纯卤族对（F+Cl, F+Br
 | 牌型匹配 | `table_pattern != pattern → return -4` | ✅ |
 | 比大小 | `compare_cards ≤ 0 → return -2` | ✅ |
 | 化合物比例 | `ratio_ok == false → return -1` | ✅ |
+| 卤族互化 | `pattern==COMPOUND && !halogen_exchange_allowed && is_halogen_mix → return -7` | ✅ |
 | 接炸抽牌 | `player_pass()` 中统一抽1张 | ✅ |
 | 接炸上限弃牌 | `player_pass()` 中统一抽1张 | 🔴 见 4.3 |
 
@@ -132,11 +141,11 @@ AI 现在通过 `AIPlayer._is_ai_halogen_pair()` 跳过纯卤族对（F+Cl, F+Br
 
 ## 7. 结论
 
-- **16 项检查中 14 项一致 (87.5%)**
+- **17 项检查中 15 项一致 (88.2%)**
 - **2 项差异可接受**: 化合价选择策略、双原子分子处理路径
 - **1 项需要关注**: AI 不触发上限弃牌（低优先级，AI 很少达上限）
 
 ---
 
-**文档版本**: 1.0  
-**最后更新**: 2026-07-11
+**文档版本**: 1.1  
+**最后更新**: 2026-10-31

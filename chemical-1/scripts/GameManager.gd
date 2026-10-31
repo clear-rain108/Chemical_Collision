@@ -1,7 +1,7 @@
 # ============================================================
 # GameManager.gd - 游戏规则引擎
 # 回合管理 / 出牌校验 / 族炸接炸链 / 上限弃牌
-# 补充规则：有机物立即胜利 / 顺序牌型（方向反转+指定牌型）
+# 补充规则：有机物立即胜利 / 顺序牌型（方向反转+指定牌型）/ 允许卤族互化
 # ============================================================
 
 const CardDatabaseScript = preload("res://scripts/CardDatabase.gd")
@@ -53,6 +53,9 @@ var clan_bomb_disabled: bool = false       # 禁用族炸（第一关）
 # ============================================================
 var organic_rules_enabled: bool = false        # 有机物规则开关
 var sequence_rules_enabled: bool = false       # 顺序规则开关
+# 允许卤族互化：默认 false（硬规则 —— F/Cl/Br/I 之间不可互相「化合」）。
+# 仅放开「化合物」牌型；同族族炸（F+Cl 当族炸打出）本来就不是化合，始终合法。
+var halogen_exchange_allowed: bool = false
 var direction_clockwise: bool = true           # 出牌方向（true=顺时针, false=逆时针）
 var sequence_constraint: int = -1              # 顺序指定牌型约束（-1=无约束）
 var sequence_constraint_active: bool = false   # 顺序约束是否激活
@@ -129,10 +132,11 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> bool:
 
 	phase = 1
 	logger.add_log("===== 游戏开始 =====")
-	if organic_rules_enabled or sequence_rules_enabled:
+	if organic_rules_enabled or sequence_rules_enabled or halogen_exchange_allowed:
 		var rules_list: Array = []
 		if organic_rules_enabled: rules_list.append("有机物胜利")
 		if sequence_rules_enabled: rules_list.append("顺序牌型")
+		if halogen_exchange_allowed: rules_list.append("允许卤族互化")
 		logger.add_log("【补充规则已启用】" + " + ".join(rules_list))
 	logger.add_log("当前回合: %s (自由出牌)" % players[current_player_index].player_name)
 	return true
@@ -179,6 +183,13 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 			pass
 		else:
 			return -1
+
+	# -------- 卤族互化（仅化合物；族炸不受限）--------
+	# 硬规则默认禁止：F/Cl/Br/I 之间不能互相「化合」（如 ClF）。
+	# 允许卤族互化（补充规则）打开后放行；同族族炸不是化合，始终合法。
+	if pattern == CardPatternsScript.CardPattern.COMPOUND and not halogen_exchange_allowed \
+			and is_halogen_mix(cards):
+		return -7
 
 	# -------- 第零关AI禁止出族炸 --------
 	if tutorial_level == 0 and tutorial_level0_phase >= 1 and player.is_ai and pattern == CardPatternsScript.CardPattern.CLAN_BOMB:
@@ -616,6 +627,7 @@ func init_tutorial(level: int) -> bool:
 	direction_clockwise = true
 	sequence_constraint = -1
 	sequence_constraint_active = false
+	halogen_exchange_allowed = false   # 教程局同样默认禁止卤族互化
 	logger.clear_logs()
 	tutorial_level0_phase = 0
 	ai_no_draw = false
@@ -798,6 +810,20 @@ func get_organic_rules_enabled() -> bool:
 
 func get_sequence_rules_enabled() -> bool:
 	return sequence_rules_enabled
+
+func get_halogen_exchange_allowed() -> bool:
+	return halogen_exchange_allowed
+
+# 牌组是否含 ≥2 种卤素（F/Cl/Br/I）——「卤族互化」的唯一判据。
+# HintAdvisor / AIPlayer / GameUI 全部复用本函数，避免多处拷贝判据走样。
+func is_halogen_mix(cards: Array) -> bool:
+	var seen: Array = []
+	for c in cards:
+		if c.symbol in CardDatabaseScript.HALOGEN_SYMBOLS and c.symbol not in seen:
+			seen.append(c.symbol)
+			if seen.size() >= 2:
+				return true
+	return false
 
 func get_direction_clockwise() -> bool:
 	return direction_clockwise

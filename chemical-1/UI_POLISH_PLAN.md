@@ -277,11 +277,11 @@ R4 容错带内外与横向越界），既有 `_test_case()` / `_test_hover_debo
 
 ## 5. 验证基线
 
-17 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
+18 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
 
 ```bat
 set GD=D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe
-for %f in (hand_layout hand_runtime hand_reorder integration constraint logger organic refactor sequence sequence_table tutorial ai_discard motion help_page hint start_page end_page) do (
+for %f in (hand_layout hand_runtime hand_reorder integration constraint logger organic refactor sequence sequence_table tutorial ai_discard motion help_page hint start_page end_page halogen) do (
   %GD% --path . --headless --script res://tests/verify_%f.gd
 )
 ```
@@ -292,8 +292,9 @@ for %f in (hand_layout hand_runtime hand_reorder integration constraint logger o
 | `verify_hand_reorder` | **手牌拖拽重排 P7**（自动排列回归锁 / move_card 边界 / 拖拽落库 / 按钮 card meta 对应 / 手动模式不打回按序 / 抽牌追加末尾 / 选中索引跟随对象 / 拖出区外取消 / 插入槽判定 / 顺序签名 / 按序恢复 / 补发 pressed 被吞 / 18 张布局）（44 条） |
 | `verify_motion` | **页面淡入**（同色底 / 目标页 modulate / visible 同步 / 中途切换）/ **按钮缩放**（pivot、1.05、0.96、禁用不缩放、单补间、悬停发光）/ **结束页入场**（子节点淡入 / 上浮基准不累积）/ **卡牌字号**（28 / 14，紧凑 21 / 12，互不重叠）（53 条） |
 | `verify_hand_runtime` | 真实手牌渲染与点击流程 |
-| `verify_hint` | 提示引擎与「提示」按钮（建议合法性交叉验证） |
-| `verify_start_page` | 开始页人数/AI 联动、规则开关、补充规则入口 |
+| `verify_hint` | 提示引擎与「提示」按钮（建议合法性交叉验证；F+Cl 只建议族炸） |
+| `verify_halogen` | **卤族互化 P9**（引擎 -7 / F+Cl 族炸不误伤 / 提示不给 ClF / AI 读开关 / UI 预检 / 教程默认禁止） |
+| `verify_start_page` | 开始页人数/AI 联动、三个规则开关、补充规则入口 |
 | `verify_end_page` | **结束页 / 教学页 P8**（同套装饰零件 / 结算卡圆角与阴影 / 按钮三件套 / 四态标题与状态条配色 / 三统计块取数 / 按钮文案与去向 / 教学页整卡按钮 / turn_count 归零与自增 / 重复展示不重播动画）（105 条） |
 | `verify_integration` | 端到端对局 |
 | `verify_constraint` | 化合价与牌型约束 |
@@ -524,7 +525,7 @@ GameUI 侧（`_on_hint_toggled` 重写）：
 |---|---|---|
 | 帮助页「看三张典型牌」第 4 行显示 `×6 / ×8 / ×10`，与同卡文案「其下依次是中文名、常见化合价」矛盾 | `_make_help_mini_card()` 原本只服务 29 种元素网格（那里确实该显示牌库张数），被示例行复用后语义串了 | 加 `show_valence` 参数：示例行传 `true` → `_help_valence_text()`（`+1 / -2 / -1 +1…`，最多 2 个价态 + 「…」防溢出 96px 卡宽）；网格保持 `×N` |
 | 开始页「查看补充规则 >」点了没反应 | `SupplementaryHelpBtn` 嵌在 `SettingsCard` 内，`start_page.get_node_or_null()` 取不到 → 信号根本没连上 | 统一改 `_start_child()`（`find_child(name, true, false)`）递归查找 |
-| 人数怎么填都能开局，且永远 3 AI / 1 人类 | 同源：`player_spin` / `ai_spin` 为 `null` → `_on_start_game()` 走兜底 `4 / 3`；`OrganicCheckBox` / `SequenceCheckBox` 同样为 `null`，两条补充规则开关也一起失效 | 同一个 `_start_child()` 修复；另加 **`1 ≤ AI ≤ 总人数 - 1`** 联动：`_on_player_count_changed()` 压 `ai_spin.max_value` 并用 `StartRuleHint` 告知，`_on_start_game()` 再对上下限各 clamp 一次兜底（AI=0 时其余座位是没人操作的人类，会直接卡死，故下限 1） |
+| 人数怎么填都能开局，且永远 3 AI / 1 人类 | 同源：`player_spin` / `ai_spin` 为 `null` → `_on_start_game()` 走兜底 `4 / 3`；`OrganicCheckBox` / `SequenceCheckBox`（P9 起再加 `HalogenCheckBox`）同样为 `null`，三条补充规则开关也一起失效 | 同一个 `_start_child()` 修复；另加 **`1 ≤ AI ≤ 总人数 - 1`** 联动：`_on_player_count_changed()` 压 `ai_spin.max_value` 并用 `StartRuleHint` 告知，`_on_start_game()` 再对上下限各 clamp 一次兜底（AI=0 时其余座位是没人操作的人类，会直接卡死，故下限 1） |
 
 附带修复：`_start_flash_rule_hint()` 里的 `get_meta("tween", null)` 在 Godot 中等同单参数调用，
 meta 不存在时会刷 `ERROR`；改为 `has_meta()` 判定，并给 `StartRuleHint` 加颜色参数。
@@ -599,3 +600,26 @@ meta 不存在时会刷 `ERROR`；改为 `has_meta()` 判定，并给 `StartRule
 **验收**：17 个测试套件全绿（新增 `verify_end_page` 105 条；`verify_motion` 44 → 53 条）；
 真实窗口 `--quit-after 240` 无 ERROR / WARNING；开始页 / 教学页 / 胜利结算 / 教程局退出 4 张截图逐一核对，
 三页的渐变带走向、水印位置、卡片圆角与阴影、按钮高度均一致。
+
+---
+
+### 8.6 P9 卤族互化统一到引擎（B 方案）
+
+**问题**：禁止卤族互化只在「合成化合物」按钮里拦（`GameUI._is_halogen_only()`），
+「提示」按钮（`HintAdvisor`）与 AI 的两元素化合物路径都能打出 ClF（F 只有 −1 价、Cl 含 +1 价）。
+
+**方案（B）：只拦化合物，族炸始终合法**
+
+| 位置 | 改动 |
+|---|---|
+| `GameManager` | 新增 `halogen_exchange_allowed`（默认 false）+ `is_halogen_mix(cards)`；`play_cards()` 在 `pattern == COMPOUND` 时返回 `-7`；`init_tutorial()` 复位 |
+| `GameUI` | `_handle_result()` 显示 `-7` 文案；`_on_choose_compound()` 改成读开关；开始页新增 `HalogenCheckBox`「允许卤族互化」（`(32,168)` 宽 270），`SupplementaryHelpBtn` 移到 `(318,168)` 宽 240；信息栏与结算页「本局规则」同步 |
+| `AIPlayer` | 两元素化合物循环读开关；`_pair_valences()` 增加「遍历常见价找一正一负」兜底，开关打开后可合成 ClF |
+| `HintAdvisor` | `_compound_candidates()` 跳过纯卤素候选，`_check()` 加同一判定；族炸候选保留 |
+| `HelpContent` | 补充规则 Tab 新增「允许卤族互化」卡；「卤族特例」卡补「族炸不受限 / 可开关放行」 |
+
+**为什么不能挂在「含两种卤素」上**：`detect_pattern([F,Cl])` 默认走族炸，
+只有带 `cv`（`skip_bomb`）时才成 COMPOUND —— 判定必须依赖 `pattern == COMPOUND`，否则会误伤族炸。
+
+**验收**：18 个测试套件全绿（新增 `verify_halogen`；`verify_hint` / `verify_start_page` /
+`verify_help_page` / `verify_tutorial` 各加断言）。

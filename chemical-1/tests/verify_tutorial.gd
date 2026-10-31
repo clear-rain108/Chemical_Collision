@@ -13,6 +13,7 @@ func _init():
 	assert(gm.tutorial_step == 1, "tutorial_step 应同步为1")
 	assert(gm.clan_bomb_disabled == true, "关卡1应禁止族炸")
 	assert(gm.tutorial_controller != null, "教程控制器应已创建")
+	assert(gm.halogen_exchange_allowed == false, "教程局默认禁止卤族互化")
 
 	# 2. 教程关卡2
 	gm = GameManagerScript.new()

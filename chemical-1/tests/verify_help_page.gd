@@ -1,6 +1,6 @@
 # 验证帮助中心（P5）：单页 + 3 Tab + 滚动容器 + 卡片
 #   1) 结构：HelpPage 代码生成 / 标题栏 / Tab 栏 / 3×ScrollContainer / 返回按钮
-#   2) 懒加载：切到才构建 —— Tab0 9 卡 2 列 / Tab1 29 迷你卡 7 列 / Tab2 4 卡
+#   2) 懒加载：切到才构建 —— Tab0 9 卡 2 列 / Tab1 29 迷你卡 7 列 / Tab2 5 卡
 #   3) 规范：无 11px 以下文字、无空格对齐、卡片标题 17 / 正文 14、选中 Tab 有下划线
 #   4) 数据：29 种元素 / 182 张（不再出现 28 种 / 172 张）
 #   5) 旧 3 页已从 Main.tscn 删除（P6 清理，不留备份节点）
@@ -136,18 +136,22 @@ func _run() -> void:
 	_check(scene.help_scrolls[2].visible, "切到 Tab2 可见")
 	var g2: Array = []
 	_collect(scene.help_bodies[2], "GridContainer", g2)
-	_check(g2.size() == 1 and g2[0].get_child_count() == 4,
-		"Tab2 共 4 张卡 (实际 %d)" % (g2[0].get_child_count() if g2.size() == 1 else -1))
+	_check(g2.size() == 1 and g2[0].get_child_count() == 5,
+		"Tab2 共 5 张卡 (实际 %d)" % (g2[0].get_child_count() if g2.size() == 1 else -1))
 
 	# 补充规则文案必须指向开始页真实存在的开关名（曾写成不存在的「规则补充」复选框）
 	var supp_text := ""
 	for card in HelpContentScript.get_supp_cards():
+		supp_text += str(card.get("title", "")) + "|"
 		for line in card.get("lines", []):
 			supp_text += str(line.get("t", "")) + "|"
 	_check(supp_text.find("规则补充") == -1, "补充规则文案不再引用不存在的「规则补充」复选框")
 	_check(supp_text.find("有机物胜利规则") >= 0 and supp_text.find("顺序牌型规则") >= 0,
 		"补充规则文案指向开始页真实开关「有机物胜利规则」/「顺序牌型规则」")
 	_check(supp_text.find("桌面清空") == -1, "顺序牌型不再写成「桌面清空」（实际是抢走牌权、不比大小）")
+	# 第三条补充规则：允许卤族互化（开关名必须与开始页一致）
+	_check(supp_text.find("允许卤族互化") >= 0, "补充规则含「允许卤族互化」开关说明")
+	_check(supp_text.find("ClF") >= 0, "允许卤族互化给出 ClF 示例")
 
 	scene._on_help_show_rules()
 	await process_frame

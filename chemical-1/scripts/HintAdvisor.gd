@@ -25,6 +25,7 @@ extends RefCounted
 
 const CardPatternsScript = preload("res://scripts/CardPatterns.gd")
 const CompoundSolverScript = preload("res://scripts/CompoundSolver.gd")
+const CardDatabaseScript = preload("res://scripts/CardDatabase.gd")
 
 const P_ELEMENT := CardPatternsScript.CardPattern.ELEMENT
 const P_COMPOUND := CardPatternsScript.CardPattern.COMPOUND
@@ -181,7 +182,8 @@ static func _candidates(gm, cp) -> Array:
 	out.append_array(_organic_candidates(by_sym, cp))
 
 	# 6) 化合物：2 元素按 gcd 配平，3 元素每种 1 张且总电荷为 0
-	out.append_array(_compound_candidates(by_sym, cp))
+	#    （卤族互化关闭时，纯卤素组合在 _compound_candidates 里直接跳过）
+	out.append_array(_compound_candidates(gm, by_sym, cp))
 	return out
 
 
@@ -236,7 +238,7 @@ static func _organic_candidates(by_sym: Dictionary, cp) -> Array:
 	return out
 
 
-static func _compound_candidates(by_sym: Dictionary, cp) -> Array:
+static func _compound_candidates(gm, by_sym: Dictionary, cp) -> Array:
 	var out: Array = []
 	var syms: Array = by_sym.keys()
 	# ---- 2 元素：a×na + b×nb，na/nb 由 gcd 给出（与 _on_confirm_compound 完全一致）----
@@ -244,6 +246,9 @@ static func _compound_candidates(by_sym: Dictionary, cp) -> Array:
 		for y in range(x + 1, syms.size()):
 			var sa: String = syms[x]
 			var sb: String = syms[y]
+			# 卤族互化关闭时：两种卤素之间不可化合（play_cards 会返回 -7，这里提前跳过）
+			if not gm.halogen_exchange_allowed and _is_halogen_sym(sa) and _is_halogen_sym(sb):
+				continue
 			var ca = cp.hand[by_sym[sa][0]]
 			var cb = cp.hand[by_sym[sb][0]]
 			for va in ca.common_valence:
@@ -269,6 +274,14 @@ static func _compound_candidates(by_sym: Dictionary, cp) -> Array:
 				var s1: String = syms[x]
 				var s2: String = syms[y]
 				var s3: String = syms[z]
+				# 卤族互化关闭时：含 ≥2 种卤素的多元素化合物同样不可出（对齐 play_cards）
+				if not gm.halogen_exchange_allowed:
+					var hal_count := 0
+					for s in [s1, s2, s3]:
+						if _is_halogen_sym(s):
+							hal_count += 1
+					if hal_count >= 2:
+						continue
 				var c1 = cp.hand[by_sym[s1][0]]
 				var c2 = cp.hand[by_sym[s2][0]]
 				var c3 = cp.hand[by_sym[s3][0]]
@@ -280,6 +293,11 @@ static func _compound_candidates(by_sym: Dictionary, cp) -> Array:
 								continue
 							out.append(_mk(idxs3, P_COMPOUND, {s1: v1, s2: v2, s3: v3}, false))
 	return out
+
+
+# 是否为卤族元素（F / Cl / Br / I）
+static func _is_halogen_sym(sym: String) -> bool:
+	return sym in CardDatabaseScript.HALOGEN_SYMBOLS
 
 
 # ============================================================
@@ -305,6 +323,10 @@ static func _check(gm, cards: Array, cv: Dictionary, intended: int) -> bool:
 			and pattern == P_ORGANIC and intended == P_COMPOUND
 		if not organic_as_compound:
 			return false
+
+	# --- play_cards: 卤族互化（仅化合物；族炸不受限） ---
+	if pattern == P_COMPOUND and not gm.halogen_exchange_allowed and gm.is_halogen_mix(cards):
+		return false
 
 	# --- play_cards: 第零关 AI 禁出族炸（提示只服务人类玩家，保留同条件） ---
 	if gm.tutorial_level == 0 and gm.tutorial_level0_phase >= 1 and cp.is_ai and pattern == P_CLAN:
