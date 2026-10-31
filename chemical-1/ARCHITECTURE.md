@@ -298,10 +298,10 @@ AIPlayer.auto_play(game_manager, ui_refresh)
 
 | 页面节点 | 说明 |
 |----------|------|
-| StartPage | 开始页（模式选择+教学引导入口） |
+| StartPage | 开始页（P6：**全部子节点代码生成** + 渐变带/水印/装饰牌/错峰淡入） |
 | TutorialPage | 教学引导页（关卡选择） |
 | HelpPage | 帮助中心（P5：单页 + 3 Tab + 滚动 + 卡片，**全部代码生成**） |
-| HelpPage_Rules / _Cards / _Supp | 旧帮助页，仍在 Main.tscn 但 `visible=false`；代码已不引用，仅作文案校对备份 |
+| ~~HelpPage_Rules / _Cards / _Supp~~ | P6 已从 Main.tscn 整段删除（P5 的文案校对备份完成使命） |
 | GamePage | 游戏主界面（牌面+操作） |
 | EndPage | 结束页 |
 
@@ -366,6 +366,35 @@ HelpPage (Control, full rect, visible=false)
 **图鉴符号色**：`_help_symbol_color(card)` 在原 `_get_card_color()` 之上做一次兜底 ——
 亮度 > 0.90（稀有气体的 `(0.95,0.95,0.95)`）统一 `darkened(0.5)`，
 否则白底卡面上的 He / Ne / Ar 几乎不可见。
+
+
+### 提示按钮（P6：自动选最优组合 + 解释）
+
+`HintButton` 是 `toggle_mode` 按钮，但点下去**不再只是显示一句话**，而是直接把一组「现在就能打出去」的牌选好：
+
+```
+点击 → HintAdvisor.suggest(game_manager)
+     → {indices, pattern, valence, organic, label, text}
+     → selected_indices = indices
+     → 化合物：compound_selections = valence，step_mode = 2（面板直接是「确认打出」）
+       其余：step_mode = 1（面板是「作为单质 / 合成化合物 / 族炸 / 顺序打出」）
+     → _hint_text 写进 CardInfoLabel
+```
+
+| 模块 | 职责 |
+|---|---|
+| `scripts/HintAdvisor.gd`（全 `static`，**只读**） | `suggest()` / `is_playable()` / `compound_valence_for()`；候选覆盖单质、双原子、族炸、顺序、有机物、2/3 元素化合物 |
+| `GameUI._apply_hint()` | 把建议落到 `selected_indices` / `compound_selections` / `step_mode`，并 `_update_hand_buttons()` |
+| `GameUI._clear_hint()` | 清空 `_hint_text` 并 `hint_button.set_pressed_no_signal(false)` |
+| `_update_card_info_label()` | `_hint_text` 非空时优先显示；`_hint_owner` / `_hint_hand_size` 变化即作废回默认「可用牌型」 |
+
+**铁律**：`HintAdvisor._check()` 必须与 `GameManager.play_cards()` 的校验逐条一致，否则玩家照着提示点会得到
+「非法出牌」。最容易漏的一条是 **桌面是化合物时，有机物也会被判 `-4`（牌型不匹配）**，
+提示必须跟着过滤。`tests/verify_hint.gd` 对每条建议都用「全新 GameManager + 同样参数」再跑一次
+`play_cards` 做交叉验证（返回必须 ≥ 0）。
+
+作废时机：`_on_card_clicked`（玩家自己动牌）、`_on_back`、`_step_reset`（出牌后/新一局）、
+以及局面变化（换人 / 手牌数变化）。返回时 `selected_indices` 仍保留（原行为，方便换牌型重出）。
 
 
 ### 手牌渲染
@@ -533,10 +562,8 @@ AIPlayer.auto_play(game_manager, ui_refresh):
 
 ```
 Main (Control) ← GameUI.gd
-├── StartPage          ← 标题 + SpinBox + 开始游戏 + 退出 + [教学引导]
+├── StartPage          ← 空容器；子节点全部由 _build_start_page() 生成（P6）
 ├── TutorialPage       ← 教学引导页：关卡1/关卡2 + 返回
-├── HelpPage_Rules     ← 规则介绍（4栏）
-├── HelpPage_Cards     ← 卡牌图鉴（4栏）
 ├── GamePage           ← 游戏主界面
 │   ├── GameBackground ← Color(0.78,0.88,0.98)
 │   ├── TitleLabel / InfoLabel / TableLabel / DeckCountLabel
@@ -545,6 +572,11 @@ Main (Control) ← GameUI.gd
 │   └── HintButton / HelpBtn / QuitButton
 └── EndPage
 ```
+
+> P6 后 `Main.tscn` 只剩 373 行：`StartPage` 是空容器，`HelpPage` 由 `_build_help_page()` 生成，
+> 旧 `HelpPage_Rules / _Cards / _Supp`（589 行）已删除。开始页生成的节点名与旧场景逐一对应
+> （`StartButton` / `PlayerCountSpin` / `AiCountSpin` / `OrganicCheckBox` / `SequenceCheckBox` /
+> `TutorialBtn` / `ExitButton` / `SupplementaryHelpBtn`），所以 `_setup_pages()` 的绑定代码不用改。
 
 ---
 

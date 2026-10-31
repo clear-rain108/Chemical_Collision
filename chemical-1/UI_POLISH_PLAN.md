@@ -1,7 +1,7 @@
 # UI 视觉打磨推进计划
 
-> **最后更新**: 2026-10-30  
-> **当前状态**: P1 / P1.x / P2 / P3 / P5 完成（P5：帮助中心 3 页合并为单页 3 Tab + 卡片）  
+> **最后更新**: 2026-10-31  
+> **当前状态**: P1 / P1.x / P2 / P3 / P5 / P6 完成（P6：提示按钮自动选牌 + 开始页代码生成 + 旧帮助页清理）  
 > **相关文档**: [ARCHITECTURE.md](./ARCHITECTURE.md) 第 8 节「表现层 - GameUI.gd」
 
 ---
@@ -16,7 +16,8 @@
 | **P2.x** | 手牌悬停切换流畅化（4 个根因） | ✅ 完成（2026-10-24） |
 | **P3** | 动效与排版：页面淡入 / 按钮缩放发光 / 卡牌字号 | ✅ 完成（2026-10-30，见 §4.1） |
 | **P5** | 帮助中心重构：3 个独立页合并为单页 3 Tab + 滚动 + 卡片（Plan B 新手向） | ✅ 完成（2026-10-30，见 §7） |
-| P4 / P5 / P7 | 美术升级方向文档的其余条目（卡牌重绘 / 字体 / 图标 / 音频） | ⏳ 未展开（核对结果见 §6） |
+| **P6** | 提示按钮「自动选最优组合 + 解释」/ 开始页全部代码生成 / 旧帮助页节点清理 | ✅ 完成（2026-10-31，见 §8） |
+| P4 / P7 | 美术升级方向文档的其余条目（卡牌重绘 / 字体 / 图标 / 音频） | ⏳ 未展开（核对结果见 §6） |
 
 ---
 
@@ -389,9 +390,92 @@ for %f in (hand_layout hand_runtime integration constraint logger organic refact
 
 **刻意不做**：
 
-- 不改 `Main.tscn`（旧 3 页原样保留，`visible=false`，作为文案校对备份；确认无需回查后可整段删除）
+- ~~不改 `Main.tscn`（旧 3 页原样保留，`visible=false`，作为文案校对备份；确认无需回查后可整段删除）~~
+  → P6 已按该注记整段删除（见 §8）
 - 不引入切 Tab 动画（避免与 `verify_motion` 的"切 Tab 不淡入"断言冲突）
 - 不给图鉴迷你卡加 hover / 点击交互（图鉴是查阅用的静态页）
 
 **验收**：13 个测试套件全绿（新增 `verify_help_page` 57 条）；真实窗口 `--quit-after 240` 无 ERROR/WARNING；
+
+---
+
+## 8. P6 完成清单（提示按钮 / 开始页代码生成 / 旧帮助页清理）
+
+**背景**：`HintButton` 原来是 `toggle_mode` 开关，`_on_hint_toggled()` 只是把
+`CardInfoLabel` 换成 `GameManager.get_available_patterns()` 的一句摘要 —— 玩家看完仍要自己
+从 8 张手牌里挑牌、再逐级点「出牌(选牌型) → 合成化合物 → 选化合价 → 确认打出」。
+新手在第 4 步之前就放弃。同时 `Main.tscn` 里还留着 P5 废弃的 3 个帮助页节点（589 行死数据），
+开始页的 11 个静态子节点也不支持任何装饰/动效。
+
+### 8.1 提示按钮（方案 C：自动选牌 + 解释）
+
+新增 `scripts/HintAdvisor.gd`（约 440 行，全 `static`、**只读**，不碰任何玩家/牌状态）：
+
+| 对外接口 | 说明 |
+|---|---|
+| `suggest(gm) -> Dictionary` | 返回 `{indices, pattern, valence, organic, label, text}`；无解返回 `{}` |
+| `is_playable(gm, indices) -> bool` | 一组手牌下标此刻能否打出（与 `suggest` 共用 `_check`） |
+| `compound_valence_for(cards) -> Dictionary` | 给 UI 面板用的 `{symbol: ±价}`（2 元素一正一负 / 3+ 元素总电荷 0） |
+
+候选覆盖：单张单质 / 双原子单质 / 族炸（整族 + 每种少一张的变体）/ 顺序（仅规则开启时）/
+有机物（CH4、C2H6、C3H8、一卤代、含氧 5 种模板）/ 化合物（2 元素按 gcd 配平、3 元素每种 1 张且电荷为 0）。
+评分：能赢 1000 > 有机物 900 > 族炸 400 > 化合物 300 > 单质 100 > 顺序 50，同档张数多者优先。
+
+**`_check()` 逐条对齐 `GameManager.play_cards()`**（这是本方案成立的前提，注释里逐段标注了对应行）：
+
+| play_cards 的检查 | `_check` 的对应实现 |
+|---|---|
+| `skip_bomb = cv.size()>=2 or cv.has("_organic")` | 同式推导，再 `detect_pattern(cards, skip_bomb, prefer_sequence)` |
+| `intended_pattern` 与检测结果必须一致（有机物可当化合物） | 同条件放行 `organic_rules_enabled and pattern==ORGANIC and intended==COMPOUND` |
+| 顺序指定牌型约束（起始者/桌面玩家豁免） | 同条件（含「指定化合物时有机物也算」） |
+| 桌面单质只能接单质、桌面化合物只能接化合物、接炸链只能出族炸 | 同条件 |
+| 比大小 `compare_cards(...) <= 0 → -2` | 同条件（桌面是顺序时跳过比较） |
+| 化合物 `ratio_ok` 校验 | 同条件（`get_compound_formula` 的 `ratio_ok`） |
+
+> 关键坑：`table_pattern == COMPOUND` 时 `pattern != COMPOUND` 会被 `play_cards` 判 `-4`，
+> 有机物（`ORGANIC`）同样被拒 —— 提示必须照样过滤，否则玩家照着点会「非法出牌」。
+
+GameUI 侧（`_on_hint_toggled` 重写）：
+
+1. 点一下 → `suggest()` → 自动写 `selected_indices`，化合物再把 `compound_selections` 填好
+2. `step_mode` 直接推到能出牌的那一步（化合物 = 2「确认打出」，其余 = 1「选牌型」）
+3. `_hint_text` 存进信息栏，`_update_card_info_label()` 优先显示它（`_hint_owner` / `_hint_hand_size` 变化即作废）
+4. 动牌（`_on_card_clicked`）/ 返回（`_on_back`）/ 出牌后（`_step_reset`）自动 `_clear_hint()`
+   并把 `hint_button` 复位（`set_pressed_no_signal(false)`，否则下次点击会先触发「取消」）
+5. 无解时给「建议跳过 / 弃牌」而不是沉默
+
+### 8.2 开始页改为代码生成 + 装饰美术
+
+- `Main.tscn` 的 `StartPage` 只剩空容器（删除 173 行静态子节点），全部由 `_build_start_page()` 生成，
+  **节点名与旧场景完全一致**（`StartButton` / `PlayerCountSpin` / `AiCountSpin` / `OrganicCheckBox` /
+  `SequenceCheckBox` / `TutorialBtn` / `ExitButton` / `SupplementaryHelpBtn`），因此
+  `_setup_pages()` / `_init_game()` / `_on_start_game()` 零改动
+- 美术全部程序化，不依赖图片：45° `GradientTexture2D` 渐变带、5 处元素水印（H2O/CO2/NaCl/CH4/O2）、
+  5 张倾斜装饰牌（真实元素配色 + 原子序数 + 中文名 + 原子量）
+- 交互层次：主按钮（主题蓝实心）/ 次级按钮（白底蓝边）/ 幽灵按钮（透明底灰字）三级
+- 规则开关从 `CheckBox` 换成 `Button(toggle_mode)`：未选白底灰边、选中主题蓝底白字 + 左侧 4px 强调条
+  （`button_pressed` / `toggled` 语义与 `CheckBox` 一致，`_init_game()` 读状态不用改）
+- 勾选反馈落在新增的 `StartRuleHint`（2 秒淡出）：开始页看不到 `GamePage` 的 `InfoLabel`
+- 入场：10 个元素错峰淡入（`modulate:a` + 上移 14px，每级 50ms 间隔）；装饰牌 5 个正弦浮动循环
+  —— **只动子节点，绝不碰 `start_page.modulate`**（`verify_motion` 锁死了页面级淡入语义）
+- tween 全部由 `start_page` / `card` / `label` 创建（`node.create_tween()`），节点释放即自动回收
+
+### 8.3 旧帮助页节点删除
+
+`Main.tscn` 删除 `HelpPage_Rules` / `HelpPage_Cards` / `HelpPage_Supp` 共 589 行（P5 的校对备份），
+`verify_help_page.gd` 的断言由「旧页仍在树中且隐藏」改为「旧页已从 Main.tscn 删除」。
+
+### 8.4 验收
+
+| 项 | 结果 |
+|---|---|
+| `tests/verify_hint.gd`（新增，105 条） | 全部通过：每条建议都用**新 GM 再调一次 `play_cards`** 交叉验证，覆盖单质/双原子/NaCl/CaCl2/NaOH/CH4/族炸/顺序/桌面限制/无解 |
+| 13 个测试套件 | 全绿（`ALL HINT TESTS PASSED` 等 13 行，0 FAILED） |
+| 真实窗口 `--quit-after 240` | 无 ERROR / WARNING |
+| `--check-only` | `HintAdvisor.gd` / `GameUI.gd` / `verify_hint.gd` 均无解析错误 |
+
+> 已知非缺陷：`verify_tutorial` 退出时报 `5 resources still in use`，`--verbose` 显示是
+> `CardData / CardDatabase / GameLogger / TutorialController / GameManager` 五个 GDScript 常驻缓存，
+> 与本轮改动的 tween 无关。
+
 6 张真实截图（3 Tab 顶部 + 滚动到底）逐张核对排版。

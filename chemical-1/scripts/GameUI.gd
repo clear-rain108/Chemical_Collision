@@ -11,6 +11,7 @@ const CardPatternsScript = preload("res://scripts/CardPatterns.gd")
 const CompoundSolverScript = preload("res://scripts/CompoundSolver.gd")
 const AIPlayerScript = preload("res://scripts/AIPlayer.gd")
 const HelpContentScript = preload("res://scripts/HelpContent.gd")
+const HintAdvisorScript = preload("res://scripts/HintAdvisor.gd")
 
 # ============================================================
 # 一、页面引用
@@ -20,8 +21,7 @@ var start_page: Control = null
 var game_page: Control = null
 var end_page: Control = null
 # 帮助中心（P5）：单页 + 3 Tab + 滚动容器 + 卡片，全部由 _build_help_page() 代码生成
-# 旧节点 HelpPage_Rules / HelpPage_Cards / HelpPage_Supp 仍留在 Main.tscn（visible=false），
-# 代码不再引用，仅作文案校对备份；确认无需回查后可整段删除。
+# 旧节点 HelpPage_Rules / HelpPage_Cards / HelpPage_Supp 已在 P6 从 Main.tscn 删除
 var help_page: Control = null            # 帮助中心根节点
 var help_tab_btns: Array = []            # 3 个 Tab 按钮
 var help_scrolls: Array = []             # 3 个 ScrollContainer（每个 Tab 独立滚动位置）
@@ -59,6 +59,12 @@ var _card_info_backup: String = ""      # hover 详情覆盖前的信息栏文�
 var _card_info_detail_shown: bool = false  # 信息栏当前是否在显示 hover 详情
 var step_mode: int = 0                  # 0=选牌 1=牌型 2=化合价 3=弃牌
 var compound_selections: Array = []     # 化合价选择 [{symbol, valence}]
+# 提示按钮（P6）：_on_hint_toggled → HintAdvisor.suggest() 自动选牌 + 写一句说明；
+# 说明文本存在 _hint_text 里，_update_card_info_label() 优先显示它，
+# 直到局面变了（换人 / 手牌数变化）或玩家自己动了牌
+var _hint_text: String = ""
+var _hint_owner: int = -1
+var _hint_hand_size: int = -1
 var hand_buttons: Array = []            # 手牌按钮列表
 # 悬停状态机（-1 = 无）：命中判定用静止坐标，悬停状态不影响判定结果
 var _hover_idx: int = -1                # 当前抬起的牌索引
@@ -157,9 +163,11 @@ func _ready() -> void:
 # -------- 绑定所有页面和按钮引用 --------
 func _setup_pages() -> void:
 	start_page = get_node_or_null("StartPage")
+	# 开始页全部子节点代码生成（P6）；必须在下面所有 get_node_or_null 之前完成
+	_build_start_page()
 	game_page = get_node_or_null("GamePage")
 	end_page = get_node_or_null("EndPage")
-	# 旧 3 个帮助页节点不再取引用（Main.tscn 里保留但 visible=false，作文案校对备份）
+	# 旧 3 个帮助页节点已在 P6 从 Main.tscn 删除，代码不再有任何引用
 
 	if start_page:
 		start_button = start_page.get_node_or_null("StartButton")
@@ -200,7 +208,7 @@ func _setup_pages() -> void:
 		if end_button:
 			end_button.pressed.connect(_show_start_page)
 
-	# 帮助中心（P5）改为单页 + Tab，旧 3 页的 9 个跳转按钮绑定全部移除
+	# 帮助中心（P5）改为单页 + Tab；旧 3 页的 9 个跳转按钮节点已在 P6 删除
 	# 开始页「补充规则」按钮直接跳到帮助中心的第 3 个 Tab
 	var supp_help_btn = start_page.get_node_or_null("SupplementaryHelpBtn") if start_page else null
 	if supp_help_btn:
@@ -394,6 +402,7 @@ func _show_start_page() -> void:
 	if log_label:
 		log_label.text = "游戏日志:"
 	_fade_in_page(start_page)
+	_animate_start_page()   # 子节点错峰淡入 + 装饰牌浮动（不触碰 start_page.modulate）
 
 func _on_show_help() -> void:
 	if help_page:
@@ -452,6 +461,496 @@ func _open_help_at_tab(idx: int) -> void:
 		_fade_in_page(help_page)
 		return
 	_set_help_tab(idx)
+
+
+# ============================================================
+# 五之一、开始页（P6：全部代码生成 + 装饰美术）
+# ============================================================
+# 设计要点
+#   1. Main.tscn 只保留 StartPage 空容器，子节点全部由 _build_start_page() 生成，
+#      节点名与旧场景完全一致 → _setup_pages()/_init_game()/_on_start_game() 零改动
+#   2. 装饰全部程序化（45° 渐变带 + 元素水印 + 倾斜装饰牌），不依赖任何图片素材；
+#      文案里的化学式一律用 ASCII（H2O / CO2），避免默认中文字体缺下标字形
+#   3. 只动子节点的 modulate / position，绝不动 start_page.modulate
+#      （verify_motion 断言页面级 modulate 的淡入语义，动了就会误伤）
+const START_FS_TITLE := 52
+const START_FS_SUB := 18
+const START_FS_LABEL := 18
+const START_FS_META := 13
+const START_C_TITLE := Color(0.169, 0.2, 0.251, 1.0)     # #2B3340 主标题
+const START_C_SUB := Color(0.42, 0.55, 0.67, 1.0)        # #6B8CAB 副标题
+const START_C_ACCENT := Color(0.176, 0.478, 0.702, 1.0)  # #2D7AB3 主题蓝（与帮助页一致）
+const START_C_ACCENT_DARK := Color(0.13, 0.38, 0.58, 1.0)
+const START_C_MUTED := Color(0.451, 0.498, 0.565, 1.0)   # #737F90 次要文字
+const START_C_WATERMARK := Color(0.176, 0.478, 0.702, 0.12)
+
+var _start_intro_tweens: Array = []
+
+
+func _build_start_page() -> void:
+	if not start_page:
+		return
+	# 场景里若残留静态子节点（老版本 Main.tscn），先整段清掉，保证只有一套 UI
+	for c in start_page.get_children():
+		start_page.remove_child(c)
+		c.queue_free()
+	_start_page_bg()
+	_start_page_decor()
+	_start_page_title()
+	_start_page_settings()
+	_start_page_buttons()
+
+
+# -------- 背景：同色底 + 45° 渐变带 --------
+func _start_page_bg() -> void:
+	var bg := ColorRect.new()
+	bg.name = "StartPageBg"
+	bg.color = PAGE_BG_COLOR
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	start_page.add_child(bg)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var grad := Gradient.new()
+	grad.set_color(0, PAGE_BG_COLOR)
+	grad.set_color(1, Color(1, 1, 1, 1))
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill = GradientTexture2D.FILL_LINEAR
+	tex.fill_from = Vector2(0.0, 1.0)
+	tex.fill_to = Vector2(1.0, 0.0)
+	tex.width = 256
+	tex.height = 256
+
+	var band := TextureRect.new()
+	band.name = "GradientBand"
+	band.texture = tex
+	band.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	band.stretch_mode = TextureRect.STRETCH_SCALE
+	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	start_page.add_child(band)
+	band.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+
+# -------- 装饰：元素水印 + 5 张倾斜装饰牌 --------
+func _start_page_decor() -> void:
+	var marks := Control.new()
+	marks.name = "Watermarks"
+	marks.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	start_page.add_child(marks)
+	marks.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+	var specs := [
+		{"t": "H2O", "p": Vector2(34, 60), "fs": 76},
+		{"t": "CO2", "p": Vector2(880, 34), "fs": 64},
+		{"t": "NaCl", "p": Vector2(96, 520), "fs": 54},
+		{"t": "CH4", "p": Vector2(946, 540), "fs": 58},
+		{"t": "O2", "p": Vector2(520, 596), "fs": 44},
+	]
+	for s in specs:
+		var lb := Label.new()
+		lb.text = s["t"]
+		lb.add_theme_font_size_override("font_size", int(s["fs"]))
+		lb.add_theme_color_override("font_color", START_C_WATERMARK)
+		lb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		lb.position = s["p"]
+		marks.add_child(lb)
+
+	var holder := Control.new()
+	holder.name = "DecorCards"
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	start_page.add_child(holder)
+	holder.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	var cards := [
+		{"s": "H", "p": Vector2(38, 392), "a": -0.14},
+		{"s": "O", "p": Vector2(118, 476), "a": 0.10},
+		{"s": "Cl", "p": Vector2(1002, 400), "a": 0.13},
+		{"s": "Na", "p": Vector2(922, 484), "a": -0.10},
+		{"s": "Fe", "p": Vector2(1046, 96), "a": 0.16},
+	]
+	for c in cards:
+		holder.add_child(_start_make_deco_card(c["s"], c["p"], c["a"]))
+
+
+# 装饰牌：白底 + 真实元素配色，整体半透明，只负责氛围
+func _start_make_deco_card(sym: String, pos: Vector2, angle: float) -> Panel:
+	var panel := Panel.new()
+	panel.custom_minimum_size = Vector2(94, 120)
+	panel.position = pos
+	panel.size = Vector2(94, 120)
+	panel.pivot_offset = Vector2(47, 60)
+	panel.rotation = angle
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+
+	var style := _make_panel_style("card")
+	style.bg_color = Color(1, 1, 1, 0.9)
+	style.shadow_size = 8
+	panel.add_theme_stylebox_override("panel", style)
+
+	var card = _help_find_card(sym)
+	var sym_col := START_C_TITLE
+	var name_cn := "元素"
+	var num := 0
+	if card != null:
+		sym_col = _help_symbol_color(card)
+		name_cn = card.name_cn
+		num = card.atomic_number
+
+	var l_num := _start_label(str(num), 12, START_C_MUTED, HORIZONTAL_ALIGNMENT_LEFT)
+	l_num.position = Vector2(8, 6)
+	l_num.size = Vector2(40, 16)
+	panel.add_child(l_num)
+
+	var l_sym := _start_label(sym, 32, sym_col, HORIZONTAL_ALIGNMENT_CENTER)
+	l_sym.position = Vector2(0, 26)
+	l_sym.size = Vector2(94, 40)
+	panel.add_child(l_sym)
+
+	var l_name := _start_label(name_cn, 13, START_C_TITLE, HORIZONTAL_ALIGNMENT_CENTER)
+	l_name.position = Vector2(0, 72)
+	l_name.size = Vector2(94, 18)
+	panel.add_child(l_name)
+
+	var l_w := _start_label("%.1f" % (card.atomic_weight if card != null else 0.0), 12,
+		START_C_MUTED, HORIZONTAL_ALIGNMENT_CENTER)
+	l_w.position = Vector2(0, 94)
+	l_w.size = Vector2(94, 16)
+	panel.add_child(l_w)
+
+	return panel
+
+
+func _start_label(text: String, fs: int, col: Color, align: int) -> Label:
+	var lb := Label.new()
+	lb.text = text
+	lb.add_theme_font_size_override("font_size", fs)
+	lb.add_theme_color_override("font_color", col)
+	lb.horizontal_alignment = align
+	lb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	return lb
+
+
+# -------- 标题区：主标题 + 英文副标题 + 强调条 + 元信息 --------
+func _start_page_title() -> void:
+	var title := _start_label("化学碰撞", START_FS_TITLE, START_C_TITLE, HORIZONTAL_ALIGNMENT_CENTER)
+	title.name = "StartTitle"
+	start_page.add_child(title)
+	title.position = Vector2(0, 92)
+	title.size = Vector2(1152, 64)
+
+	var sub := _start_label("CHEMICAL COLLISION", START_FS_SUB, START_C_SUB, HORIZONTAL_ALIGNMENT_CENTER)
+	sub.name = "StartSubtitle"
+	start_page.add_child(sub)
+	sub.position = Vector2(0, 160)
+	sub.size = Vector2(1152, 26)
+
+	var accent := ColorRect.new()
+	accent.name = "StartAccent"
+	accent.color = START_C_ACCENT
+	accent.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	start_page.add_child(accent)
+	accent.position = Vector2(540, 196)
+	accent.size = Vector2(72, 4)
+
+	var meta := _start_label("29 种元素 · 182 张牌 · 3-8 人同屏 · 出完手牌即胜",
+		START_FS_META, START_C_MUTED, HORIZONTAL_ALIGNMENT_CENTER)
+	meta.name = "StartMeta"
+	start_page.add_child(meta)
+	meta.position = Vector2(0, 210)
+	meta.size = Vector2(1152, 20)
+
+
+# -------- 设置卡：人数 / AI 数 / 两条补充规则 / 补充规则入口 --------
+func _start_page_settings() -> void:
+	var card := Panel.new()
+	card.name = "SettingsCard"
+	card.position = Vector2(266, 246)
+	card.size = Vector2(620, 210)
+	var cs := _make_panel_style("card")
+	cs.bg_color = Color(1, 1, 1, 0.94)
+	card.add_theme_stylebox_override("panel", cs)
+	start_page.add_child(card)
+
+	card.add_child(_start_setting_label("PlayerCountLabel", "总玩家人数", Vector2(32, 26)))
+	var ps := _start_make_spin(3, 8, 4, "PlayerCountSpin")
+	ps.position = Vector2(300, 20)
+	ps.size = Vector2(150, 38)
+	card.add_child(ps)
+
+	card.add_child(_start_setting_label("AiCountLabel", "AI 人数", Vector2(32, 72)))
+	var ai_s := _start_make_spin(0, 7, 3, "AiCountSpin")
+	ai_s.position = Vector2(300, 66)
+	ai_s.size = Vector2(150, 38)
+	card.add_child(ai_s)
+
+	var div := ColorRect.new()
+	div.name = "SettingsDivider"
+	div.color = Color(0.85, 0.89, 0.94, 1.0)
+	div.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	div.position = Vector2(32, 118)
+	div.size = Vector2(556, 1)
+	card.add_child(div)
+
+	var organic := _start_make_toggle("OrganicCheckBox", "有机物胜利规则", Vector2(32, 132))
+	card.add_child(organic)
+	var seq := _start_make_toggle("SequenceCheckBox", "顺序牌型规则", Vector2(318, 132))
+	card.add_child(seq)
+
+	var supp := _start_make_ghost("SupplementaryHelpBtn", "查看补充规则 >", Vector2(32, 168), Vector2(180, 30))
+	card.add_child(supp)
+
+	# 勾选反馈写在这里：开始页看不到 GamePage 的 InfoLabel
+	var rule_hint := _start_label("", START_FS_META, START_C_ACCENT, HORIZONTAL_ALIGNMENT_CENTER)
+	rule_hint.name = "StartRuleHint"
+	start_page.add_child(rule_hint)
+	rule_hint.position = Vector2(266, 462)
+	rule_hint.size = Vector2(620, 20)
+	rule_hint.modulate.a = 0.0
+
+
+func _start_setting_label(node_name: String, text: String, pos: Vector2) -> Label:
+	var lb := _start_label(text, START_FS_LABEL, START_C_TITLE, HORIZONTAL_ALIGNMENT_LEFT)
+	lb.name = node_name
+	lb.position = pos
+	lb.size = Vector2(230, 32)
+	return lb
+
+
+# -------- 按钮区 --------
+func _start_page_buttons() -> void:
+	start_button = _start_make_primary("开始游戏", Vector2(446, 486), Vector2(260, 52))
+	start_page.add_child(start_button)
+	start_page.add_child(_start_make_secondary("TutorialBtn", "教学引导", Vector2(446, 546), Vector2(260, 46)))
+	start_page.add_child(_start_make_ghost("ExitButton", "退出程序", Vector2(476, 598), Vector2(200, 34)))
+
+
+func _start_make_primary(text: String, pos: Vector2, sz: Vector2) -> Button:
+	var b := _mkb(text, func() -> void: pass, false)
+	b.name = "StartButton"
+	b.custom_minimum_size = sz
+	b.size = sz
+	b.position = pos
+	b.add_theme_font_size_override("font_size", 22)
+	var n: StyleBoxFlat = b.get_theme_stylebox("normal").duplicate()
+	n.bg_color = START_C_ACCENT
+	n.border_color = START_C_ACCENT_DARK
+	b.add_theme_stylebox_override("normal", n)
+	var h: StyleBoxFlat = n.duplicate()
+	h.bg_color = START_C_ACCENT.lightened(0.12)
+	h.border_color = START_C_ACCENT
+	h.shadow_color = Color(0.176, 0.478, 0.702, 0.5)
+	h.shadow_size = 8
+	h.shadow_offset = Vector2.ZERO
+	b.add_theme_stylebox_override("hover", h)
+	var p: StyleBoxFlat = n.duplicate()
+	p.bg_color = START_C_ACCENT_DARK
+	b.add_theme_stylebox_override("pressed", p)
+	b.pivot_offset = sz * 0.5
+	return b
+
+
+func _start_make_secondary(node_name: String, text: String, pos: Vector2, sz: Vector2) -> Button:
+	var b := _mkb(text, func() -> void: pass, false)
+	b.name = node_name
+	b.custom_minimum_size = sz
+	b.size = sz
+	b.position = pos
+	b.add_theme_font_size_override("font_size", 19)
+	var n: StyleBoxFlat = b.get_theme_stylebox("normal").duplicate()
+	n.bg_color = Color(1, 1, 1, 0.96)
+	n.border_color = START_C_ACCENT
+	n.set_border_width_all(BORDER_W_ACTIVE)
+	b.add_theme_stylebox_override("normal", n)
+	b.add_theme_color_override("font_color", START_C_ACCENT)
+	b.add_theme_color_override("font_hover_color", START_C_ACCENT_DARK)
+	b.add_theme_color_override("font_pressed_color", START_C_ACCENT_DARK)
+	var h: StyleBoxFlat = n.duplicate()
+	h.bg_color = Color(0.92, 0.96, 1.0, 1.0)
+	b.add_theme_stylebox_override("hover", h)
+	var p: StyleBoxFlat = n.duplicate()
+	p.bg_color = Color(0.85, 0.92, 0.98, 1.0)
+	b.add_theme_stylebox_override("pressed", p)
+	b.pivot_offset = sz * 0.5
+	return b
+
+
+# 幽灵按钮：透明底 + 灰字，用于「退出程序 / 查看补充规则」这类次要入口
+func _start_make_ghost(node_name: String, text: String, pos: Vector2, sz: Vector2) -> Button:
+	var b := _mkb(text, func() -> void: pass, false)
+	b.name = node_name
+	b.custom_minimum_size = sz
+	b.size = sz
+	b.position = pos
+	b.add_theme_font_size_override("font_size", 16)
+	b.add_theme_color_override("font_color", START_C_MUTED)
+	b.add_theme_color_override("font_hover_color", START_C_ACCENT)
+	b.add_theme_color_override("font_pressed_color", START_C_ACCENT_DARK)
+	for st in ["normal", "pressed"]:
+		var s := _make_panel_style("tab_off")
+		s.bg_color = Color(0, 0, 0, 0)
+		b.add_theme_stylebox_override(st, s)
+	var h := _make_panel_style("tab_off")
+	h.bg_color = Color(0.176, 0.478, 0.702, 0.1)
+	b.add_theme_stylebox_override("hover", h)
+	b.pivot_offset = sz * 0.5
+	return b
+
+
+# -------- SpinBox：白底 + 主题蓝焦点边框 --------
+func _start_make_spin(min_v: int, max_v: int, val: int, node_name: String) -> SpinBox:
+	var sp := SpinBox.new()
+	sp.name = node_name
+	sp.min_value = min_v
+	sp.max_value = max_v
+	sp.step = 1
+	sp.value = val
+	sp.allow_greater = false
+	sp.allow_lesser = false
+	sp.custom_minimum_size = Vector2(150, 38)
+	sp.add_theme_font_size_override("font_size", 18)
+
+	var le := sp.get_line_edit()
+	le.add_theme_font_size_override("font_size", 18)
+	le.add_theme_color_override("font_color", START_C_TITLE)
+	var n := _make_panel_style("mini_card")
+	n.bg_color = Color(1, 1, 1, 1)
+	n.content_margin_left = 10
+	n.content_margin_right = 6
+	n.content_margin_top = 4
+	n.content_margin_bottom = 4
+	le.add_theme_stylebox_override("normal", n)
+	var f: StyleBoxFlat = n.duplicate()
+	f.border_color = BORDER_FOCUS
+	f.set_border_width_all(BORDER_W_ACTIVE)
+	le.add_theme_stylebox_override("focus", f)
+
+	# 内部上下箭头按钮：去掉默认灰块，白卡面上更干净
+	for child in sp.get_children():
+		if child is Button:
+			for st in ["normal", "hover", "pressed"]:
+				var s := _make_panel_style("tab_off")
+				s.bg_color = Color(0, 0, 0, 0) if st != "hover" else Color(0.176, 0.478, 0.702, 0.12)
+				child.add_theme_stylebox_override(st, s)
+	return sp
+
+
+# -------- 规则开关：未选白底灰边 / 选中主题蓝底白字 + 左侧 4px 强调条 --------
+func _start_make_toggle(node_name: String, text: String, pos: Vector2) -> Button:
+	var b := Button.new()
+	b.name = node_name
+	b.text = text
+	b.toggle_mode = true
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.custom_minimum_size = Vector2(270, 32)
+	b.size = Vector2(270, 32)
+	b.position = pos
+	b.add_theme_font_size_override("font_size", 16)
+	b.add_theme_color_override("font_color", START_C_TITLE)
+	b.add_theme_color_override("font_hover_color", START_C_TITLE)
+	b.add_theme_color_override("font_pressed_color", Color(1, 1, 1, 1))
+	b.add_theme_color_override("font_hover_pressed_color", Color(1, 1, 1, 1))
+
+	var off := _make_panel_style("mini_card")
+	off.bg_color = Color(1, 1, 1, 1)
+	off.content_margin_left = 12
+	off.content_margin_right = 12
+	off.content_margin_top = 4
+	off.content_margin_bottom = 4
+	b.add_theme_stylebox_override("normal", off)
+	var hover: StyleBoxFlat = off.duplicate()
+	hover.bg_color = Color(0.96, 0.98, 1.0, 1.0)
+	hover.border_color = BORDER_FOCUS
+	b.add_theme_stylebox_override("hover", hover)
+
+	var on := _make_panel_style("mini_card")
+	on.bg_color = START_C_ACCENT
+	on.border_color = START_C_ACCENT_DARK
+	on.border_width_left = 4
+	on.content_margin_left = 12
+	on.content_margin_right = 12
+	on.content_margin_top = 4
+	on.content_margin_bottom = 4
+	b.add_theme_stylebox_override("pressed", on)
+	var on_hover: StyleBoxFlat = on.duplicate()
+	on_hover.bg_color = START_C_ACCENT.lightened(0.08)
+	b.add_theme_stylebox_override("hover_pressed", on_hover)
+
+	var sk := _make_panel_style("tab_off")
+	b.add_theme_stylebox_override("focus", sk)
+
+	b.mouse_entered.connect(_on_button_hover_scale.bind(b, true))
+	b.mouse_exited.connect(_on_button_hover_scale.bind(b, false))
+	b.button_down.connect(_on_button_press_scale.bind(b, true))
+	b.button_up.connect(_on_button_press_scale.bind(b, false))
+	b.pivot_offset = Vector2(135, 16)
+	b.resized.connect(func() -> void: b.pivot_offset = b.size * 0.5)
+	return b
+
+
+# -------- 动效：入场错峰淡入 + 装饰牌缓慢浮动（只动子节点，不动 start_page.modulate）--------
+func _animate_start_page() -> void:
+	if not start_page:
+		return
+	_start_deco_float()
+	for t in _start_intro_tweens:
+		if t is Tween and t.is_valid():
+			t.kill()
+	_start_intro_tweens.clear()
+	var order := [
+		"StartTitle", "StartSubtitle", "StartAccent", "StartMeta", "DecorCards",
+		"SettingsCard", "StartRuleHint", "StartButton", "TutorialBtn", "ExitButton",
+	]
+	var i := 0
+	for n in order:
+		var node = start_page.get_node_or_null(n)
+		if node == null or not (node is Control):
+			continue
+		var target_y: float = node.position.y
+		node.modulate.a = 0.0
+		node.position.y = target_y + 14.0
+		var delay := i * 0.05
+		# 每个节点一条独立补间：淡入与上浮并行，互不排队（共用一个 tween 会串成 3 秒）
+		var t := start_page.create_tween()
+		t.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+		t.tween_property(node, "modulate:a", 1.0, 0.26).set_delay(delay)
+		t.parallel().tween_property(node, "position:y", target_y, 0.3).set_delay(delay)
+		_start_intro_tweens.append(t)
+		i += 1
+
+
+func _start_deco_float() -> void:
+	var holder = start_page.get_node_or_null("DecorCards")
+	if holder == null or holder.has_meta("float_started"):
+		return
+	holder.set_meta("float_started", true)
+	var i := 0
+	for card in holder.get_children():
+		if not (card is Control):
+			continue
+		var base_y: float = card.position.y
+		var dur := 1.8 + i * 0.22
+		var t := card.create_tween().set_loops()
+		t.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+		t.tween_property(card, "position:y", base_y - 7.0, dur)
+		t.tween_property(card, "position:y", base_y, dur)
+		i += 1
+
+
+# 勾选补充规则时在开始页内联提示 2 秒（GamePage 的 InfoLabel 此刻不可见）
+func _start_flash_rule_hint(text: String) -> void:
+	if not start_page:
+		return
+	var lb = start_page.get_node_or_null("StartRuleHint")
+	if lb == null:
+		return
+	lb.text = text
+	lb.modulate.a = 1.0
+	var old = lb.get_meta("tween", null)
+	if old is Tween and old.is_valid():
+		old.kill()
+	var t := lb.create_tween()
+	t.tween_interval(1.4)
+	t.tween_property(lb, "modulate:a", 0.0, 0.5)
+	lb.set_meta("tween", t)
 
 
 # ============================================================
@@ -914,12 +1413,14 @@ func _on_organic_toggled(pressed: bool) -> void:
 		_show_info_simple("已启用有机物胜利规则")
 	else:
 		_show_info_simple("已禁用有机物胜利规则")
+	_start_flash_rule_hint("已启用有机物胜利规则" if pressed else "已禁用有机物胜利规则")
 
 func _on_sequence_toggled(pressed: bool) -> void:
 	if pressed:
 		_show_info_simple("已启用顺序牌型规则")
 	else:
 		_show_info_simple("已禁用顺序牌型规则")
+	_start_flash_rule_hint("已启用顺序牌型规则" if pressed else "已禁用顺序牌型规则")
 
 func _on_start_game() -> void:
 	var total = int(player_spin.value) if player_spin else 4
@@ -1665,6 +2166,13 @@ func _update_card_info_label() -> void:
 	if cp == null or cp.is_ai:
 		card_info_label.text = ""
 		return
+	# 提示（P6）：_apply_hint() 写入的建议优先于默认「可用牌型」，
+	# 但局面一变（换人 / 手牌数变了）就作废，避免选中残留误导玩家
+	if _hint_text != "":
+		if _hint_owner == game_manager.get_current_player_index() and _hint_hand_size == cp.hand.size():
+			card_info_label.text = _hint_text
+			return
+		_clear_hint()
 	var hint = game_manager.get_available_patterns(game_manager.get_current_player_index())
 	card_info_label.text = "提示: " + hint
 
@@ -1804,11 +2312,71 @@ func _on_button_press_scale(btn: Button, down: bool) -> void:
 
 
 # ============================================================
-# 十、提示按钮
+# 十、提示按钮（P6：自动选中最优可出组合 + 说明）
 # ============================================================
+# 交互设计（方案 C）
+#   点一下 → HintAdvisor 找出「马上就能打出去」的组合 → 自动勾选手牌
+#   并把 step_mode 推到对应的下一步（化合物直接到「确认打出」）
+#   → 玩家只需再点一次面板按钮即可出牌
+# 再点一下（toggle 取消）→ 清空提示，不动已选的牌
 func _on_hint_toggled(pressed: bool) -> void:
-	if pressed: _update_card_info_label()
-	else: card_info_label.text = ""
+	if not pressed:
+		_clear_hint()
+		_update_card_info_label()
+		return
+	_apply_hint()
+
+
+func _apply_hint() -> void:
+	if game_manager == null or game_manager.is_game_over():
+		return
+	var cp = game_manager.get_current_player()
+	if cp == null or cp.is_ai:
+		return
+
+	var adv: Dictionary = HintAdvisorScript.suggest(game_manager)
+	if adv.is_empty():
+		_clear_hint()
+		_hint_text = "提示：当前没有能直接打出的组合，建议「跳过」或按上限弃牌。"
+		_hint_owner = game_manager.get_current_player_index()
+		_hint_hand_size = cp.hand.size()
+		_update_card_info_label()
+		return
+
+	# 1) 勾选手牌（顺序稳定：按手牌下标升序，卡面重叠时高亮看起来更自然）
+	var idxs: Array = adv["indices"].duplicate()
+	idxs.sort()
+	selected_indices.clear()
+	for i in idxs:
+		selected_indices.append(int(i))
+
+	# 2) 化合物把化合价也填好，玩家直接点「确认打出」；其余牌型停在选牌型面板
+	compound_selections.clear()
+	var pattern: int = adv["pattern"]
+	if pattern == CardPatternsScript.CardPattern.COMPOUND:
+		var val: Dictionary = adv["valence"]
+		for sym in val:
+			compound_selections.append({"symbol": sym, "valence": val[sym]})
+		step_mode = 2
+	else:
+		step_mode = 1
+		compound_selections.clear()
+
+	_hint_text = adv["text"]
+	_hint_owner = game_manager.get_current_player_index()
+	_hint_hand_size = cp.hand.size()
+	_update_hand_buttons()
+	_update_action_panel()
+	_update_card_info_label()
+
+
+func _clear_hint() -> void:
+	_hint_text = ""
+	_hint_owner = -1
+	_hint_hand_size = -1
+	# 牌被改动 / 局面推进后，提示按钮不能继续按着，否则下次点击会先触发「取消」
+	if hint_button != null and is_instance_valid(hint_button) and hint_button.button_pressed:
+		hint_button.set_pressed_no_signal(false)
 
 
 # ============================================================
@@ -2299,14 +2867,20 @@ func _update_valence_buttons() -> void:
 # ============================================================
 func _on_card_clicked(index: int) -> void:
 	if step_mode != 0 and step_mode != 3: return
+	# 玩家自己动牌 → 提示作废，回到用户自己的选择
+	if _hint_text != "":
+		_clear_hint()
 	if index in selected_indices: selected_indices.erase(index)
 	else: selected_indices.append(index)
 	_update_hand_buttons()
 	_update_action_panel()
+	_update_card_info_label()
 
 func _on_step_next() -> void:
+	_clear_hint()
 	step_mode = 1
 	_update_action_panel()
+	_update_card_info_label()
 
 func _on_element() -> void:
 	var cp = game_manager.get_current_player()
@@ -2484,9 +3058,11 @@ func _on_reset_valence() -> void:
 	_update_action_panel()
 
 func _on_back() -> void:
+	_clear_hint()
 	step_mode = 0
 	compound_selections.clear()
 	_update_action_panel()
+	_update_card_info_label()
 
 func _on_pass() -> void:
 	var cp = game_manager.get_current_player()
@@ -2633,6 +3209,7 @@ func _show_sequence_constraint_dialog() -> void:
 
 # ============================================================
 func _step_reset() -> void:
+	_clear_hint()
 	selected_indices.clear()
 	step_mode = 0
 	compound_selections.clear()

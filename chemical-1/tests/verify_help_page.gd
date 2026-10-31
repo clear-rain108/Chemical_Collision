@@ -3,7 +3,7 @@
 #   2) 懒加载：切到才构建 —— Tab0 9 卡 2 列 / Tab1 29 迷你卡 7 列 / Tab2 4 卡
 #   3) 规范：无 11px 以下文字、无空格对齐、卡片标题 17 / 正文 14、选中 Tab 有下划线
 #   4) 数据：29 种元素 / 182 张（不再出现 28 种 / 172 张）
-#   5) 旧 3 页仍在树中但 visible=false（文案校对备份）
+#   5) 旧 3 页已从 Main.tscn 删除（P6 清理，不留备份节点）
 extends SceneTree
 
 const HelpContentScript = preload("res://scripts/HelpContent.gd")
@@ -82,8 +82,7 @@ func _run() -> void:
 	_check(back != null and back.pressed.get_connections().size() > 0, "返回按钮已连接")
 
 	for n in ["HelpPage_Rules", "HelpPage_Cards", "HelpPage_Supp"]:
-		var old = scene.get_node_or_null(n)
-		_check(old != null and not old.visible, "旧页 %s 仍在树中且已隐藏（文案备份）" % n)
+		_check(scene.get_node_or_null(n) == null, "旧页 %s 已从 Main.tscn 删除（P6 清理）" % n)
 
 	# ---------------- 2. 懒加载 ----------------
 	for i in range(3):
