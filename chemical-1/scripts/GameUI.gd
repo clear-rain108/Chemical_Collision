@@ -708,7 +708,7 @@ func _start_make_deco_card(sym: String, pos: Vector2, angle: float) -> Panel:
 	return panel
 
 
-func _start_label(text: String, fs: int, col: Color, align: int) -> Label:
+func _start_label(text: String, fs: int, col: Color, align: HorizontalAlignment) -> Label:
 	var lb := Label.new()
 	lb.text = text
 	lb.add_theme_font_size_override("font_size", fs)
@@ -862,10 +862,10 @@ func _build_supp_rules_page() -> void:
 
 	_build_element_pool(page)
 
-	var help_btn := _page_ghost_btn("查看完整说明 >", _on_help_show_supp,
+	var supp_help_btn := _page_ghost_btn("查看完整说明 >", _on_help_show_supp,
 		Vector2(240, 34), "SuppRulesHelpBtn", 15)
-	help_btn.position = Vector2(46, 570)
-	page.add_child(help_btn)
+	supp_help_btn.position = Vector2(46, 570)
+	page.add_child(supp_help_btn)
 
 	var done := _page_primary_btn("完成", _close_supp_rules, Vector2(260, 44), "SuppRulesDoneBtn", 20)
 	done.position = Vector2(846, 566)
@@ -929,23 +929,61 @@ func _build_element_pool(page: Control) -> void:
 	tip.size = Vector2(1020, 18)
 	area.add_child(tip)
 
-	# chip 宽 132 + 间距 10 → 每行 7 个（7*132 + 6*10 = 984，池内宽 1020）
+	# chip 104×28 + 间距 8 → 9 个排一行（9*104 + 8*8 = 1000，池内宽 1020）
 	var items := CardDatabaseScript.get_optional_elements()
 	for i in range(items.size()):
 		var info: Dictionary = items[i]
-		var col := i % 7
-		var row := int(i / 7)
 		var sym := str(info["symbol"])
 		var chip := _start_make_toggle("ElementChip_" + sym,
 			"%s %s · %d" % [sym, str(info["name_cn"]), int(info["number"])],
-			Vector2(20 + col * 142, 64 + row * 42))
-		chip.size = Vector2(132, 34)
-		chip.custom_minimum_size = Vector2(132, 34)
-		chip.add_theme_font_size_override("font_size", 15)
+			Vector2(20 + i * 112, 62))
+		chip.add_theme_font_size_override("font_size", 13)
+		# 104 宽 + 13px：内边距从 toggle 默认的 12 收到 10，避免 "Cr 铬 · 24" 贴边
+		for st_name in ["normal", "hover", "pressed", "hover_pressed"]:
+			var sb := chip.get_theme_stylebox(st_name) as StyleBoxFlat
+			if sb != null:
+				sb.content_margin_left = 10
+				sb.content_margin_right = 10
 		chip.tooltip_text = "%s%s（原子序数 %d）；勾选后加入牌库" % [
 			str(info["group_label"]), sym, int(info["number"])]
 		area.add_child(chip)
+		# 尺寸必须在入树后设置：树外 update_minimum_size() 不生效，
+		# 会把 size 夹回 _start_make_toggle 的 270×32
+		chip.custom_minimum_size = Vector2(104, 28)
+		chip.size = Vector2(104, 28)
 		_supp_element_chips[sym] = chip
+
+	# 分隔线 + 基础池清单：数据取自 CardDatabase，后续新增元素自动跟随，无需改 UI
+	var div := ColorRect.new()
+	div.name = "ElementPoolDivider"
+	div.color = Color(0.886, 0.914, 0.945, 1.0)
+	div.position = Vector2(20, 96)
+	div.size = Vector2(1020, 1)
+	area.add_child(div)
+
+	var base_title := _start_label("固定加入 · 前 20 号元素（H ~ Ca）",
+		START_FS_META, START_C_MUTED, HORIZONTAL_ALIGNMENT_LEFT)
+	base_title.name = "ElementPoolBaseTitle"
+	base_title.position = Vector2(20, 102)
+	base_title.size = Vector2(1020, 18)
+	area.add_child(base_title)
+
+	var base_syms := CardDatabaseScript.get_base_element_symbols()
+	for line in range(2):
+		var lbl := _start_label(_symbols_joined(base_syms.slice(line * 10, line * 10 + 10)),
+			13, START_C_TITLE, HORIZONTAL_ALIGNMENT_LEFT)
+		lbl.name = "ElementPoolBase%d" % line
+		lbl.position = Vector2(20, 122 + line * 20)
+		lbl.size = Vector2(1020, 18)
+		area.add_child(lbl)
+
+
+# 把符号数组拼成 "H  ·  He  ·  Li" 形式（元素池基础清单用）
+func _symbols_joined(syms: Array) -> String:
+	var parts := PackedStringArray()
+	for s in syms:
+		parts.append(str(s))
+	return "  ·  ".join(parts)
 
 
 # -------- 按钮三件套（P8：开始页 / 结束页 / 教学引导页共用的唯一样式来源）--------
@@ -1583,11 +1621,11 @@ func _append_help_line(parent: VBoxContainer, line: Dictionary) -> void:
 	lb.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	if indent > 0:
-		var wrap := MarginContainer.new()
-		wrap.add_theme_constant_override("margin_left", indent)
-		wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		wrap.add_child(lb)
-		parent.add_child(wrap)
+		var wrap_box := MarginContainer.new()
+		wrap_box.add_theme_constant_override("margin_left", indent)
+		wrap_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		wrap_box.add_child(lb)
+		parent.add_child(wrap_box)
 	else:
 		parent.add_child(lb)
 
@@ -1666,7 +1704,7 @@ func _help_symbol_color(card) -> Color:
 	return c
 
 
-func _help_label(text: String, fs: int, col: Color, align: int) -> Label:
+func _help_label(text: String, fs: int, col: Color, align: HorizontalAlignment) -> Label:
 	var lb := Label.new()
 	lb.text = text
 	lb.add_theme_font_size_override("font_size", fs)
@@ -2498,30 +2536,30 @@ func _level0_show_ui_step(idx: int) -> void:
 	level0_overlay.add_child(next_btn)
 
 
-func _level0_make_outline_rect(pos: Vector2, size: Vector2, color: Color, width: int) -> Control:
+func _level0_make_outline_rect(pos: Vector2, rect_size: Vector2, color: Color, width: int) -> Control:
 	var c = Control.new()
 	c.position = pos
-	c.size = size
+	c.size = rect_size
 	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var top = ColorRect.new()
 	top.color = color
 	top.position = Vector2(0, 0)
-	top.size = Vector2(size.x, width)
+	top.size = Vector2(rect_size.x, width)
 	c.add_child(top)
 	var bottom = ColorRect.new()
 	bottom.color = color
-	bottom.position = Vector2(0, size.y - width)
-	bottom.size = Vector2(size.x, width)
+	bottom.position = Vector2(0, rect_size.y - width)
+	bottom.size = Vector2(rect_size.x, width)
 	c.add_child(bottom)
 	var left = ColorRect.new()
 	left.color = color
 	left.position = Vector2(0, 0)
-	left.size = Vector2(width, size.y)
+	left.size = Vector2(width, rect_size.y)
 	c.add_child(left)
 	var right = ColorRect.new()
 	right.color = color
-	right.position = Vector2(size.x - width, 0)
-	right.size = Vector2(width, size.y)
+	right.position = Vector2(rect_size.x - width, 0)
+	right.size = Vector2(width, rect_size.y)
 	c.add_child(right)
 	return c
 
@@ -2774,7 +2812,6 @@ func _build_status_bar() -> void:
 func _update_status_bar() -> void:
 	if not status_bar_label or not game_manager:
 		return
-	var cp_idx = game_manager.get_current_player_index()
 	var cp = game_manager.get_current_player()
 	if cp == null:
 		status_bar_label.text = ""
@@ -2928,10 +2965,10 @@ func _update_table_label() -> void:
 			var cv = null
 			if card_valences.has(i):
 				cv = card_valences[i]
-			var mini = _build_mini_card_button(cards[i], cv)
-			mini.position = Vector2(start_x + i * mini_step, slot_y)
-			_layer(0).add_child(mini)
-			table_card_buttons.append(mini)
+			var mini_btn = _build_mini_card_button(cards[i], cv)
+			mini_btn.position = Vector2(start_x + i * mini_step, slot_y)
+			_layer(0).add_child(mini_btn)
+			table_card_buttons.append(mini_btn)
 	else:
 		table_label.text = "桌面: 空"
 
@@ -4392,7 +4429,7 @@ func _show_sequence_constraint_dialog() -> void:
 		var btn = _mkb(patterns[i].name, choose, false)
 		btn.custom_minimum_size = Vector2(140, 40)
 		btn.add_theme_font_size_override("font_size", 15)
-		btn.position = Vector2(320 + (i % 3) * 150, 370 + (i / 3) * 50)
+		btn.position = Vector2(320 + (i % 3) * 150, 370 + int(i / 3.0) * 50)
 		overlay.add_child(btn)
 
 	# 取消按钮（不指定，视为放弃权利）
@@ -4405,7 +4442,7 @@ func _show_sequence_constraint_dialog() -> void:
 	var cancel_btn = _mkb("跳过指定", cancel_cb, false)
 	cancel_btn.custom_minimum_size = Vector2(140, 40)
 	cancel_btn.add_theme_font_size_override("font_size", 14)
-	cancel_btn.position = Vector2(470, 370 + patterns.size() / 3 * 50 + 10)
+	cancel_btn.position = Vector2(470, 370 + int(patterns.size() / 3.0) * 50 + 10)
 	overlay.add_child(cancel_btn)
 
 	_layer(1).add_child(overlay)

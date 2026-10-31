@@ -640,7 +640,7 @@ meta 不存在时会刷 `ERROR`；改为 `has_meta()` 判定，并给 `StartRule
 | 设置卡入口 | `SupplementaryHelpBtn` (32,128) 300×34 + `SuppRulesSummary` (32,170) 556×20 | "补充规则 · N 项已开启 ▸" + "已启用：有机物 · 顺序…" |
 | 小页标题 | (0,62) 1152×46 + 副标题 (0,110) | 「补充规则」/「默认全部关闭；勾选后仅对下一局生效」 |
 | 规则卡 ×4 | 2×2：(46,146) (586,146) (46,250) (586,250)，每张 520×92 | toggle（484×34）+ 13px 说明；节点名沿用 `OrganicCheckBox` / `SequenceCheckBox` / `HalogenCheckBox` / `ElementLimitCheckBox` |
-| 元素池 | `ElementPoolPanel` (46,356) 1060×168 | 标题 + `ElementPoolStats` 统计（"21 种 · 138 张 ｜ 额外元素：Fe"）+ 9 个 chip（132×34，7 个/行：Cr Mn Fe Co Ni Cu Zn + Br I） |
+| 元素池 | `ElementPoolPanel` (46,356) 1060×168 | 标题 + `ElementPoolStats` 统计（"21 种 · 138 张 ｜ 额外元素：Fe"）+ 9 个 chip（104×28，**9 个一行**：Cr Mn Fe Co Ni Cu Zn Br I）+ 分隔线 + 固定池清单 `ElementPoolBase0/1`（前 20 号符号，数据取自 `CardDatabase`） |
 | 底部 | `SuppRulesHelpBtn` (46,570) 240×34 / `SuppRulesDoneBtn` (846,566) 260×44 | 跳帮助中心 Tab3 / 关闭小页 |
 
 **元素限制规则**：默认关闭（29 种 182 张）；打开后牌库 = 前 20 号（H~Ca，20 种 134 张）+
@@ -658,3 +658,11 @@ meta 不存在时会刷 `ERROR`；改为 `has_meta()` 判定，并给 `StartRule
 
 **验收**：19 个测试套件全绿（新增 `verify_element_limit` 55 条；`verify_start_page` 改走小页路径 +
 `verify_help_page` Tab2 6 卡 + 元素限制文案断言）。
+
+#### P10.1 试玩反馈修复（chip 过大 + 编辑器诊断）
+
+| 问题 | 处理 |
+|---|---|
+| 元素 chip 132×34、7 个一行（第 2 行只剩 Br/I），右侧与下方大片留白 | chip 收到 **104×28**、字号 15 → 13、内边距 12 → 10，9 个排成**一整行**（`x = 20 + i*112`，右边界 1020 ≤ 1020）；腾出的下半区改为「固定加入 · 前 20 号元素（H ~ Ca）」清单，由 `get_base_element_symbols()` 生成两行符号（`ElementPoolBase0/1`），后续新增元素自动跟随，不需要再改 UI |
+| `chip.size = 104×28` 被夹回 270×32 | `custom_minimum_size` / `size` 必须在 `add_child()` **之后**设置：节点在树外时 `update_minimum_size()` 直接返回，`set_size()` 仍按旧的最小尺寸夹取 |
+| 编辑器里一批红 / 黄诊断 | 红：`--check-only` 与 Godot 自带 LSP（`--lsp-port` + `textDocument/didOpen`）对 `GameManager` / `CardDatabase` / `HelpContent` 的诊断均为空，旧红是 godot-tools 缓存了磁盘中间状态；黄：GameUI 的 9 条真实警告逐条修掉——`INT_AS_ENUM_WITHOUT_CAST`×2（`align: int` → `HorizontalAlignment`）、`SHADOWED_VARIABLE`（小页 `help_btn` → `supp_help_btn`）、`SHADOWED_GLOBAL_IDENTIFIER`（`wrap` → `wrap_box`、`mini` → `mini_btn`）、`SHADOWED_VARIABLE_BASE_CLASS`（参数 `size` → `rect_size`）、`UNUSED_VARIABLE`（删掉未用的 `cp_idx`）、`INTEGER_DIVISION`×2（改 `int(x / 3.0)`）；另修 `GameManager.set_tutorial_level0_phase(phase)` 参数遮蔽成员 → `new_phase` |

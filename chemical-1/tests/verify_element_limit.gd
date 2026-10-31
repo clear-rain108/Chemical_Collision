@@ -181,6 +181,29 @@ func _run() -> void:
 	var stats = scene._start_child("ElementPoolStats")
 	_check(stats != null, "元素池有统计标签")
 
+	# P10.1：chip 紧凑化（104×28、9 个单行、不越出元素池）+ 固定池清单
+	var chip_y := -1.0
+	var same_row := true
+	var right_edge := 0.0
+	for s in ["Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn", "Br", "I"]:
+		var c = scene._start_child("ElementChip_" + s)
+		if c == null:
+			same_row = false
+			continue
+		if chip_y < 0.0:
+			chip_y = c.position.y
+		elif absf(c.position.y - chip_y) > 0.01:
+			same_row = false
+		right_edge = maxf(right_edge, c.position.x + c.size.x)
+	_check(chip_fe.size.x <= 110 and chip_fe.size.y <= 30,
+		"chip 已紧凑化（%.0f×%.0f）" % [chip_fe.size.x, chip_fe.size.y])
+	_check(same_row, "9 个 chip 排在同一行")
+	_check(right_edge <= 1040.0, "最右 chip 不越出元素池（右边界 %.0f）" % right_edge)
+	var base0 = scene._start_child("ElementPoolBase0")
+	var base1 = scene._start_child("ElementPoolBase1")
+	_check(base0 != null and base1 != null and base0.text.find("H") >= 0 and base1.text.find("Ca") >= 0,
+		"元素池列出固定加入的 20 种基础元素")
+
 	# 限制未开时 chip 只是预选 → 压暗
 	_check(chip_fe.modulate.a < 0.7, "限制关闭时 chip 压暗（a=%.2f）" % chip_fe.modulate.a)
 

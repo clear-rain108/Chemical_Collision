@@ -475,7 +475,8 @@ GameManager.init_game / init_tutorial
 - 状态变量：`GameManager.element_limit_enabled`（默认 `false`）+ `allowed_extra_elements`
 - 判定入口：`GameManager.is_element_allowed(sym)`（前 20 号按原子序数判定，其余查勾选列表）
 - 引擎拦截：`play_cards()` 对越界元素返回 `-8`；`GameUI._handle_result()` 显示"该元素不在本局牌库中"
-- UI：小页元素池（`ElementChip_符号` 共 9 个 + `ElementPoolStats` 统计）；
+- UI：小页元素池——9 个 `ElementChip_符号`（104×28，单行排布）+ `ElementPoolStats` 统计 +
+  分隔线下的固定池清单 `ElementPoolBase0/1`（由 `get_base_element_symbols()` 生成，恒为前 20 号）；
   未开限制时 chip 压暗（0.55）提示"只是预选"，**点任意 chip 会自动打开限制**
 - 教程局：`init_tutorial()` 强制 `element_limit_enabled = false`（预设手牌含 Fe 等副族）
 - 回归：`tests/verify_element_limit.gd`（数据层 / 引擎 / 教程 / UI / 帮助页五层）

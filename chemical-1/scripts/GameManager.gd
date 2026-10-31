@@ -704,10 +704,10 @@ func get_tutorial_display() -> String:
 
 
 # UI 更新第0关阶段时调用（同步镜像与控制器）
-func set_tutorial_level0_phase(phase: int) -> void:
-	tutorial_level0_phase = phase
+func set_tutorial_level0_phase(new_phase: int) -> void:
+	tutorial_level0_phase = new_phase
 	if tutorial_controller != null:
-		tutorial_controller.tutorial_level0_phase = phase
+		tutorial_controller.tutorial_level0_phase = new_phase
 		tutorial_controller._update_tutorial_level0_guidance()
 		_sync_tutorial_state_from_controller()
 
