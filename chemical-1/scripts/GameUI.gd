@@ -55,6 +55,23 @@ var tutorial_label: Label = null        # 教程引导文本
 # 三、游戏状态
 # ============================================================
 var selected_indices: Array = []        # 选中的手牌索引
+# ------------------------------------------------------------
+# 手牌重排（P7）：数据层的顺序才是真源
+#   · 拖动改的是 PlayerInfo.hand 的数组顺序，界面每次重建都照抄，不做第二套顺序；
+#   · selected_indices 只能存索引，重排 / 抽牌后必须按「卡片对象」重新映射，
+#     否则选中的会变成另一张牌（历史隐患，本次一并修掉）。
+# ------------------------------------------------------------
+var _drag_press_idx: int = -1           # 左键按下时命中的手牌索引（-1 = 未按下）
+var _drag_press_pos: Vector2 = Vector2.ZERO   # 按下时的全局鼠标坐标（算阈值用）
+var _drag_active: bool = false          # 是否已越过阈值、进入拖拽
+var _drag_from: int = -1                # 拖拽源下标（进入拖拽时快照）
+var _drag_slot: int = -1                # 当前插入槽位（0..n，表示插到第 slot 张之前）
+var _drag_grab: Vector2 = Vector2.ZERO  # 抓取点相对牌左上角的偏移
+var _drag_ghost: Control = null         # 跟手的幽灵牌
+var _drag_line: ColorRect = null        # 插入位置指示线
+var _drag_suppress_click: bool = false  # 拖拽刚结束 → 吞掉 Button 补发的 pressed
+var _reorder_btn: Button = null         # 「按序」按钮（仅在手动排列模式下可见）
+var _reorder_tip: String = ""           # 一次性提示：重排完成后显示在下方信息栏
 var _card_info_backup: String = ""      # hover 详情覆盖前的信息栏文本
 var _card_info_detail_shown: bool = false  # 信息栏当前是否在显示 hover 详情
 var step_mode: int = 0                  # 0=选牌 1=牌型 2=化合价 3=弃牌
@@ -65,6 +82,7 @@ var compound_selections: Array = []     # 化合价选择 [{symbol, valence}]
 var _hint_text: String = ""
 var _hint_owner: int = -1
 var _hint_hand_size: int = -1
+var _hint_order_sig: String = ""        # 提示生效时的手牌顺序签名（重排后提示自动作废）
 var hand_buttons: Array = []            # 手牌按钮列表
 # 悬停状态机（-1 = 无）：命中判定用静止坐标，悬停状态不影响判定结果
 var _hover_idx: int = -1                # 当前抬起的牌索引
@@ -85,6 +103,12 @@ const HOVER_LEAVE_DELAY_MS := 140       # 仍在手牌容器内但已不在任�
 const HOVER_ANIM_MS := 80               # 抬起 / 落下补间时长（三次缓出）
 const HOVER_EXIT_GRACE := 14.0          # 手牌上沿容错带：抬起牌顶边与容器顶边重合，贴边滑过不落牌
 
+# 拖拽重排（P7）
+const DRAG_THRESHOLD := 6.0             # 移动超过该距离才算拖拽（否则仍按点击处理）
+const DRAG_GHOST_ALPHA := 0.85          # 幽灵牌不透明度
+const DRAG_SOURCE_ALPHA := 0.28         # 原位牌淡出程度（表示"这张被拿起来了"）
+const DRAG_LINE_W := 3.0                # 插入指示线宽度
+
 # ---- GamePage 内的 CanvasItem 层级 ----
 # z_index 优先于树顺序：运行时新增的浮层必须挂进对应层容器，
 # 否则任何抬高 z 的节点（手牌选中 10 / 悬停 20）都会穿透浮层
@@ -92,6 +116,7 @@ const HOVER_EXIT_GRACE := 14.0          # 手牌上沿容错带：抬起牌顶�
 const Z_CONTENT := 0            # 内容层：桌面小卡 / 顶部状态栏 / 规则提醒
 const Z_HAND_SELECTED := 10     # 选中手牌
 const Z_HAND_HOVER := 20        # 悬停手牌（手牌内部最高）
+const Z_DRAG := 30              # 拖拽幽灵牌 / 插入线（高于悬停牌，仍低于模态 100）
 const Z_SCRIM := 100            # 模态层：全屏遮罩 + 弹窗
 const Z_TOAST := 110            # 提示层：警告框 / 引导提示（压在模态之上）
 
@@ -234,6 +259,7 @@ func _setup_pages() -> void:
 		deck_count_label = game_page.get_node_or_null("DeckCountLabel")
 		_ensure_layers()
 		_build_status_bar()
+		_build_hand_reorder_button()
 		if hint_button:
 			hint_button.toggled.connect(_on_hint_toggled)
 		if quit_button:
@@ -2202,6 +2228,52 @@ func _build_mini_card_button(card, custom_valence = null) -> Button:
 	return btn
 
 
+# ============================================================
+# 八之三、手牌「按序 ⇅」按钮（P7）
+# ============================================================
+# 只在「玩家手动拖拽过 + 当前可操作」时出现，是手动排列模式唯一的出口。
+# 位置 (704,528)：上不压 CardInfoLabel（底边 526）、下不压 HintButton（y 567），
+# 右侧到日志栏（x 824）留 8px，也不与手牌列的悬停抬起区重叠。
+func _build_hand_reorder_button() -> void:
+	if not game_page or is_instance_valid(_reorder_btn):
+		return
+	var b := _mkb("按序 ⇅", _on_hand_reorder, false)
+	b.name = "HandReorderBtn"
+	b.custom_minimum_size = Vector2(112, 30)
+	b.size = Vector2(112, 30)
+	b.position = Vector2(704, 528)
+	b.add_theme_font_size_override("font_size", 13)
+	b.tooltip_text = "按原子序数升序重新排列手牌（恢复自动排序）"
+	b.visible = false
+	_layer(0).add_child(b)
+	_reorder_btn = b
+
+
+func _update_hand_reorder_button() -> void:
+	if not is_instance_valid(_reorder_btn):
+		return
+	var cp = null
+	if game_manager != null:
+		cp = game_manager.get_current_player()
+	# AI 回合 / 自动排列模式下没有「恢复自动排序」可言 → 直接隐藏
+	_reorder_btn.visible = cp != null and not cp.is_ai and cp.hand_manual_order and _can_reorder_hand()
+
+
+func _on_hand_reorder() -> void:
+	if game_manager == null:
+		return
+	var cp = game_manager.get_current_player()
+	if cp == null or cp.is_ai:
+		return
+	_cancel_drag()
+	# force=true：只有这个显式入口能打断玩家排好的顺序，排完即退回自动模式
+	cp.sort_hand_by_atomic_number(true)
+	_reorder_tip = "已按原子序数重新排列手牌"
+	_update_hand_buttons()
+	_update_card_info_label()
+	_update_hand_reorder_button()
+
+
 func _update_log_label() -> void:
 	if not log_label or not game_manager: return
 	var new_logs = game_manager.flush_logs()
@@ -2219,10 +2291,17 @@ func _update_card_info_label() -> void:
 	if cp == null or cp.is_ai:
 		card_info_label.text = ""
 		return
+	# 一次性提示（重排完成等）：只显示到下一次刷新，不占用提示按钮的状态
+	if _reorder_tip != "":
+		card_info_label.text = _reorder_tip
+		_reorder_tip = ""
+		return
 	# 提示（P6）：_apply_hint() 写入的建议优先于默认「可用牌型」，
-	# 但局面一变（换人 / 手牌数变了）就作废，避免选中残留误导玩家
+	# 但局面一变（换人 / 手牌数变了 / 顺序被玩家重排）就作废，避免选中残留误导玩家
 	if _hint_text != "":
-		if _hint_owner == game_manager.get_current_player_index() and _hint_hand_size == cp.hand.size():
+		if _hint_owner == game_manager.get_current_player_index() \
+				and _hint_hand_size == cp.hand.size() \
+				and _hint_order_sig == _hand_order_sig(cp):
 			card_info_label.text = _hint_text
 			return
 		_clear_hint()
@@ -2393,6 +2472,7 @@ func _apply_hint() -> void:
 		_hint_text = "提示：当前没有能直接打出的组合，建议「跳过」或按上限弃牌。"
 		_hint_owner = game_manager.get_current_player_index()
 		_hint_hand_size = cp.hand.size()
+		_hint_order_sig = _hand_order_sig(cp)
 		_update_card_info_label()
 		return
 
@@ -2419,6 +2499,9 @@ func _apply_hint() -> void:
 	_hint_owner = game_manager.get_current_player_index()
 	_hint_hand_size = cp.hand.size()
 	_update_hand_buttons()
+	# 重建时可能自动排序（自动排列模式），签名必须在刷新之后取，
+	# 否则签名与真实顺序不一致，提示会在下一次刷新时被误判成"局面已变"而作废
+	_hint_order_sig = _hand_order_sig(cp)
 	_update_action_panel()
 	_update_card_info_label()
 
@@ -2427,6 +2510,7 @@ func _clear_hint() -> void:
 	_hint_text = ""
 	_hint_owner = -1
 	_hint_hand_size = -1
+	_hint_order_sig = ""
 	# 牌被改动 / 局面推进后，提示按钮不能继续按着，否则下次点击会先触发「取消」
 	if hint_button != null and is_instance_valid(hint_button) and hint_button.button_pressed:
 		hint_button.set_pressed_no_signal(false)
@@ -2462,6 +2546,12 @@ func _update_hand_buttons() -> void:
 	if not hand_container or not game_manager: return
 	# 重建会销毁当前 hover 的按钮，先还原信息栏，避免详情文本滞留
 	_restore_card_info()
+	# 拖拽幽灵牌 / 指示线也是容器子节点，重建前必须收掉，否则引用悬空
+	_cancel_drag()
+	var cp = game_manager.get_current_player()
+	# 选中快照必须抢在 hand_buttons.clear() 之前：旧按钮上的 card meta 是
+	# 「玩家看见并点中的那张牌」的唯一可靠来源（数据层顺序可能已被拖拽 / 抽牌排序改过）
+	var keep_selected: Array = _selected_cards(cp)
 	# 旧按钮即将销毁，悬停状态机必须一并清零，否则会指向失效索引
 	_hover_idx = -1
 	_hover_pending_idx = -1
@@ -2472,8 +2562,9 @@ func _update_hand_buttons() -> void:
 	hand_buttons.clear()
 	ai_triggered = false
 
-	var cp = game_manager.get_current_player()
-	if cp == null: return
+	if cp == null:
+		_update_hand_reorder_button()
+		return
 
 	if cp.is_ai:
 		var wl = Label.new()
@@ -2490,7 +2581,10 @@ func _update_hand_buttons() -> void:
 			var timer = get_tree().create_timer(1.5)
 			timer.timeout.connect(_ai_auto_play)
 	else:
+		# 自动排列模式下这里会排序；手动排列模式直接返回，玩家排好的顺序得以保留
 		cp.sort_hand_by_atomic_number()
+		# 顺序可能已变 → 用卡片对象把选中索引重算一遍
+		_remap_selection(cp, keep_selected)
 		for i in range(cp.hand.size()):
 			var card = cp.hand[i]
 			var btn = _build_card_button(card, i)
@@ -2498,6 +2592,53 @@ func _update_hand_buttons() -> void:
 			hand_buttons.append(btn)
 		_layout_hand_cards()
 		_restore_hover_after_rebuild()
+	# 「按序」按钮只在「手动排列 + 可操作阶段」出现
+	_update_hand_reorder_button()
+
+
+# -------- 选中状态：索引 ↔ 卡片对象 的双向保护 --------
+# selected_indices 只能存索引（出牌 / 化合价等处都按索引用），
+# 所以顺序一变就必须用卡片对象把索引重新算出来，不能直接沿用旧索引。
+func _selected_cards(cp) -> Array:
+	var out: Array = []
+	if cp == null: return out
+	for idx in selected_indices:
+		var i: int = int(idx)
+		if i < 0:
+			continue
+		var card = null
+		# 优先用「上一帧渲染的按钮」取对象：数据层顺序可能已经被外部改掉
+		# （拖拽落库、抽牌后自动排序），旧索引对不上新数组，但按钮 meta 里
+		# 记的仍是玩家真正看见并点中的那张牌
+		if i < hand_buttons.size() and is_instance_valid(hand_buttons[i]) \
+				and hand_buttons[i].has_meta("card"):
+			card = hand_buttons[i].get_meta("card")
+		elif i < cp.hand.size():
+			card = cp.hand[i]
+		if card != null:
+			out.append(card)
+	return out
+
+
+func _remap_selection(cp, cards: Array) -> void:
+	selected_indices.clear()
+	if cp == null: return
+	for card in cards:
+		var at: int = cp.hand.find(card)
+		# 同一张牌在手牌里最多出现一次；重复引用（测试里补牌会出现）只保留首个
+		if at >= 0 and not selected_indices.has(at):
+			selected_indices.append(at)
+
+
+# 手牌顺序签名：原子序数 + 符号按当前顺序拼起来。
+# 提示（_hint_text）靠它判断"玩家是否动过这张牌的位置"，顺序一变提示立即作废。
+func _hand_order_sig(cp) -> String:
+	if cp == null:
+		return ""
+	var parts: Array = []
+	for c in cp.hand:
+		parts.append("%d%s" % [c.atomic_number, c.symbol])
+	return ",".join(parts)
 
 
 # -------- 手牌重叠排列：一行居中，牌多时自动压缩间距 --------
@@ -2550,12 +2691,229 @@ func _apply_card_compact(btn: Button, compact: bool) -> void:
 		vl.size = Vector2(44, 18) if compact else Vector2(85, 18)
 
 
+# ============================================================
+# 十二之二、手牌拖拽重排（P7）
+# ============================================================
+# 为什么用 _process 轮询而不是 gui_input：
+#   Control 的 gui_input 信号与 Button 内部的 _gui_input 处理作用在同一个控件上，
+#   accept_event() 只能阻止事件继续传给其他控件，挡不住这个 Button 自己补发的
+#   pressed —— 拖完松手会顺带把那张牌选中。这里沿用项目已有的 _process 轮询风格，
+#   用 _drag_suppress_click 明确吞掉拖拽后的那次 pressed，行为可预测。
+# 顺序真源：拖动只改 PlayerInfo.hand 的数组顺序，界面每次重建照抄，不存第二套顺序。
+
+# 当前局面是否允许拖拽（教程关 / 非选牌阶段 / 非玩家回合一律禁止）
+func _can_reorder_hand() -> bool:
+	if game_manager == null or game_manager.is_game_over():
+		return false
+	# 教程关（含第 0 关引导阶段）禁用：引导高亮框按固定坐标绘制，拖牌会让提示错位
+	if game_manager.tutorial_level > 0 or game_manager.tutorial_level0_phase > 0:
+		return false
+	# 只在「选牌 / 弃牌」阶段允许，选牌型 / 选化合价时手牌是只读参照
+	if step_mode != 0 and step_mode != 3:
+		return false
+	if hand_container == null or not is_instance_valid(hand_container):
+		return false
+	if not hand_container.is_visible_in_tree():
+		return false
+	if game_page == null or not game_page.visible:
+		return false
+	return true
+
+
+# 每帧驱动拖拽状态机（headless 无真实鼠标，直接跳过）
+func _update_hand_drag() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	if not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		if _drag_active:
+			_finish_drag()
+		_drag_press_idx = -1
+		return
+	if _drag_active:
+		_update_drag_follow()
+		return
+	if not _can_reorder_hand():
+		_drag_press_idx = -1
+		return
+	if _drag_press_idx < 0:
+		# 首次检测到按下：直接用命中判定取源牌，不依赖悬停状态机是否已经抬起
+		# （压在 60ms 稳定延迟内的快速拖动也能立刻生效）
+		var mp: Vector2 = hand_container.get_local_mouse_position()
+		var hit: int = _hover_hit_index(mp)
+		if hit >= 0:
+			_drag_press_idx = hit
+			_drag_press_pos = get_global_mouse_position()
+			_drag_suppress_click = false
+		return
+	if _drag_press_idx >= hand_buttons.size():
+		_drag_press_idx = -1
+		return
+	# 未越过阈值 = 普通点击，交给 Button 自己的 pressed
+	if get_global_mouse_position().distance_to(_drag_press_pos) >= DRAG_THRESHOLD:
+		_begin_drag(_drag_press_idx)
+
+
+func _begin_drag(idx: int) -> void:
+	if idx < 0 or idx >= hand_buttons.size():
+		return
+	var btn = hand_buttons[idx]
+	if not is_instance_valid(btn):
+		return
+	_drag_active = true
+	_drag_from = idx
+	_drag_slot = idx
+	# 拖拽期间吞掉 Button 补发的 pressed，避免"拖完顺带选中"
+	_drag_suppress_click = true
+	# 收起悬停态：牌要淡出，抬起补间和详情文本都得先还原
+	_set_hover_index(-1)
+	_restore_card_info()
+	var base: Vector2 = btn.get_meta("base_pos", btn.position)
+	_drag_grab = hand_container.get_local_mouse_position() - base
+	btn.modulate = Color(1, 1, 1, DRAG_SOURCE_ALPHA)
+	_drag_ghost = _make_drag_ghost(btn)
+	_drag_line = _make_drag_line()
+	_update_drag_follow()
+
+
+# 幽灵牌：复制被拖的牌（复刻牌面），只要不吃鼠标就不会干扰判定
+func _make_drag_ghost(src: Button) -> Control:
+	var ghost := src.duplicate() as Control
+	if ghost == null:
+		return null
+	ghost.name = "DragGhost"
+	ghost.z_index = Z_DRAG
+	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ghost.modulate = Color(1, 1, 1, DRAG_GHOST_ALPHA)
+	hand_container.add_child(ghost)
+	return ghost
+
+
+# 插入位置指示线（主题蓝竖线，高度与牌同高）
+func _make_drag_line() -> ColorRect:
+	var line := ColorRect.new()
+	line.name = "DragInsertLine"
+	line.color = BORDER_FOCUS
+	line.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	line.z_index = Z_DRAG
+	line.size = Vector2(DRAG_LINE_W, CARD_H)
+	hand_container.add_child(line)
+	return line
+
+
+func _update_drag_follow() -> void:
+	var mp: Vector2 = hand_container.get_local_mouse_position()
+	if is_instance_valid(_drag_ghost):
+		_drag_ghost.position = mp - _drag_grab
+	_drag_slot = _insert_slot_at(mp.x)
+	if is_instance_valid(_drag_line):
+		var lx: float = _slot_x(_drag_slot)
+		_drag_line.position = Vector2(lx - DRAG_LINE_W * 0.5, _hand_base_y())
+		_drag_line.size = Vector2(DRAG_LINE_W, CARD_H)
+
+
+# 插入槽位：鼠标落在哪张牌中点的左侧就插在它前面，全在右侧则插到末尾
+func _insert_slot_at(x: float) -> int:
+	var n: int = hand_buttons.size()
+	for i in range(n):
+		var b = hand_buttons[i]
+		if not is_instance_valid(b):
+			continue
+		var bx: float = b.get_meta("base_pos", b.position).x
+		if x < bx + CARD_W * 0.5:
+			return i
+	return n
+
+
+# 槽位对应的 x（用静止坐标 base_pos，不受落下补间影响）
+func _slot_x(slot: int) -> float:
+	var n: int = hand_buttons.size()
+	if n == 0:
+		return hand_container.size.x * 0.5
+	if slot < 0:
+		slot = 0
+	if slot < n:
+		var b = hand_buttons[slot]
+		if is_instance_valid(b):
+			return b.get_meta("base_pos", b.position).x
+	var last = hand_buttons[n - 1]
+	if is_instance_valid(last):
+		return last.get_meta("base_pos", last.position).x + CARD_W
+	return hand_container.size.x * 0.5
+
+
+func _hand_base_y() -> float:
+	return hand_container.size.y - CARD_H - HOVER_LIFT
+
+
+# 松手：槽位 → 目标下标 → 改数据层顺序 → 整排重建
+# drop_pos 默认取真实鼠标位置；自动化测试（headless 鼠标恒在 0,0）可注入落点
+func _finish_drag(drop_pos: Vector2 = Vector2.INF) -> void:
+	if not _drag_active:
+		return
+	var from: int = _drag_from
+	var slot: int = _drag_slot
+	var gp: Vector2 = get_global_mouse_position() if drop_pos == Vector2.INF else drop_pos
+	var in_zone: bool = hand_container.get_global_rect().has_point(gp)
+	_reset_drag_visuals()
+	_drag_active = false
+	_drag_from = -1
+	_drag_slot = -1
+	_drag_press_idx = -1
+	var cp = game_manager.get_current_player() if game_manager != null else null
+	var moved: bool = false
+	if in_zone and cp != null and not cp.is_ai and from >= 0 and slot >= 0:
+		# 抽出源牌后，落在它后面的槽位整体左移一格
+		var to: int = slot if slot <= from else slot - 1
+		moved = cp.move_card(from, to)
+	if moved:
+		_reorder_tip = "已切换为手动排列，点『按序 ⇅』可恢复自动排序"
+	else:
+		_reorder_tip = ""
+	# 顺序已变（或需要复位淡出效果）→ 整排重建；拖拽后的 pressed 由抑制标志吞掉
+	_update_hand_buttons()
+	_update_card_info_label()
+	_update_hand_reorder_button()
+	# 抑制标志延后一帧清除：pressed 可能在本帧稍后由 Button 发出
+	call_deferred("_clear_drag_suppress")
+
+
+func _clear_drag_suppress() -> void:
+	_drag_suppress_click = false
+
+
+# 清掉幽灵牌 / 指示线，并把原位牌的不透明度还原
+func _reset_drag_visuals() -> void:
+	if is_instance_valid(_drag_ghost):
+		_drag_ghost.queue_free()
+	_drag_ghost = null
+	if is_instance_valid(_drag_line):
+		_drag_line.queue_free()
+	_drag_line = null
+	if _drag_from >= 0 and _drag_from < hand_buttons.size():
+		var b = hand_buttons[_drag_from]
+		if is_instance_valid(b):
+			b.modulate = Color(1, 1, 1, 1)
+
+
+# 重建手牌 / 切阶段时强制收尾（不落到数据层，顺序不变）
+func _cancel_drag() -> void:
+	_reset_drag_visuals()
+	_drag_active = false
+	_drag_from = -1
+	_drag_slot = -1
+	_drag_press_idx = -1
+
+
 # -------- 悬停判定：固定矩形 + 状态机（不用 mouse_entered/exited） --------
 # 卡牌抬起会改变自身几何。若用引擎 enter/exit 判定就会自激抖动：
 # 抬起 → 让出底部 20px → exited → 落回 → entered → 再抬起 → ……
 # 重叠区还会出现两张牌互相抢 hover。这里改为用「静止坐标」算命中区，
 # 悬停状态永远不参与判定，因此不可能自激。
 func _process(_delta: float) -> void:
+	# 拖拽优先：拖拽期间不跑悬停状态机（否则牌会随鼠标反复抬起/落下抖动）
+	_update_hand_drag()
+	if _drag_active:
+		return
 	_update_hand_hover()
 
 
@@ -2781,6 +3139,9 @@ func _build_card_button(card, idx: int) -> Button:
 	btn.custom_minimum_size = Vector2(CARD_W, CARD_H)
 	btn.size = Vector2(CARD_W, CARD_H)   # Control 容器不分配尺寸，需显式设置
 	btn.mouse_filter = Control.MOUSE_FILTER_STOP
+	# 牌对象本身也存一份：重建 / 重排后靠它确认"这个按钮画的是哪张牌"，
+	# 不再依赖 hand_idx（索引会随重排变化）
+	btn.set_meta("card", card)
 	# 不用原生 tooltip：它会浮在鼠标旁遮住整排手牌，改由下方 CardInfoLabel 显示
 
 	var is_selected: bool = idx in selected_indices
@@ -2919,6 +3280,10 @@ func _update_valence_buttons() -> void:
 # 十四、用户交互回调
 # ============================================================
 func _on_card_clicked(index: int) -> void:
+	# 拖拽结束后 Button 会补发一次 pressed：吞掉，避免"拖完顺带选中"
+	if _drag_suppress_click:
+		_drag_suppress_click = false
+		return
 	if step_mode != 0 and step_mode != 3: return
 	# 玩家自己动牌 → 提示作废，回到用户自己的选择
 	if _hint_text != "":

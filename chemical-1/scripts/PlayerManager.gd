@@ -14,10 +14,13 @@ const INITIAL_HAND_SIZE = 8
 # ============================================================
 class PlayerInfo:
 	var player_name: String = ""
-	var hand: Array = []
+	var hand: Array = []                 # 手牌，数组顺序 = 界面显示顺序（唯一真源）
 	var is_ai: bool = false
 	var has_passed: bool = false         # 本轮是否跳过
 	var clan_bomb_cooling: bool = false  # 是否被族炸冷却
+	# 手动排列模式：玩家拖动过手牌后置 true，此后自动排序全部失效，
+	# 直到「按序」按钮（force=true）或新一局（init_game 重建 PlayerInfo）把它清掉。
+	var hand_manual_order: bool = false
 
 	func _init(p_name: String, ai: bool = false):
 		player_name = p_name
@@ -36,8 +39,31 @@ class PlayerInfo:
 			if idx >= 0:
 				hand.remove_at(idx)
 
-	func sort_hand_by_atomic_number() -> void:
+	# 手牌按原子序数升序排列。
+	# force=false（默认）：玩家处于手动排列模式时直接返回 —— 抽牌 / 出牌 / 换人
+	#   引发的刷新都不会打回按序，玩家排好的顺序得以保留。
+	# force=true：只有「按序」按钮这类显式操作才用，排完即退出手动模式。
+	func sort_hand_by_atomic_number(force: bool = false) -> void:
+		if hand_manual_order and not force:
+			return
 		hand.sort_custom(func(a, b): return a.atomic_number < b.atomic_number)
+		hand_manual_order = false
+
+	# 拖拽重排：把 from_idx 的牌移到 to_idx（to_idx 是落定后的目标下标，非插入槽）。
+	# 移动成功后进入手动排列模式；index 越界 / 原地不动一律返回 false，不动手牌
+	# （返回 false 时调用方可以据此跳过整排重绘）。
+	func move_card(from_idx: int, to_idx: int) -> bool:
+		var n: int = hand.size()
+		if from_idx < 0 or from_idx >= n:
+			return false
+		to_idx = clampi(to_idx, 0, n - 1)
+		if to_idx == from_idx:
+			return false
+		var card = hand[from_idx]
+		hand.remove_at(from_idx)
+		hand.insert(to_idx, card)
+		hand_manual_order = true
+		return true
 
 	func get_hand_display() -> String:
 		if hand.is_empty():

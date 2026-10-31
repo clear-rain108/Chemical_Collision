@@ -1,7 +1,7 @@
 # UI 视觉打磨推进计划
 
 > **最后更新**: 2026-10-31  
-> **当前状态**: P1 / P1.x / P2 / P3 / P5 / P6 完成（P6：提示按钮自动选牌 + 开始页代码生成 + 旧帮助页清理，含 §8.5 三处收尾修复）  
+> **当前状态**: P1 / P1.x / P2 / P3 / P5 / P6 / P7 完成（P7：手牌拖拽重排 + 选中索引修复，见 §9）  
 > **相关文档**: [ARCHITECTURE.md](./ARCHITECTURE.md) 第 8 节「表现层 - GameUI.gd」
 
 ---
@@ -17,7 +17,8 @@
 | **P3** | 动效与排版：页面淡入 / 按钮缩放发光 / 卡牌字号 | ✅ 完成（2026-10-30，见 §4.1） |
 | **P5** | 帮助中心重构：3 个独立页合并为单页 3 Tab + 滚动 + 卡片（Plan B 新手向） | ✅ 完成（2026-10-30，见 §7） |
 | **P6** | 提示按钮「自动选最优组合 + 解释」/ 开始页全部代码生成 / 旧帮助页节点清理 | ✅ 完成（2026-10-31，见 §8；含 §8.5 收尾修复） |
-| P4 / P7 | 美术升级方向文档的其余条目（卡牌重绘 / 字体 / 图标 / 音频） | ⏳ 未展开（核对结果见 §6） |
+| **P7** | 手牌拖拽重排（拖动换位 / 一次拖动转手动排列 / 「按序 ⇅」恢复 / 新牌追加末尾 / `selected_indices` 索引→对象修复） | ✅ 完成（2026-10-31，见 §9） |
+| P4 / P7 其余 | 美术升级方向文档的其余条目（卡牌重绘 / 字体 / 图标 / 音频 / A5 悬停与选中放大） | ⏳ 未展开（核对结果见 §6） |
 
 ---
 
@@ -275,11 +276,11 @@ R4 容错带内外与横向越界），既有 `_test_case()` / `_test_hover_debo
 
 ## 5. 验证基线
 
-13 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
+16 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
 
 ```bat
 set GD=D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe
-for %f in (hand_layout hand_runtime integration constraint logger organic refactor sequence sequence_table tutorial ai_discard motion help_page) do (
+for %f in (hand_layout hand_runtime hand_reorder integration constraint logger organic refactor sequence sequence_table tutorial ai_discard motion help_page hint start_page) do (
   %GD% --path . --headless --script res://tests/verify_%f.gd
 )
 ```
@@ -287,8 +288,11 @@ for %f in (hand_layout hand_runtime integration constraint logger organic refact
 | 测试 | 覆盖 |
 |------|------|
 | `verify_hand_layout` | 手牌尺寸/居中/叠卡步长/紧凑牌面/悬停上浮/**防抖状态机**/**选中与悬停样式**/**悬停流畅化（R1–R4）**/**警告 toast 布局**/**样式工厂**（120+ 条） |
+| `verify_hand_reorder` | **手牌拖拽重排 P7**（自动排列回归锁 / move_card 边界 / 拖拽落库 / 按钮 card meta 对应 / 手动模式不打回按序 / 抽牌追加末尾 / 选中索引跟随对象 / 拖出区外取消 / 插入槽判定 / 顺序签名 / 按序恢复 / 补发 pressed 被吞 / 18 张布局）（44 条） |
 | `verify_motion` | **页面淡入**（同色底 / 目标页 modulate / visible 同步 / 中途切换）/ **按钮缩放**（pivot、1.05、0.96、禁用不缩放、单补间、悬停发光）/ **卡牌字号**（28 / 14，紧凑 21 / 12，互不重叠）（44 条） |
 | `verify_hand_runtime` | 真实手牌渲染与点击流程 |
+| `verify_hint` | 提示引擎与「提示」按钮（建议合法性交叉验证） |
+| `verify_start_page` | 开始页人数/AI 联动、规则开关、补充规则入口 |
 | `verify_integration` | 端到端对局 |
 | `verify_constraint` | 化合价与牌型约束 |
 | `verify_logger` | 日志转发 |
@@ -391,6 +395,35 @@ for %f in (hand_layout hand_runtime integration constraint logger organic refact
 **刻意不做**：
 
 - ~~不改 `Main.tscn`（旧 3 页原样保留，`visible=false`，作为文案校对备份；确认无需回查后可整段删除）~~
+
+---
+
+## 9. P7 完成清单（手牌拖拽重排）
+
+**问题**：手牌顺序完全由系统决定（每次刷新强制按原子序数升序），玩家没法按自己的思路整理；
+同时 `selected_indices` 只存下标，顺序一变（抽牌后自动排序 / 重排）选中就会指向另一张牌。
+
+**方案**：拖动换位 + 一次拖动转入手动排列 + 「按序 ⇅」恢复自动排序；顺序的唯一真源是 `PlayerInfo.hand`。
+
+| 改动 | 位置 | 要点 |
+|---|---|---|
+| `hand_manual_order` + `move_card()` | `PlayerManager.PlayerInfo` | 手动模式标志；`move_card` = `remove_at` + `insert`，成功即进入手动模式 |
+| `sort_hand_by_atomic_number(force := false)` | 同上 | 手动模式下直接 return → `GameManager` / `TutorialController` 既有调用点零改动 |
+| 拖拽状态机 | `GameUI.gd` §十二之二 | `_process → _update_hand_drag()` 轮询 + 6px 阈值；幽灵牌 + 插入线（`Z_DRAG = 30`）；松手落库、拖出区外取消 |
+| 「按序 ⇅」按钮 | `GameUI.gd` §八之三 | 仅手动模式显示，位置 (704, 528)，与 CardInfoLabel / HintButton / 日志栏均不重叠；点击走 `force = true` 并退回自动模式 |
+| 选中索引 → 卡片对象 | `GameUI._selected_cards()` / `_remap_selection()` | 按钮 `set_meta("card", card)`；重建前用**旧按钮的 meta** 取对象（必须早于 `hand_buttons.clear()`），排序后再用 `hand.find()` 重算索引 |
+| 提示作废 | `_hint_order_sig` | 顺序签名一变就作废 `_hint_text`，避免「提示的牌」与「高亮的牌」错位 |
+| `verify_hand_reorder.gd`（新增） | `tests/` | 44 条断言，含「自动排列回归锁」 |
+
+**为什么不用 `gui_input`**：`accept_event()` 只阻止事件继续传给**其他**控件，同一个 Button 的
+`_gui_input` 仍会执行并在松手时补发 `pressed`，结果就是「拖完顺手把牌选中」。改用轮询 +
+`_drag_suppress_click`，并在松手后 `call_deferred` 清除标志（pressed 与实际 `_process` 的先后顺序不确定）。
+
+**刻意不做**：纵向拖到桌面出牌（会误触出牌流程）、拖拽排序补间动画（整排重绘是瞬时的，补间会与重建打架）、
+AI 手牌顺序记忆（AI 不需要）、拖动时自动滚动手牌（单行且全部可见）。
+
+**验收**：16 个测试套件全绿（新增 `verify_hand_reorder` 44 条）；真实窗口 `--quit-after 240` 与
+真实窗口跑 `verify_hand_reorder` 均无 ERROR/WARNING。
   → P6 已按该注记整段删除（见 §8）
 - 不引入切 Tab 动画（避免与 `verify_motion` 的"切 Tab 不淡入"断言冲突）
 - 不给图鉴迷你卡加 hover / 点击交互（图鉴是查阅用的静态页）

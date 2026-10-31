@@ -75,6 +75,7 @@ chemical-1/
 │   ├── verify_tutorial.gd             ← 教程控制器集成测试
 │   ├── verify_ai_discard.gd           ← AI 上限自动弃牌测试（Q1+Q2）
 │   ├── verify_hand_layout.gd          ← 手牌布局 / 悬停状态机 / 样式工厂 / 警告 toast
+│   ├── verify_hand_reorder.gd         ← 手牌拖拽重排（手动排列 / 按序恢复 / 选中索引进→对象）
 │   ├── verify_motion.gd               ← 动效与排版：页面淡入 / 按钮缩放 / 卡牌字号
 │   └── verify_help_page.gd            ← 帮助中心：结构 / Tab 懒加载 / 字号 / 牌库数字
 ├── CHEMICAL_COLLISION_GAME.md         ← 游戏设计文档
@@ -208,9 +209,17 @@ CompoundSolver.is_compound() / is_organic()
 
 ```
 PlayerManager.PlayerInfo
-属性: player_name, hand, is_ai, has_passed, clan_bomb_cooling
-方法: get_hand_count(), add_card(), remove_cards(), sort_hand_by_atomic_number()
+属性: player_name, hand, is_ai, has_passed, clan_bomb_cooling, hand_manual_order
+方法: get_hand_count(), add_card(), remove_cards(),
+      sort_hand_by_atomic_number(force := false), move_card(from_idx, to_idx)
 ```
+
+> **手牌顺序的唯一真源是 `hand` 数组本身**，界面每次都照抄数组顺序，不存第二套顺序。
+> - `sort_hand_by_atomic_number()`：`hand_manual_order` 为 true 时直接返回 —— 抽牌、
+>   出牌、换人触发的所有自动排序都不会打回玩家的手动排列；`force=true` 只给「按序」按钮用，
+>   排完即把标志复位为 false（回到自动模式）。
+> - `move_card(from, to)`：拖拽落库的唯一入口，`remove_at` + `insert`，成功即进入手动模式；
+>   越界 / 原地不动返回 false，调用方据此跳过整排重绘。
 
 ### 核心变量
 
@@ -408,6 +417,37 @@ HelpPage (Control, full rect, visible=false)
 布局 `_layout_hand_cards()`：一行居中；张数超过"不重叠容量"后按
 `step = min(CARD_STEP_MAX=60, (可用宽 - 牌宽) / (n-1))` 压缩重叠，
 重叠露出不足 72% 时切换紧凑牌面（内容左对齐，保证左侧窄条可读）。
+
+### 手牌重排（拖拽 + 按序按钮）
+
+玩家可以拖动任意一张手牌换位置。**顺序的唯一真源是 `PlayerInfo.hand` 数组**，
+界面每次重建都照抄数组顺序，不存在第二套「显示顺序」。
+
+| 环节 | 实现 | 关键点 |
+|------|------|--------|
+| 起手判定 | `_process → _update_hand_drag()` 轮询，位移 `DRAG_THRESHOLD = 6px` 才算拖拽 | 不接 `gui_input`：`accept_event()` 只挡得住「传给别的控件」的事件，挡不住同一个 Button 自己补发的 `pressed`，拖完会顺带把牌选中 |
+| 拖拽视觉 | 原位牌 `modulate.a = 0.28`；半透明幽灵牌（`duplicate()`，`mouse_filter = IGNORE`）+ 3px 主题蓝插入线，均挂 `hand_container`，`z = Z_DRAG(30)` | 与 A1 幽灵牌动画同一约定：独立节点、不改容器布局时序；重建前 `_cancel_drag()` 一律回收 |
+| 落点 | 鼠标 x 落在某张牌中点左侧 → 插入该牌之前；全在右侧 → 末尾（`_insert_slot_at` / `_slot_x`，用 `base_pos` 静止坐标） | 用静止坐标而不是当前 `position`，否则落下补间未走完时指示线会漂 |
+| 落库 | `PlayerInfo.move_card(from, to)` = `remove_at` + `insert`，成功即 `hand_manual_order = true`；`to = slot - 1 if slot > from` | 越界 / 原地不动返回 false → 不重绘；松手在容器外（`in_zone == false`）丢弃本次拖拽 |
+| 自动排序失效 | `sort_hand_by_atomic_number()` 在 `hand_manual_order` 为 true 时直接返回 | `GameManager`（抽牌后）与 `TutorialController` 的既有调用点无需改动，自动全部跳过 |
+| 恢复按序 | 手牌区下方「按序 ⇅」按钮（`_reorder_btn`，仅手动模式可见）→ `sort_hand_by_atomic_number(true)` | `force=true` 是唯一能打断手动顺序的入口，排完标志复位回自动模式 |
+| 禁用场景 | `_can_reorder_hand()`：教程关（`tutorial_level > 0` 或 `tutorial_level0_phase > 0`，含第零关练习阶段）/ `step_mode` 非 0、3 / 非玩家回合 / 页面不可见 | 教程引导高亮框按固定坐标绘制，拖牌会让提示错位 |
+
+**坑：`selected_indices` 是索引，顺序一变就全部失效。**
+选中的牌必须按「卡片对象」跟踪，而对象只能从**上一帧按钮的 `card` meta** 拿到
+（数据层数组此刻可能已被 `move_card` / 抽牌后的排序改过，旧索引取 `hand[i]` 会取到别的牌）：
+
+```
+_build_card_button()      → btn.set_meta("card", card)
+_update_hand_buttons()    → ① _selected_cards(cp)：遍历 selected_indices，用 hand_buttons[i].get_meta("card")
+                            取对象（必须抢在 hand_buttons.clear() 之前！）
+                          ② sort_hand_by_atomic_number()
+                          ③ _remap_selection(cp, cards)：cp.hand.find(card) 重新算出索引
+```
+
+提示文本同理：`_hint_owner` + `_hint_hand_size` 之外再加 `_hint_order_sig`（顺序签名），
+玩家重排后提示立即作废，避免「提示的牌」和「高亮的牌」对不上。
+回归测试：`tests/verify_hand_reorder.gd`（44 项，其中「自动排列回归锁」保证默认行为不变）。
 
 ### 悬停交互（防抖动状态机）
 
