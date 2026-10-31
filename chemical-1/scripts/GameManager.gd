@@ -56,6 +56,10 @@ var sequence_rules_enabled: bool = false       # 顺序规则开关
 # 允许卤族互化：默认 false（硬规则 —— F/Cl/Br/I 之间不可互相「化合」）。
 # 仅放开「化合物」牌型；同族族炸（F+Cl 当族炸打出）本来就不是化合，始终合法。
 var halogen_exchange_allowed: bool = false
+# 元素限制：默认 false（29 种元素全上桌）。
+# 打开后牌库 = 前 20 号元素（H~Ca）+ allowed_extra_elements（副族 / Br / I）。
+var element_limit_enabled: bool = false
+var allowed_extra_elements: Array = []
 var direction_clockwise: bool = true           # 出牌方向（true=顺时针, false=逆时针）
 var sequence_constraint: int = -1              # 顺序指定牌型约束（-1=无约束）
 var sequence_constraint_active: bool = false   # 顺序约束是否激活
@@ -114,7 +118,7 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> bool:
 	logger.clear_logs()
 
 	database = CardDatabaseScript.new()
-	database.generate_deck()
+	database.generate_deck(get_allowed_symbols())
 	database.shuffle()
 
 	# 创建玩家（人类在前，AI在后）
@@ -132,12 +136,17 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> bool:
 
 	phase = 1
 	logger.add_log("===== 游戏开始 =====")
-	if organic_rules_enabled or sequence_rules_enabled or halogen_exchange_allowed:
+	if organic_rules_enabled or sequence_rules_enabled or halogen_exchange_allowed or element_limit_enabled:
 		var rules_list: Array = []
 		if organic_rules_enabled: rules_list.append("有机物胜利")
 		if sequence_rules_enabled: rules_list.append("顺序牌型")
 		if halogen_exchange_allowed: rules_list.append("允许卤族互化")
+		if element_limit_enabled:
+			var extra_txt = "无额外元素" if allowed_extra_elements.is_empty() else "/".join(allowed_extra_elements)
+			rules_list.append("元素限制（前 20 号 + %s）" % extra_txt)
 		logger.add_log("【补充规则已启用】" + " + ".join(rules_list))
+	if element_limit_enabled:
+		logger.add_log("【元素限制】牌库 %d 种元素 · %d 张牌" % [get_allowed_element_count(), get_deck_size()])
 	logger.add_log("当前回合: %s (自由出牌)" % players[current_player_index].player_name)
 	return true
 
@@ -164,6 +173,15 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 		return -1
 
 	var player = players[player_index]
+
+	# -------- 元素限制（牌库构成规则，兜底校验）--------
+	# 正常路径下越界元素不会出现在手牌里（牌库已按限制生成），
+	# 这里只拦注入 / 存档 / 教程预设之类的意外情况。
+	if element_limit_enabled:
+		for c in cards:
+			if not is_element_allowed(c.symbol):
+				return -8
+
 	var skip_bomb = custom_valences.size() >= 2
 	# 合成有机物时也跳过族炸检测
 	if custom_valences.has("_organic"):
@@ -628,6 +646,8 @@ func init_tutorial(level: int) -> bool:
 	sequence_constraint = -1
 	sequence_constraint_active = false
 	halogen_exchange_allowed = false   # 教程局同样默认禁止卤族互化
+	element_limit_enabled = false      # 教程局永远 29 种元素全量（预设手牌含 Fe 等副族）
+	allowed_extra_elements.clear()
 	logger.clear_logs()
 	tutorial_level0_phase = 0
 	ai_no_draw = false
@@ -813,6 +833,37 @@ func get_sequence_rules_enabled() -> bool:
 
 func get_halogen_exchange_allowed() -> bool:
 	return halogen_exchange_allowed
+
+# -------- 元素限制（补充规则）--------
+func get_element_limit_enabled() -> bool:
+	return element_limit_enabled
+
+func get_allowed_extra_elements() -> Array:
+	return allowed_extra_elements.duplicate()
+
+# 一张牌是否允许出现在本局：关闭限制 → 全放行；开启 → 前 20 号 + 勾选的扩展元素
+func is_element_allowed(sym: String) -> bool:
+	if not element_limit_enabled:
+		return true
+	var num := CardDatabaseScript.get_atomic_number(sym)
+	if num > 0 and num <= CardDatabaseScript.BASE_ELEMENT_MAX_NUMBER:
+		return true
+	return sym in allowed_extra_elements
+
+# 本局牌库的元素符号集合（空数组 = 29 种全量）
+func get_allowed_symbols() -> Array:
+	return CardDatabaseScript.get_allowed_symbols(element_limit_enabled, allowed_extra_elements)
+
+# 本局牌库包含多少种元素
+func get_allowed_element_count() -> int:
+	var syms := get_allowed_symbols()
+	if syms.is_empty():
+		return CardDatabaseScript.get_element_data().size()
+	return syms.size()
+
+# 本局牌库总张数（关闭限制 = 182）
+func get_deck_size() -> int:
+	return CardDatabaseScript.get_deck_size(get_allowed_symbols())
 
 # 牌组是否含 ≥2 种卤素（F/Cl/Br/I）——「卤族互化」的唯一判据。
 # HintAdvisor / AIPlayer / GameUI 全部复用本函数，避免多处拷贝判据走样。

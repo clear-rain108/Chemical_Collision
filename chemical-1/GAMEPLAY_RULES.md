@@ -1,6 +1,6 @@
 # 化学碰撞 — 玩法规则与程序实现文档
 
-> **版本**: 16.3  
+> **版本**: 16.4  
 > **日期**: 2026-10-31  
 > **引擎**: Godot 4.x / GDScript
 
@@ -316,17 +316,20 @@ GameManager.init_game / init_tutorial
 
 ## 16. 补充规则
 
-补充规则由开始页设置卡里的**三个独立开关**控制（互不影响）：
+补充规则集中在开始页的**「补充规则」小页**里（`SuppRulesPage`），四条开关互不影响；
+开始页设置卡只保留一个入口按钮（`SupplementaryHelpBtn`，显示"补充规则 · N 项已开启 ▸"）
+和一行摘要（`SuppRulesSummary`）。
 
 | 开关 | 节点名 | 开启后 |
 |------|--------|--------|
 | 有机物胜利规则 | `OrganicCheckBox` | 允许打出有机物，且打出即获胜 |
 | 顺序牌型规则 | `SequenceCheckBox` | 允许打出顺序牌，触发方向反转 + 指定牌型 |
 | 允许卤族互化 | `HalogenCheckBox` | 卤素之间可以组成化合物（默认禁止，见 §16.3） |
+| 元素限制 | `ElementLimitCheckBox` | 牌库只保留前 20 号元素 + 自选扩展（默认关闭，见 §16.4） |
 
-三个开关的状态在开局时写入 `GameManager.organic_rules_enabled` / `sequence_rules_enabled` /
-`halogen_exchange_allowed`（`_init_game()` 从勾选框读入）；任一开启，游戏页信息栏会显示
-"【补充规则】有机物胜利 + 顺序牌型 + 允许卤族互化"，结算页「本局规则」也会给出 ✓/✗。
+四条开关的状态在开局时写入 `GameManager.organic_rules_enabled` / `sequence_rules_enabled` /
+`halogen_exchange_allowed` / `element_limit_enabled` + `allowed_extra_elements`（`_init_game()` 从小页读入）；
+任一开启，游戏页信息栏会显示"【补充规则】…"，结算页「本局规则」也会给出 ✓/✗ 与元素种数。
 
 ### 16.1 有机物胜利规则
 
@@ -428,6 +431,55 @@ GameManager.init_game / init_tutorial
 - 教程局：`init_tutorial()` 复位为 `false`（教程永远禁止卤族互化）
 - 回归：`tests/verify_halogen.gd`（引擎 / 提示 / AI / UI / 教程五层）
 
+### 16.4 元素限制
+
+#### 定义
+
+默认关闭：牌库 29 种元素全部上桌。打开后，牌库只保留**前 20 号元素**
+（H ~ Ca：H/He/Li/Be/B/C/N/O/F/Ne/Na/Mg/Al/Si/P/S/Cl/Ar/K/Ca），
+其余元素由玩家在小页的「元素池」里**逐个勾选**加入。
+
+#### 可勾选的扩展元素（9 种，取自现有牌库）
+
+| 分组 | 元素 | 说明 |
+|------|------|------|
+| 副族 | Cr / Mn / Fe / Co / Ni / Cu / Zn | 各 4 张；勾选后化合物更丰富（如 FeCl₃、CuO） |
+| 卤族 | Br / I | 各 10 张；勾选后卤族族炸从 F+Cl 扩展为 4 选 2 |
+
+> 扩展列表由 `CardDatabase.get_optional_elements()` 从 `get_element_data()` **自动派生**
+> （原子序数 > 20 的元素全部列出），后续新增元素无需改 UI。
+
+#### 牌库张数
+
+| 元素池 | 种数 | 张数 |
+|--------|------|------|
+| 仅前 20 号（默认勾选状态） | 20 | 134 |
+| 前 20 号 + 1 个副族 | 21 | 138 |
+| 前 20 号 + 9 个扩展全勾 | 29 | 182（与不限制完全一致） |
+
+#### 行为
+
+| 局面 | 关闭（默认） | 开启 |
+|------|--------------|------|
+| 牌库构成 | 29 种 / 182 张 | 前 20 号 + 勾选扩展 |
+| 手牌 / 提示 / AI | 全量元素 | 只会出现牌库内的元素 |
+| 族炸 | 4 种卤素任取 2 张 | 只剩 F/Cl（未勾 Br/I 时） |
+| 顺序牌型 | 1~53 连续段都可 | 只有 1~20 连续段（勾 Fe 后可用 24~30 段） |
+| 打出越界元素牌 | — | `play_cards()` 返回 `-8`（兜底，正常拿不到该牌） |
+
+#### 实现
+
+- 牌池数据：`CardDatabase.get_base_element_symbols()` / `get_optional_elements()` /
+  `get_allowed_symbols(limit, extras)` / `get_deck_size(symbols)`
+- 牌库生成：`CardDatabase.generate_deck(allowed_symbols)`（传空数组 = 29 种全量）
+- 状态变量：`GameManager.element_limit_enabled`（默认 `false`）+ `allowed_extra_elements`
+- 判定入口：`GameManager.is_element_allowed(sym)`（前 20 号按原子序数判定，其余查勾选列表）
+- 引擎拦截：`play_cards()` 对越界元素返回 `-8`；`GameUI._handle_result()` 显示"该元素不在本局牌库中"
+- UI：小页元素池（`ElementChip_符号` 共 9 个 + `ElementPoolStats` 统计）；
+  未开限制时 chip 压暗（0.55）提示"只是预选"，**点任意 chip 会自动打开限制**
+- 教程局：`init_tutorial()` 强制 `element_limit_enabled = false`（预设手牌含 Fe 等副族）
+- 回归：`tests/verify_element_limit.gd`（数据层 / 引擎 / 教程 / UI / 帮助页五层）
+
 ---
 
 ## 17. 结算页信息
@@ -441,7 +493,7 @@ GameManager.init_game / init_tutorial
 | 总回合 | 本局累计换手次数 | `GameManager.turn_count`（`next_turn()` 每次 +1，`init_game` / `init_tutorial` 归零） |
 | 剩余牌库 | 牌库剩余张数 | `get_database().get_remaining_count()` |
 | 剩余手牌 | 获胜者手牌数；无胜者时取玩家 1 | `PlayerInfo.hand.size()` |
-| 本局规则 | 有机物 ✓/✗、顺序 ✓/✗、卤族互化 ✓/✗ | `get_organic_rules_enabled()` / `get_sequence_rules_enabled()` / `get_halogen_exchange_allowed()` |
+| 本局规则 | 有机物 ✓/✗、顺序 ✓/✗、卤族互化 ✓/✗、元素 N 种 | `get_organic_rules_enabled()` / `get_sequence_rules_enabled()` / `get_halogen_exchange_allowed()` / `get_allowed_element_count()` |
 
 按钮去向随局面切换：
 
@@ -454,5 +506,5 @@ GameManager.init_game / init_tutorial
 
 ---
 
-**文档版本**: 16.3  
+**文档版本**: 16.4  
 **最后更新**: 2026-10-31

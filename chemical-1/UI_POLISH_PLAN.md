@@ -277,11 +277,11 @@ R4 容错带内外与横向越界），既有 `_test_case()` / `_test_hover_debo
 
 ## 5. 验证基线
 
-18 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
+19 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
 
 ```bat
 set GD=D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe
-for %f in (hand_layout hand_runtime hand_reorder integration constraint logger organic refactor sequence sequence_table tutorial ai_discard motion help_page hint start_page end_page halogen) do (
+for %f in (hand_layout hand_runtime hand_reorder integration constraint logger organic refactor sequence sequence_table tutorial ai_discard motion help_page hint start_page end_page halogen element_limit) do (
   %GD% --path . --headless --script res://tests/verify_%f.gd
 )
 ```
@@ -294,7 +294,8 @@ for %f in (hand_layout hand_runtime hand_reorder integration constraint logger o
 | `verify_hand_runtime` | 真实手牌渲染与点击流程 |
 | `verify_hint` | 提示引擎与「提示」按钮（建议合法性交叉验证；F+Cl 只建议族炸） |
 | `verify_halogen` | **卤族互化 P9**（引擎 -7 / F+Cl 族炸不误伤 / 提示不给 ClF / AI 读开关 / UI 预检 / 教程默认禁止） |
-| `verify_start_page` | 开始页人数/AI 联动、三个规则开关、补充规则入口 |
+| `verify_element_limit` | **元素限制 P10**（前 20 号 20 种 134 张 / 扩展池 7+2 / 牌库过滤 / 越界牌 -8 / 族炸不误伤 / 教程强制全量 / 小页 4 开关 + 9 chip + 统计 / 勾 chip 自动开限制 / 开局写入）（55 条） |
+| `verify_start_page` | 开始页人数/AI 联动、补充规则小页（入口 → 4 开关 + 元素池 → 帮助页）、卡片不重叠 |
 | `verify_end_page` | **结束页 / 教学页 P8**（同套装饰零件 / 结算卡圆角与阴影 / 按钮三件套 / 四态标题与状态条配色 / 三统计块取数 / 按钮文案与去向 / 教学页整卡按钮 / turn_count 归零与自增 / 重复展示不重播动画）（105 条） |
 | `verify_integration` | 端到端对局 |
 | `verify_constraint` | 化合价与牌型约束 |
@@ -623,3 +624,37 @@ meta 不存在时会刷 `ERROR`；改为 `has_meta()` 判定，并给 `StartRule
 
 **验收**：18 个测试套件全绿（新增 `verify_halogen`；`verify_hint` / `verify_start_page` /
 `verify_help_page` / `verify_tutorial` 各加断言）。
+
+---
+
+### 8.7 P10 元素限制 + 补充规则合成一小页
+
+**问题**：P9 之后 `SettingsCard`（620×210）里已有 3 个开关 + 入口，再加第 4 条「元素限制」
+放不下（第 4 个开关只能压到卡外或挤掉人数框）；同时补充规则分散在「开关 + 帮助页」两处，
+玩家看不到"这局到底开了几条"。
+
+**方案：4 条补充规则收进 `SuppRulesPage` 小页，设置卡只留入口 + 一行摘要**
+
+| 区域 | 位置 / 尺寸 | 内容 |
+|---|---|---|
+| 设置卡入口 | `SupplementaryHelpBtn` (32,128) 300×34 + `SuppRulesSummary` (32,170) 556×20 | "补充规则 · N 项已开启 ▸" + "已启用：有机物 · 顺序…" |
+| 小页标题 | (0,62) 1152×46 + 副标题 (0,110) | 「补充规则」/「默认全部关闭；勾选后仅对下一局生效」 |
+| 规则卡 ×4 | 2×2：(46,146) (586,146) (46,250) (586,250)，每张 520×92 | toggle（484×34）+ 13px 说明；节点名沿用 `OrganicCheckBox` / `SequenceCheckBox` / `HalogenCheckBox` / `ElementLimitCheckBox` |
+| 元素池 | `ElementPoolPanel` (46,356) 1060×168 | 标题 + `ElementPoolStats` 统计（"21 种 · 138 张 ｜ 额外元素：Fe"）+ 9 个 chip（132×34，7 个/行：Cr Mn Fe Co Ni Cu Zn + Br I） |
+| 底部 | `SuppRulesHelpBtn` (46,570) 240×34 / `SuppRulesDoneBtn` (846,566) 260×44 | 跳帮助中心 Tab3 / 关闭小页 |
+
+**元素限制规则**：默认关闭（29 种 182 张）；打开后牌库 = 前 20 号（H~Ca，20 种 134 张）+
+勾选的扩展元素（副族 7 种各 4 张、Br/I 各 10 张）。9 个扩展全勾回落到 182 张，与老玩法完全一致。
+
+| 位置 | 改动 |
+|---|---|
+| `CardDatabase` | `get_copies()` 抽出张数分级（`HelpContent` 改为委托）；`get_atomic_number()` / `get_base_element_symbols()` / `get_optional_elements()`（序数 >20 自动派生）/ `get_allowed_symbols()` / `get_deck_size()`；`generate_deck(allowed_symbols = [])` |
+| `GameManager` | `element_limit_enabled` + `allowed_extra_elements`；`is_element_allowed()` / `get_allowed_symbols()` / `get_allowed_element_count()` / `get_deck_size()`；牌库按允许集合生成；`play_cards()` 越界牌返回 `-8`；`init_tutorial()` 强制关闭（预设手牌含 Fe） |
+| `GameUI` | `_build_supp_rules_page()` / `_supp_rule_card()` / `_build_element_pool()`；`_sync_supp_rules_summary()` 统一出口（入口文字 / 摘要 / 统计 / chip 压暗）；勾 chip 自动开限制；`_init_game()` 写入；信息栏与结算页加元素种数；`-8` 文案 |
+| `HelpContent` | 补充规则 Tab 新增「元素限制」卡（Tab2 5 → 6 张） |
+
+**为什么 chip 不做 disabled**：限制关闭时把 chip 置灰但可点，点一下就自动打开「元素限制」——
+省掉"先开开关再选元素"的两步，也避免玩家勾了元素却没生效（旧版最容易踩的静默失效）。
+
+**验收**：19 个测试套件全绿（新增 `verify_element_limit` 55 条；`verify_start_page` 改走小页路径 +
+`verify_help_page` Tab2 6 卡 + 元素限制文案断言）。

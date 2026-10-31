@@ -1,6 +1,7 @@
 # ============================================================
 # CardDatabase.gd - 牌库生成与洗牌
 # 前四周期+碘 29 种元素（卤族10张，H/O/S 8张，主族6张，副族4张）
+# 补充规则「元素限制」：基础池 = 前 20 号元素（H~Ca），其余 9 种为可勾选扩展
 # ============================================================
 
 const CardDataScript = preload("res://scripts/CardData.gd")
@@ -17,6 +18,12 @@ const MAIN_COPIES = 6
 const SUB_COPIES = 4
 const HALOGEN_COPIES = 10
 const HIGH_COPIES = 8
+
+# 「元素限制」基础池上限：原子序数 ≤ 20（H ~ Ca，共 20 种）
+const BASE_ELEMENT_MAX_NUMBER = 20
+# 扩展元素分组标签（元素选择小页按此分组展示）
+const EXTRA_GROUP_SUB = "副族"
+const EXTRA_GROUP_HALOGEN = "卤族"
 
 # ============================================================
 # 二、元素基础数据（29 种）
@@ -67,18 +74,16 @@ var deck: Array = []   # 当前牌库
 # ============================================================
 # 三、牌库生成（按张数分级）
 # ============================================================
-func generate_deck() -> void:
+# allowed_symbols：只生成这些元素的牌；传空数组 = 全部 29 种（默认 / 教程局）
+func generate_deck(allowed_symbols: Array = []) -> void:
 	deck.clear()
 	var elem_data = get_element_data()
+	var filtered := not allowed_symbols.is_empty()
 	for elem in elem_data:
 		var sym = elem[0]
-		var copies = SUB_COPIES
-		if sym in HALOGEN_SYMBOLS:
-			copies = HALOGEN_COPIES
-		elif sym in HIGH_COUNT_SYMBOLS:
-			copies = HIGH_COPIES
-		elif sym not in SUBGROUP_SYMBOLS:
-			copies = MAIN_COPIES
+		if filtered and not (sym in allowed_symbols):
+			continue
+		var copies = get_copies(sym)
 		for _copy in range(copies):
 			var card = CardDataScript.new(
 				elem[0], elem[1], elem[2], elem[3], elem[4],
@@ -121,3 +126,73 @@ func draw_cards(count: int) -> Array:
 # ============================================================
 func get_remaining_count() -> int:
 	return deck.size()
+
+
+# ============================================================
+# 六、「元素限制」元素池（基础 20 种 + 可选扩展）
+# ============================================================
+# 单个元素的牌库张数（牌库生成 / 图鉴 / 元素限制统计共用这一处）
+static func get_copies(sym: String) -> int:
+	if sym in HALOGEN_SYMBOLS:
+		return HALOGEN_COPIES
+	if sym in HIGH_COUNT_SYMBOLS:
+		return HIGH_COPIES
+	if sym in SUBGROUP_SYMBOLS:
+		return SUB_COPIES
+	return MAIN_COPIES
+
+
+# 原子序数（找不到返回 0）—— 「前 20 号元素」的判定依据
+static func get_atomic_number(sym: String) -> int:
+	for row in get_element_data():
+		if row[0] == sym:
+			return int(row[3])
+	return 0
+
+
+# 基础池：前 20 号元素（H ~ Ca，20 种，牌库 134 张）
+static func get_base_element_symbols() -> Array:
+	var out: Array = []
+	for row in get_element_data():
+		if int(row[3]) <= BASE_ELEMENT_MAX_NUMBER:
+			out.append(row[0])
+	return out
+
+
+# 可额外加入的元素（现牌库中序数 > 20 的 9 种：副族 7 + 卤族 2）
+# 返回 [{symbol, name_cn, number, group, group_label}]，保持 get_element_data 的周期顺序
+static func get_optional_elements() -> Array:
+	var out: Array = []
+	for row in get_element_data():
+		if int(row[3]) <= BASE_ELEMENT_MAX_NUMBER:
+			continue
+		out.append({
+			"symbol": row[0],
+			"name_cn": row[1],
+			"number": int(row[3]),
+			"group": row[4],
+			"group_label": EXTRA_GROUP_HALOGEN if row[0] in HALOGEN_SYMBOLS else EXTRA_GROUP_SUB,
+		})
+	return out
+
+
+# 本局牌库允许的元素符号集合：限制关闭 → 空数组（= 全部 29 种）
+static func get_allowed_symbols(limit_enabled: bool, extra_symbols: Array) -> Array:
+	if not limit_enabled:
+		return []
+	var out := get_base_element_symbols()
+	for sym in extra_symbols:
+		if not (sym in out):
+			out.append(sym)
+	return out
+
+
+# 按允许集合统计牌库张数（UI 显示「本局牌库 N 张」，空数组 = 182 张）
+static func get_deck_size(allowed_symbols: Array = []) -> int:
+	var filtered := not allowed_symbols.is_empty()
+	var total := 0
+	for row in get_element_data():
+		if filtered and not (row[0] in allowed_symbols):
+			continue
+		total += get_copies(row[0])
+	return total

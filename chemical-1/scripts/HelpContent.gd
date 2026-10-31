@@ -216,7 +216,7 @@ static func get_card_cards() -> Array:
 	]
 
 
-# -------- Tab 3：补充规则（对应开始页的三个独立开关：有机物胜利 / 顺序牌型 / 允许卤族互化）--------
+# -------- Tab 3：补充规则（对应开始页「补充规则」小页的四条独立开关：有机物胜利 / 顺序牌型 / 允许卤族互化 / 元素限制）--------
 static func get_supp_cards() -> Array:
 	return [
 		_c("有机物胜利", ACCENT_PURPLE, [
@@ -269,6 +269,16 @@ static func get_supp_cards() -> Array:
 			_li("不勾选时 AI 与「提示」同样不会给出卤素互化化合物"),
 			_warn("开关在开始页设置，仅对下一局生效"),
 		]),
+		_c("元素限制", ACCENT_PURPLE, [
+			_p("默认关闭：29 种元素全部上桌。"),
+			_li("打开后牌库只保留前 20 号元素（H ~ Ca）"),
+			_li("可再勾选副族：Cr / Mn / Fe / Co / Ni / Cu / Zn"),
+			_li("也可勾选 Br / I，补齐卤族的族炸"),
+			_gap(),
+			_sub("适合新手"),
+			_p("牌面更干净，化合物配平更容易"),
+			_warn("元素越少，能凑出的族炸与顺序也越少"),
+		]),
 	]
 
 
@@ -277,13 +287,7 @@ static func get_supp_cards() -> Array:
 # ============================================================
 # 张数分级与 CardDatabase 保持一致（卤族 10 / H·O·S 8 / 副族 4 / 其余 6）
 static func get_element_copies(sym: String) -> int:
-	if sym in CardDatabaseScript.HALOGEN_SYMBOLS:
-		return CardDatabaseScript.HALOGEN_COPIES
-	if sym in CardDatabaseScript.HIGH_COUNT_SYMBOLS:
-		return CardDatabaseScript.HIGH_COPIES
-	if sym in CardDatabaseScript.SUBGROUP_SYMBOLS:
-		return CardDatabaseScript.SUB_COPIES
-	return CardDatabaseScript.MAIN_COPIES
+	return CardDatabaseScript.get_copies(sym)
 
 
 # 图鉴用：按周期顺序返回全部 CardData 实例（零依赖，不需要 GameManager）

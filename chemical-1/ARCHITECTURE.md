@@ -237,14 +237,17 @@ PlayerManager.PlayerInfo
 | organic_rules_enabled | 补充规则：有机物胜利（开始页 `OrganicCheckBox` 写入） |
 | sequence_rules_enabled | 补充规则：顺序牌型（开始页 `SequenceCheckBox` 写入） |
 | halogen_exchange_allowed | 补充规则：允许卤族互化（默认 `false`；只放开 COMPOUND，族炸始终合法） |
+| element_limit_enabled | 补充规则：元素限制（默认 `false`；`true` 时牌库 = 前 20 号 + `allowed_extra_elements`） |
+| allowed_extra_elements | 元素限制额外放行的符号（如 `["Fe","Cu"]`；关闭限制时忽略） |
 | table_custom_valences | 桌面化合物实际化合价（play_cards 出牌时保存，渲染化学式/排序/化合价显示用）|
 | _get_hand_limit() | min(players×4, 18) |
 
 ### 核心函数流程
 
 ```
-init_game(total, ai) → bool
+init_game(total, ai) → bool   （牌库 = generate_deck(get_allowed_symbols())，元素限制时只含前 20 号 + 勾选扩展）
 play_cards(idx, cards, cv) → int
+  ├─ 元素限制：开关开启且含越界元素 → -8（is_element_allowed 兜底）
   ├─ detect_pattern → 族炸/非族炸判定
   ├─ 化合物 + 开关关闭 + 含≥2种卤素 → -7（卤族互化，is_halogen_mix）
   ├─ 族炸: 冷却/免疫/接炸比较 → next_turn()（牌权移交）
@@ -659,11 +662,12 @@ Main (Control) ← GameUI.gd
 > （`StartButton` / `PlayerCountSpin` / `AiCountSpin` / `OrganicCheckBox` / `SequenceCheckBox` /
 > `TutorialBtn` / `ExitButton` / `SupplementaryHelpBtn`）。
 >
-> ⚠ **节点名一致 ≠ 路径一致**：人数框 / AI 框 / 两个规则开关 / 补充规则入口都嵌在 `SettingsCard`
-> 卡片内，只有 `StartButton` / `TutorialBtn` / `ExitButton` 直接挂在 `StartPage` 下。
-> 取这些控件必须走 `_start_child(name)`（内部 `find_child(name, true, false)` 递归查找）；
-> 用 `start_page.get_node_or_null("PlayerCountSpin")` 会拿到 `null` 并**静默失效**
-> （踩过的坑：AI 人数永远 3、AI 上限锁死 7、补充规则开关永远关、点「查看补充规则」没反应）。
+> ⚠ **节点名一致 ≠ 路径一致**：人数框 / AI 框嵌在 `SettingsCard` 卡片内，只有 `StartButton` /
+> `TutorialBtn` / `ExitButton` 直接挂在 `StartPage` 下；P10 起 4 条补充规则开关（含 `ElementLimitCheckBox`）
+> 和 9 个 `ElementChip_*` 又移进了 `SuppRulesPage` 小页（`SettingsCard` 只剩「补充规则」入口
+> `SupplementaryHelpBtn` + 摘要 `SuppRulesSummary`）。取这些控件必须走 `_start_child(name)`
+> （内部 `find_child(name, true, false)` 递归查找）；用 `start_page.get_node_or_null(...)` 会拿到
+> `null` 并**静默失效**（踩过的坑：AI 人数永远 3、AI 上限锁死 7、补充规则开关永远关、点入口没反应）。
 >
 > 人数约束：`1 ≤ AI ≤ 总人数 - 1`（至少 1 个对手、至少留 1 个座位给人类；AI=0 时其余座位
 > 是没人操作的人类，开局即卡死）。`_on_player_count_changed()` 在总人数变化时同步压

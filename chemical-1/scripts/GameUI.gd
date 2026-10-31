@@ -7,6 +7,7 @@
 extends Control
 
 const GameManagerScript = preload("res://scripts/GameManager.gd")
+const CardDatabaseScript = preload("res://scripts/CardDatabase.gd")
 const CardPatternsScript = preload("res://scripts/CardPatterns.gd")
 const CompoundSolverScript = preload("res://scripts/CompoundSolver.gd")
 const AIPlayerScript = preload("res://scripts/AIPlayer.gd")
@@ -228,7 +229,7 @@ func _setup_pages() -> void:
 		if tut2: tut2.pressed.connect(_on_start_tutorial.bind(2))
 		if tut_back: tut_back.pressed.connect(_on_tutorial_back)
 
-	# 补充规则勾选框（三个独立勾选框）
+	# 补充规则（P10：四条开关都在小页里，仍是独立的 toggle 按钮）
 	var organic_cb = _start_child("OrganicCheckBox")
 	if organic_cb:
 		organic_cb.toggled.connect(_on_organic_toggled)
@@ -250,11 +251,19 @@ func _setup_pages() -> void:
 			if not eb.pressed.is_connected(_show_start_page):
 				eb.pressed.connect(_show_start_page)
 
-	# 帮助中心（P5）改为单页 + Tab；旧 3 页的 9 个跳转按钮节点已在 P6 删除
-	# 开始页「补充规则」按钮直接跳到帮助中心的第 3 个 Tab
-	var supp_help_btn = _start_child("SupplementaryHelpBtn")
-	if supp_help_btn:
-		supp_help_btn.pressed.connect(_on_help_show_supp)
+	# 补充规则小页（P10）：开始页入口 → 小页；小页里的「查看完整说明」才跳帮助中心第 3 个 Tab
+	var supp_entry = _start_child("SupplementaryHelpBtn")
+	if supp_entry:
+		supp_entry.pressed.connect(_open_supp_rules)
+	var element_limit_cb = _start_child("ElementLimitCheckBox")
+	if element_limit_cb:
+		element_limit_cb.toggled.connect(_on_element_limit_toggled)
+	for info in CardDatabaseScript.get_optional_elements():
+		var chip = _start_child("ElementChip_" + str(info["symbol"]))
+		if chip:
+			chip.toggled.connect(_on_element_chip_toggled)
+	# 小页里的「返回 / 完成 / 查看完整说明」在构建时已用回调绑定（_page_*_btn 的 cb 参数），
+	# 这里不能再 connect 一次，否则 Signal 已连接报错
 
 	if game_page:
 		hand_container = game_page.get_node_or_null("HandContainer")
@@ -440,6 +449,7 @@ func _fade_in_page(page) -> void:
 
 
 func _show_start_page() -> void:
+	_close_supp_rules()   # 从结束页 / 帮助页回来时不能还停在上一次打开的小页上
 	if start_page: start_page.visible = true
 	if game_page: game_page.visible = false
 	if end_page: end_page.visible = false
@@ -553,6 +563,11 @@ var _end_restart_btn: Button = null
 var _end_tutorial_btn: Button = null
 var _end_rule_note: Label = null
 
+# 补充规则小页（P10）：整页容器 / 元素池统计 / 9 个元素 chip
+var _supp_rules_page: Control = null
+var _supp_element_stats: Label = null
+var _supp_element_chips: Dictionary = {}
+
 
 func _build_start_page() -> void:
 	if not start_page:
@@ -566,15 +581,22 @@ func _build_start_page() -> void:
 	_start_page_title()
 	_start_page_settings()
 	_start_page_buttons()
+	# P10：补充规则小页（盖在开始页之上，默认隐藏）
+	_build_supp_rules_page()
 
 
 # -------- 背景：同色底 + 45° 渐变带 --------
 func _start_page_bg() -> void:
+	_page_bg_into(start_page, "StartPageBg", "GradientBand")
+
+
+# 开始页 / 补充规则小页共用：渐变背景（只换节点名）
+func _page_bg_into(parent: Control, bg_name: String, band_name: String) -> void:
 	var bg := ColorRect.new()
-	bg.name = "StartPageBg"
+	bg.name = bg_name
 	bg.color = PAGE_BG_COLOR
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	start_page.add_child(bg)
+	parent.add_child(bg)
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	var grad := Gradient.new()
@@ -589,12 +611,12 @@ func _start_page_bg() -> void:
 	tex.height = 256
 
 	var band := TextureRect.new()
-	band.name = "GradientBand"
+	band.name = band_name
 	band.texture = tex
 	band.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	band.stretch_mode = TextureRect.STRETCH_SCALE
 	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	start_page.add_child(band)
+	parent.add_child(band)
 	band.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 
@@ -726,7 +748,7 @@ func _start_page_title() -> void:
 	meta.size = Vector2(1152, 20)
 
 
-# -------- 设置卡：人数 / AI 数 / 两条补充规则 / 补充规则入口 --------
+# -------- 设置卡：人数 / AI 数 / 补充规则入口（P10 起四条补充规则收进独立小页）--------
 func _start_page_settings() -> void:
 	var card := Panel.new()
 	card.name = "SettingsCard"
@@ -757,16 +779,19 @@ func _start_page_settings() -> void:
 	div.size = Vector2(556, 1)
 	card.add_child(div)
 
-	var organic := _start_make_toggle("OrganicCheckBox", "有机物胜利规则", Vector2(32, 132))
-	card.add_child(organic)
-	var seq := _start_make_toggle("SequenceCheckBox", "顺序牌型规则", Vector2(318, 132))
-	card.add_child(seq)
-	var halogen := _start_make_toggle("HalogenCheckBox", "允许卤族互化", Vector2(32, 168))
-	halogen.tooltip_text = "F/Cl/Br/I 之间可以互相化合（如 ClF）。不勾选时仅族炸可用"
-	card.add_child(halogen)
+	# P10：4 条补充规则（有机物 / 顺序 / 卤族互化 / 元素限制）合成一小页，
+	# 设置卡只留一个入口 + 一行摘要，避免第 4 个开关把人数和开局按钮挤没
+	var entry := _start_make_ghost("SupplementaryHelpBtn", "补充规则 · 默认 ▸",
+		Vector2(32, 128), Vector2(300, 34))
+	entry.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	entry.tooltip_text = "有机物胜利 / 顺序牌型 / 允许卤族互化 / 元素限制"
+	card.add_child(entry)
 
-	var supp := _start_make_ghost("SupplementaryHelpBtn", "查看补充规则 >", Vector2(318, 168), Vector2(240, 30))
-	card.add_child(supp)
+	var sum := _start_label("", START_FS_META, START_C_MUTED, HORIZONTAL_ALIGNMENT_LEFT)
+	sum.name = "SuppRulesSummary"
+	sum.position = Vector2(32, 170)
+	sum.size = Vector2(556, 20)
+	card.add_child(sum)
 
 	# 勾选反馈写在这里：开始页看不到 GamePage 的 InfoLabel
 	var rule_hint := _start_label("", START_FS_META, START_C_ACCENT, HORIZONTAL_ALIGNMENT_CENTER)
@@ -791,6 +816,136 @@ func _start_page_buttons() -> void:
 	start_page.add_child(start_button)
 	start_page.add_child(_start_make_secondary("TutorialBtn", "教学引导", Vector2(446, 546), Vector2(260, 46)))
 	start_page.add_child(_start_make_ghost("ExitButton", "退出程序", Vector2(476, 598), Vector2(200, 34)))
+
+
+# ============================================================
+# 五之二、补充规则小页（P10：四条补充规则合成一小页）
+# ============================================================
+# 为什么单独一页：SettingsCard 里已有「总人数 / AI 人数 / 开始游戏」三块，
+# 再加第 4 条补充规则就会把开局按钮挤到卡外（旧布局 4 个开关已占满 210px 高的卡）。
+# 这一页 = 4 张规则卡 + 元素池（前 20 号固定 / 9 种扩展可勾选）+ 说明入口。
+func _build_supp_rules_page() -> void:
+	var page := Control.new()
+	page.name = "SuppRulesPage"
+	page.visible = false
+	page.mouse_filter = Control.MOUSE_FILTER_STOP
+	start_page.add_child(page)
+	page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_supp_rules_page = page
+	_page_bg_into(page, "SuppRulesBg", "SuppRulesBand")
+
+	var back := _page_ghost_btn("‹ 返回", _close_supp_rules, Vector2(140, 34), "SuppRulesBackBtn", 15)
+	back.position = Vector2(46, 34)
+	page.add_child(back)
+
+	var title := _start_label("补充规则", 34, START_C_TITLE, HORIZONTAL_ALIGNMENT_CENTER)
+	title.name = "SuppRulesTitle"
+	title.position = Vector2(0, 62)
+	title.size = Vector2(1152, 46)
+	page.add_child(title)
+
+	var sub := _start_label("默认全部关闭；勾选后仅对下一局生效",
+		START_FS_META, START_C_MUTED, HORIZONTAL_ALIGNMENT_CENTER)
+	sub.name = "SuppRulesSubtitle"
+	sub.position = Vector2(0, 110)
+	sub.size = Vector2(1152, 20)
+	page.add_child(sub)
+
+	_supp_rule_card(page, "OrganicCheckBox", "有机物胜利",
+		"打出 CH4 / C2H6 / C3H8 或单一卤代物立即获胜", Vector2(46, 146))
+	_supp_rule_card(page, "SequenceCheckBox", "顺序牌型",
+		"≥3 张连续原子序数：抢牌权 + 反转方向 + 指定下家牌型", Vector2(586, 146))
+	_supp_rule_card(page, "HalogenCheckBox", "允许卤族互化",
+		"F/Cl/Br/I 之间可互相化合（如 ClF）；族炸始终不受影响", Vector2(46, 250))
+	_supp_rule_card(page, "ElementLimitCheckBox", "元素限制",
+		"牌库只保留前 20 号元素（H~Ca），可再挑副族 / 卤族加入", Vector2(586, 250))
+
+	_build_element_pool(page)
+
+	var help_btn := _page_ghost_btn("查看完整说明 >", _on_help_show_supp,
+		Vector2(240, 34), "SuppRulesHelpBtn", 15)
+	help_btn.position = Vector2(46, 570)
+	page.add_child(help_btn)
+
+	var done := _page_primary_btn("完成", _close_supp_rules, Vector2(260, 44), "SuppRulesDoneBtn", 20)
+	done.position = Vector2(846, 566)
+	page.add_child(done)
+
+	_sync_supp_rules_summary()
+
+
+# 一张规则卡：标题做成 toggle 按钮（与旧开始页开关同一套样式），下面一行说明
+func _supp_rule_card(page: Control, node_name: String, title: String, desc: String,
+		pos: Vector2) -> Button:
+	var card := Panel.new()
+	card.name = node_name + "Card"
+	card.position = pos
+	card.size = Vector2(520, 92)
+	var st := _make_panel_style("card")
+	st.bg_color = Color(1, 1, 1, 0.96)
+	card.add_theme_stylebox_override("panel", st)
+	page.add_child(card)
+
+	var btn := _start_make_toggle(node_name, title, Vector2(18, 12))
+	btn.size = Vector2(484, 34)
+	btn.custom_minimum_size = Vector2(484, 34)
+	btn.add_theme_font_size_override("font_size", 17)
+	card.add_child(btn)
+
+	var d := _start_label(desc, START_FS_META, START_C_MUTED, HORIZONTAL_ALIGNMENT_LEFT)
+	d.position = Vector2(18, 52)
+	d.size = Vector2(484, 32)
+	d.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	card.add_child(d)
+	return btn
+
+
+# 元素池：前 20 号固定加入；9 种扩展元素（副族 7 + Br/I）按 chip 勾选
+func _build_element_pool(page: Control) -> void:
+	var area := Panel.new()
+	area.name = "ElementPoolPanel"
+	area.position = Vector2(46, 356)
+	area.size = Vector2(1060, 168)
+	var st := _make_panel_style("card")
+	st.bg_color = Color(1, 1, 1, 0.96)
+	area.add_theme_stylebox_override("panel", st)
+	page.add_child(area)
+
+	var t := _start_label("元素池", 17, START_C_TITLE, HORIZONTAL_ALIGNMENT_LEFT)
+	t.position = Vector2(20, 10)
+	t.size = Vector2(160, 24)
+	area.add_child(t)
+
+	_supp_element_stats = _start_label("", START_FS_META, START_C_MUTED, HORIZONTAL_ALIGNMENT_RIGHT)
+	_supp_element_stats.name = "ElementPoolStats"
+	_supp_element_stats.position = Vector2(180, 12)
+	_supp_element_stats.size = Vector2(860, 20)
+	area.add_child(_supp_element_stats)
+
+	var tip := _start_label("前 20 号元素（H ~ Ca）固定加入；勾选下面的元素可额外加进牌库",
+		START_FS_META, START_C_MUTED, HORIZONTAL_ALIGNMENT_LEFT)
+	tip.name = "ElementPoolTip"
+	tip.position = Vector2(20, 36)
+	tip.size = Vector2(1020, 18)
+	area.add_child(tip)
+
+	# chip 宽 132 + 间距 10 → 每行 7 个（7*132 + 6*10 = 984，池内宽 1020）
+	var items := CardDatabaseScript.get_optional_elements()
+	for i in range(items.size()):
+		var info: Dictionary = items[i]
+		var col := i % 7
+		var row := int(i / 7)
+		var sym := str(info["symbol"])
+		var chip := _start_make_toggle("ElementChip_" + sym,
+			"%s %s · %d" % [sym, str(info["name_cn"]), int(info["number"])],
+			Vector2(20 + col * 142, 64 + row * 42))
+		chip.size = Vector2(132, 34)
+		chip.custom_minimum_size = Vector2(132, 34)
+		chip.add_theme_font_size_override("font_size", 15)
+		chip.tooltip_text = "%s%s（原子序数 %d）；勾选后加入牌库" % [
+			str(info["group_label"]), sym, int(info["number"])]
+		area.add_child(chip)
+		_supp_element_chips[sym] = chip
 
 
 # -------- 按钮三件套（P8：开始页 / 结束页 / 教学引导页共用的唯一样式来源）--------
@@ -1806,7 +1961,8 @@ func _fill_end_page(custom_text: String) -> void:
 			var org := "有机物 ✓" if game_manager.get_organic_rules_enabled() else "有机物 ✗"
 			var seq := "顺序 ✓" if game_manager.get_sequence_rules_enabled() else "顺序 ✗"
 			var hal := "卤族互化 ✓" if game_manager.get_halogen_exchange_allowed() else "卤族互化 ✗"
-			_end_rule_note.text = "本局规则：%s    %s    %s" % [org, seq, hal]
+			var lim := "元素 %d 种" % game_manager.get_allowed_element_count()
+			_end_rule_note.text = "本局规则：%s    %s    %s    %s" % [org, seq, hal, lim]
 		else:
 			_end_rule_note.text = ""
 
@@ -1990,6 +2146,7 @@ func _on_organic_toggled(pressed: bool) -> void:
 	else:
 		_show_info_simple("已禁用有机物胜利规则")
 	_start_flash_rule_hint("已启用有机物胜利规则" if pressed else "已禁用有机物胜利规则")
+	_sync_supp_rules_summary()
 
 func _on_sequence_toggled(pressed: bool) -> void:
 	if pressed:
@@ -1997,6 +2154,7 @@ func _on_sequence_toggled(pressed: bool) -> void:
 	else:
 		_show_info_simple("已禁用顺序牌型规则")
 	_start_flash_rule_hint("已启用顺序牌型规则" if pressed else "已禁用顺序牌型规则")
+	_sync_supp_rules_summary()
 
 # 允许卤族互化（补充规则）：默认关闭 = 沿用硬规则「F/Cl/Br/I 之间不可化合」
 func _on_halogen_toggled(pressed: bool) -> void:
@@ -2005,6 +2163,93 @@ func _on_halogen_toggled(pressed: bool) -> void:
 	else:
 		_show_info_simple("已禁止卤族互化")
 	_start_flash_rule_hint("已允许卤族互化" if pressed else "已禁止卤族互化")
+	_sync_supp_rules_summary()
+
+# 元素限制（补充规则）：默认关闭 = 29 种元素全上桌
+func _on_element_limit_toggled(pressed: bool) -> void:
+	if pressed:
+		_show_info_simple("已启用元素限制（前 20 号元素 + 自选扩展）")
+	else:
+		_show_info_simple("已关闭元素限制（29 种元素全部上桌）")
+	_start_flash_rule_hint("已启用元素限制" if pressed else "已关闭元素限制")
+	_sync_supp_rules_summary()
+
+# 点元素 chip 时自动打开「元素限制」，否则勾了也不生效，容易被当成 bug
+func _on_element_chip_toggled(_pressed: bool) -> void:
+	var limit_cb = _start_child("ElementLimitCheckBox")
+	if limit_cb and not limit_cb.button_pressed:
+		limit_cb.button_pressed = true
+	_sync_supp_rules_summary()
+
+
+# 勾选状态 → 设置卡入口文字 / 摘要行 / 元素池统计（唯一出口，避免多处各写一套文案）
+func _sync_supp_rules_summary() -> void:
+	var on: Array = []
+	var organic_cb = _start_child("OrganicCheckBox")
+	if organic_cb and organic_cb.button_pressed: on.append("有机物")
+	var seq_cb = _start_child("SequenceCheckBox")
+	if seq_cb and seq_cb.button_pressed: on.append("顺序")
+	var hal_cb = _start_child("HalogenCheckBox")
+	if hal_cb and hal_cb.button_pressed: on.append("卤族互化")
+	var limit_cb = _start_child("ElementLimitCheckBox")
+	var limit_on: bool = limit_cb != null and limit_cb.button_pressed
+	var extras := _selected_extra_elements()
+	if limit_on:
+		var parts: Array = ["前20号"]
+		for s in extras:
+			parts.append(str(s))
+		on.append("元素限制 " + "/".join(parts))
+
+	var entry = _start_child("SupplementaryHelpBtn")
+	if entry:
+		if on.is_empty():
+			entry.text = "补充规则 · 默认 ▸"
+		else:
+			entry.text = "补充规则 · %d 项已开启 ▸" % on.size()
+
+	var sum_label = _start_child("SuppRulesSummary")
+	if sum_label:
+		if on.is_empty():
+			sum_label.text = "全部为默认：29 种元素 · 182 张牌 · 无特殊规则"
+		else:
+			sum_label.text = "已启用：" + " · ".join(on)
+
+	if _supp_element_stats:
+		var syms := CardDatabaseScript.get_allowed_symbols(limit_on, extras)
+		var kinds: int = syms.size() if not syms.is_empty() else CardDatabaseScript.get_element_data().size()
+		var extra_txt := "额外元素：无" if extras.is_empty() else "额外元素：" + "/".join(extras)
+		_supp_element_stats.text = "%d 种 · %d 张 ｜ %s" % [
+			kinds, CardDatabaseScript.get_deck_size(syms), extra_txt]
+
+	# 未开限制时元素池只是「预选」：压暗提示尚未生效（仍可点，点了会自动开限制）
+	for sym in _supp_element_chips.keys():
+		var chip = _supp_element_chips[sym]
+		if is_instance_valid(chip):
+			chip.modulate.a = 1.0 if limit_on else 0.55
+
+
+func _selected_extra_elements() -> Array:
+	var out: Array = []
+	for info in CardDatabaseScript.get_optional_elements():
+		var sym := str(info["symbol"])
+		var chip = _supp_element_chips.get(sym)
+		if chip == null or not is_instance_valid(chip):
+			chip = _start_child("ElementChip_" + sym)
+		if chip and chip.button_pressed:
+			out.append(sym)
+	return out
+
+
+func _open_supp_rules() -> void:
+	if _supp_rules_page == null or not is_instance_valid(_supp_rules_page):
+		return
+	_sync_supp_rules_summary()
+	_supp_rules_page.visible = true
+
+
+func _close_supp_rules() -> void:
+	if _supp_rules_page and is_instance_valid(_supp_rules_page):
+		_supp_rules_page.visible = false
 
 # 总人数变化 → AI 上限跟着变（AI 至少给人类留 1 个座位）
 # 例：总人数 4 → AI 最多 3；把总人数改回 3 时 AI 会自动从 3 降到 2
@@ -2036,6 +2281,7 @@ func _on_start_game() -> void:
 	game_page.visible = true
 	end_page.visible = false
 	if help_page: help_page.visible = false
+	_close_supp_rules()
 	_fade_in_page(game_page)
 	_init_game(total, ai)
 
@@ -2090,6 +2336,10 @@ func _init_game(total: int = 4, ai: int = 3) -> void:
 	var halogen_cb_node = _start_child("HalogenCheckBox")
 	if halogen_cb_node:
 		game_manager.halogen_exchange_allowed = halogen_cb_node.button_pressed
+	# 元素限制（P10）：前 20 号元素 + 小页里勾选的扩展元素
+	var limit_cb_node = _start_child("ElementLimitCheckBox")
+	game_manager.element_limit_enabled = limit_cb_node != null and limit_cb_node.button_pressed
+	game_manager.allowed_extra_elements = _selected_extra_elements() if game_manager.element_limit_enabled else []
 	var ok = game_manager.init_game(total, ai)
 	if not ok:
 		push_error("init_game failed with total=%d ai=%d, retrying defaults" % [total, ai])
@@ -2575,11 +2825,15 @@ func _format_player_status() -> String:
 		result += "\n手牌: " + " | ".join(counts)
 	# 补充规则状态
 	if game_manager.get_organic_rules_enabled() or game_manager.get_sequence_rules_enabled() \
-			or game_manager.get_halogen_exchange_allowed():
+			or game_manager.get_halogen_exchange_allowed() or game_manager.get_element_limit_enabled():
 		var rules_list: Array = []
 		if game_manager.get_organic_rules_enabled(): rules_list.append("有机物胜利")
 		if game_manager.get_sequence_rules_enabled(): rules_list.append("顺序牌型")
 		if game_manager.get_halogen_exchange_allowed(): rules_list.append("允许卤族互化")
+		if game_manager.get_element_limit_enabled():
+			var extras: Array = game_manager.get_allowed_extra_elements()
+			var extra_txt := "无额外元素" if extras.is_empty() else "/".join(extras)
+			rules_list.append("元素限制（前20号 + %s）" % extra_txt)
 		result += "\n【补充规则】" + " + ".join(rules_list)
 	if not game_manager.get_direction_clockwise():
 		result += "\n方向: ← 逆时针"
@@ -4075,6 +4329,7 @@ func _handle_result(result: int) -> void:
 	elif result == -4: msg = "牌型不匹配！"
 	elif result == -6: msg = "不符合顺序指定的牌型约束！"
 	elif result == -7: msg = "卤族元素(F/Cl/Br/I)之间不可互相化合！（可在开始页勾选『允许卤族互化』）"
+	elif result == -8: msg = "该元素不在本局牌库中（已开启『元素限制』：前 20 号元素 + 自选扩展）"
 	_show_info(msg)
 	_on_back()
 

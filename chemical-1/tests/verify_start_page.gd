@@ -78,15 +78,31 @@ func _run() -> void:
 	# AI = 0 会让其余座位变成无人操作的人类（开局即卡死）→ 界面下限 1
 	_check(int(scene.ai_spin.min_value) == 1, "AI 下限 1（实际 %d）" % int(scene.ai_spin.min_value))
 
-	# ---------------- 3. 「查看补充规则」入口 ----------------
+	# ---------------- 3. 补充规则小页：入口 → 小页 → 帮助中心 ----------------
+	var supp_page = scene._start_child("SuppRulesPage")
+	_check(supp_page != null and not supp_page.visible, "补充规则小页存在且默认隐藏")
 	scene._start_child("SupplementaryHelpBtn").pressed.emit()
 	await process_frame
-	_check(scene.help_page != null and scene.help_page.visible, "点「查看补充规则」打开帮助中心")
+	_check(supp_page != null and supp_page.visible, "点「补充规则」打开设置小页（不再直接跳帮助页）")
+	_check(scene.help_page != null and not scene.help_page.visible, "此时帮助中心仍隐藏")
+	_check(scene._start_child("ElementLimitCheckBox") != null, "小页内含「元素限制」开关")
+	_check(scene._start_child("ElementPoolPanel") != null, "小页内含元素池面板")
+	_check(scene._start_child("ElementChip_Fe") != null and scene._start_child("ElementChip_I") != null,
+		"元素池含副族 Fe 与卤族 I 的 chip")
+	_check(scene._start_child("SuppRulesDoneBtn") != null, "小页有「完成」按钮")
+	scene._start_child("SuppRulesHelpBtn").pressed.emit()
+	await process_frame
+	_check(scene.help_page != null and scene.help_page.visible, "小页「查看完整说明」打开帮助中心")
 	_check(scene._help_tab == 2, "打开后停在第 3 个 Tab「补充规则」（实际 %d）" % scene._help_tab)
 	scene.help_page.visible = false
 	scene.start_page.visible = true
+	scene._close_supp_rules()
+	await process_frame
+	_check(not supp_page.visible, "关闭小页后回到开始页")
 
 	# ---------------- 4. 规则开关 + 开局参数 ----------------
+	scene._open_supp_rules()
+	await process_frame
 	var organic = scene._start_child("OrganicCheckBox")
 	_check(organic.toggle_mode, "有机物开关是 toggle 按钮")
 	organic.button_pressed = true
@@ -112,6 +128,8 @@ func _run() -> void:
 	# 否则剩下的座位是没人操作的人类，开局即卡死；同时验证「只勾顺序」也能独立生效
 	scene._show_start_page()
 	await process_frame
+	scene._open_supp_rules()
+	await process_frame
 	organic.button_pressed = false
 	var seq_cb = scene._start_child("SequenceCheckBox")
 	seq_cb.button_pressed = true
@@ -131,16 +149,22 @@ func _run() -> void:
 	# 第三局：卤族互化开关独立生效（默认禁止，勾选后放行）
 	scene._show_start_page()
 	await process_frame
+	scene._open_supp_rules()
+	await process_frame
 	seq_cb.button_pressed = false
 	var halogen_cb = scene._start_child("HalogenCheckBox")
 	_check(halogen_cb != null and halogen_cb.toggle_mode, "HalogenCheckBox 是 toggle 按钮")
 	if halogen_cb:
-		var hal_rect := Rect2(halogen_cb.position, halogen_cb.size)
-		var supp_node = scene._start_child("SupplementaryHelpBtn")
-		var supp_rect := Rect2(supp_node.position, supp_node.size)
-		_check(not hal_rect.intersects(supp_rect),
-			"卤族开关与「查看补充规则」不重叠 %s / %s" % [str(hal_rect), str(supp_rect)])
-		_check(hal_rect.end.x <= 580.0, "卤族开关在设置卡内（右边界 %.0f）" % hal_rect.end.x)
+		# P10：4 条补充规则都是小页里的独立卡片（不再挤在 SettingsCard 内）
+		var hal_card = scene._start_child("HalogenCheckBoxCard")
+		var limit_card = scene._start_child("ElementLimitCheckBoxCard")
+		_check(hal_card != null and limit_card != null, "4 条补充规则各有独立卡片")
+		if hal_card and limit_card:
+			var hr := Rect2(hal_card.position, hal_card.size)
+			var lr := Rect2(limit_card.position, limit_card.size)
+			_check(not hr.intersects(lr), "卤族 / 元素限制卡片不重叠 %s / %s" % [str(hr), str(lr)])
+			_check(hr.end.x <= 1152.0 and lr.end.y <= 648.0,
+				"规则卡片都在 1152×648 页面范围内 %s / %s" % [str(hr.end), str(lr.end)])
 		halogen_cb.button_pressed = true
 	await process_frame
 	scene._on_start_game()
