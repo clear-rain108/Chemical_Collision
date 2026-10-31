@@ -1,7 +1,7 @@
 # UI 视觉打磨推进计划
 
 > **最后更新**: 2026-10-31  
-> **当前状态**: P1 / P1.x / P2 / P3 / P5 / P6 / P7 完成（P7：手牌拖拽重排 + 选中索引修复，见 §9）  
+> **当前状态**: P1 / P1.x / P2 / P3 / P5 / P6 / P7 / P8 完成（P7：手牌拖拽重排 + 选中索引修复，见 §9；P8：结束页 / 教学引导页画风统一，见 §10）  
 > **相关文档**: [ARCHITECTURE.md](./ARCHITECTURE.md) 第 8 节「表现层 - GameUI.gd」
 
 ---
@@ -18,6 +18,7 @@
 | **P5** | 帮助中心重构：3 个独立页合并为单页 3 Tab + 滚动 + 卡片（Plan B 新手向） | ✅ 完成（2026-10-30，见 §7） |
 | **P6** | 提示按钮「自动选最优组合 + 解释」/ 开始页全部代码生成 / 旧帮助页节点清理 | ✅ 完成（2026-10-31，见 §8；含 §8.5 收尾修复） |
 | **P7** | 手牌拖拽重排（拖动换位 / 一次拖动转手动排列 / 「按序 ⇅」恢复 / 新牌追加末尾 / `selected_indices` 索引→对象修复） | ✅ 完成（2026-10-31，见 §9） |
+| **P8** | 结束页 / 教学引导页与开始页统一画风（共用渐变带 + 水印 + 装饰牌 + 白卡；结算卡加状态条与 3 统计块；关卡卡整卡可点） | ✅ 完成（2026-10-31，见 §10） |
 | P4 / P7 其余 | 美术升级方向文档的其余条目（卡牌重绘 / 字体 / 图标 / 音频 / A5 悬停与选中放大） | ⏳ 未展开（核对结果见 §6） |
 
 ---
@@ -276,11 +277,11 @@ R4 容错带内外与横向越界），既有 `_test_case()` / `_test_hover_debo
 
 ## 5. 验证基线
 
-16 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
+17 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
 
 ```bat
 set GD=D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe
-for %f in (hand_layout hand_runtime hand_reorder integration constraint logger organic refactor sequence sequence_table tutorial ai_discard motion help_page hint start_page) do (
+for %f in (hand_layout hand_runtime hand_reorder integration constraint logger organic refactor sequence sequence_table tutorial ai_discard motion help_page hint start_page end_page) do (
   %GD% --path . --headless --script res://tests/verify_%f.gd
 )
 ```
@@ -289,10 +290,11 @@ for %f in (hand_layout hand_runtime hand_reorder integration constraint logger o
 |------|------|
 | `verify_hand_layout` | 手牌尺寸/居中/叠卡步长/紧凑牌面/悬停上浮/**防抖状态机**/**选中与悬停样式**/**悬停流畅化（R1–R4）**/**警告 toast 布局**/**样式工厂**（120+ 条） |
 | `verify_hand_reorder` | **手牌拖拽重排 P7**（自动排列回归锁 / move_card 边界 / 拖拽落库 / 按钮 card meta 对应 / 手动模式不打回按序 / 抽牌追加末尾 / 选中索引跟随对象 / 拖出区外取消 / 插入槽判定 / 顺序签名 / 按序恢复 / 补发 pressed 被吞 / 18 张布局）（44 条） |
-| `verify_motion` | **页面淡入**（同色底 / 目标页 modulate / visible 同步 / 中途切换）/ **按钮缩放**（pivot、1.05、0.96、禁用不缩放、单补间、悬停发光）/ **卡牌字号**（28 / 14，紧凑 21 / 12，互不重叠）（44 条） |
+| `verify_motion` | **页面淡入**（同色底 / 目标页 modulate / visible 同步 / 中途切换）/ **按钮缩放**（pivot、1.05、0.96、禁用不缩放、单补间、悬停发光）/ **结束页入场**（子节点淡入 / 上浮基准不累积）/ **卡牌字号**（28 / 14，紧凑 21 / 12，互不重叠）（53 条） |
 | `verify_hand_runtime` | 真实手牌渲染与点击流程 |
 | `verify_hint` | 提示引擎与「提示」按钮（建议合法性交叉验证） |
 | `verify_start_page` | 开始页人数/AI 联动、规则开关、补充规则入口 |
+| `verify_end_page` | **结束页 / 教学页 P8**（同套装饰零件 / 结算卡圆角与阴影 / 按钮三件套 / 四态标题与状态条配色 / 三统计块取数 / 按钮文案与去向 / 教学页整卡按钮 / turn_count 归零与自增 / 重复展示不重播动画）（105 条） |
 | `verify_integration` | 端到端对局 |
 | `verify_constraint` | 化合价与牌型约束 |
 | `verify_logger` | 日志转发 |
@@ -556,3 +558,44 @@ meta 不存在时会刷 `ERROR`；改为 `has_meta()` 判定，并给 `StartRule
 回归锁：`verify_help_page.gd` 新增 3 条断言（文案不含「规则补充」、必须指向两个真实开关名、
 不含「桌面清空」）；`verify_start_page.gd` 新增各 1 条（只勾有机物时顺序仍关闭 / 只勾顺序时
 有机物仍关闭）。
+
+---
+
+## 10. P8 完成清单（结束页 / 教学引导页画风统一）
+
+**动机**：开始页在 P6 已经重做成「同色底 + 45° 渐变带 + 元素水印 + 倾斜装饰牌 + 白卡」，
+结束页却还是 4 个 Label + 1 个默认灰按钮（连 hover 都没有），教学页是 11 个散落的 Label / Button 平铺。
+三页同属「游戏外壳」，画风不能分裂。
+
+**方案（B 档）**：不追求炫技，先把三页拉到同一条基准线 —— 状态条 + 标题 + 3 个统计块 + 按钮组。
+
+| 页面 | 结构 |
+|---|---|
+| 结束页 | 640×420 白卡（圆角 8 + 阴影 + 96% 不透明）+ 顶部 6px 状态条 + 标题 36 + 描述 18 + 分隔线 + 3 个统计块（172×76：总回合 / 剩余牌库 / 剩余手牌）+ 主 / 次 / 幽灵三按钮 + 规则回顾 |
+| 教学页 | 标题 40 + 副标题 16 + 72×4 强调条 + 3 张 720×104 关卡卡（48 蓝色序号块 / 20 标题 / 14 描述 / 15「开始 →」）+ 返回 |
+
+**关键决策**
+
+| 决策 | 原因 |
+|---|---|
+| 三页共用 `_page_backdrop()` 与按钮三件套 `_page_primary_btn` / `_secondary` / `_ghost` | 一份样式来源；开始页的 `_start_make_*` 退化成薄壳，视觉零变化 |
+| 骨架 `_build_end_page()` / `_build_tutorial_page()` 只建一次，`_fill_end_page()` 只填数据 | `_show_end_page()` 被 `_refresh_ui()` 反复调用，重建会丢焦点、装饰牌浮动重启 |
+| 状态条按四态换色（主题蓝 / 深灰 / 中性灰 / 警示红） | 不加图标也能一眼区分胜负 / 退出 / 失败 |
+| 统计块数字 26px 主题蓝、标签 13px 灰 | 与开始页「29 种元素 · 182 张牌」同档，最小字号守住 13 |
+| 关卡卡整卡即 Button，hover 只改描边 / 阴影 /「开始 →」颜色 | 720 宽做 1.05 缩放会顶到装饰牌；整卡可点比 96px 小按钮好点太多 |
+| 主按钮文案与去向随模式切换（返回主页 / 返回关卡），次按钮（再来一局 / 再试一次） | 教程局结束后应回关卡列表，而不是回开始页 |
+| `turn_count` 放进 GameManager，`next_turn()` 自增 | 结算页要显示「总回合」，界面层不该自己数 |
+| `_animate_page_intro` 把目标 y 记在节点 meta `intro_base_y` | 修掉反复进入结束页时 +14 累积偏移的真 bug |
+
+**顺带修掉的 3 个真 bug**（都属于「节点名在、路径不在」或「漏关另一页」）
+
+1. `_setup_pages()` 仍在结束页根下取 `EndLabel` / `EndButton`，P8 后它们在 `EndCard` 里 → 拿到 null，
+   结束页文案与按钮连接全部失效（`verify_end_page` 的「退出态标题」一条直接抓到）。
+2. `_show_end_page()` 原来只在教程局关 `TutorialPage`；而 `TutorialPage` 排在 `EndPage` 之后，
+   从开始页点「教学引导」再开局结束时，整块关卡列表会盖住结算卡（截图核对时发现）。
+3. 退出态原本只改状态条颜色，标题仍是「游戏结束」、描述复读自定义文案 → 改为
+   「游戏已退出 / 本局未分胜负，随时再来一局」，失败态描述写「请返回主页重新开始」。
+
+**验收**：17 个测试套件全绿（新增 `verify_end_page` 105 条；`verify_motion` 44 → 53 条）；
+真实窗口 `--quit-after 240` 无 ERROR / WARNING；开始页 / 教学页 / 胜利结算 / 教程局退出 4 张截图逐一核对，
+三页的渐变带走向、水印位置、卡片圆角与阴影、按钮高度均一致。

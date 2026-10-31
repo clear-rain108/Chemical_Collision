@@ -25,6 +25,7 @@ const INITIAL_HAND_SIZE = PlayerManagerScript.INITIAL_HAND_SIZE
 var database: RefCounted = null
 var players: Array = []
 var current_player_index: int = 0
+var turn_count: int = 0          # 本局换手次数（结束页「总回合」统计；init_* 归零）
 var phase: int = 0
 var winner_index: int = -1
 var table_cards: Array = []
@@ -82,6 +83,7 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> bool:
 		push_error("init_game: ai_count=%d >= player_count=%d" % [ai_count, player_count])
 		return false
 
+	turn_count = 0
 	phase = 0
 	players.clear()
 	table_cards.clear()
@@ -502,6 +504,7 @@ func next_turn() -> void:
 		next_idx = _get_next_index_in_direction(next_idx)
 		var p = players[next_idx]
 		if p.get_hand_count() > 0 and not p.has_passed:
+			turn_count += 1
 			current_player_index = next_idx
 			return
 
@@ -514,6 +517,7 @@ func _intercept_next() -> void:
 	for _i in range(players.size()):
 		next_idx = (next_idx + 1) % players.size()
 		if next_idx != clan_bomb_owner and players[next_idx].get_hand_count() > 0 and not players[next_idx].has_passed:
+			turn_count += 1
 			current_player_index = next_idx
 			return
 
@@ -549,6 +553,7 @@ func _start_new_round() -> void:
 	sequence_constraint_active = false
 	sequence_constraint = -1
 
+	turn_count += 1
 	current_player_index = _get_next_index_in_direction(current_player_index)
 	for _i in range(players.size()):
 		var p = players[current_player_index]
@@ -594,6 +599,7 @@ func _get_alive_players() -> Array:
 # 十二、教程关卡系统（委托到 TutorialController）
 # ============================================================
 func init_tutorial(level: int) -> bool:
+	turn_count = 0
 	phase = 0
 	players.clear()
 	table_cards.clear()

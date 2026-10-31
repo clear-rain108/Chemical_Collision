@@ -193,6 +193,9 @@ func _setup_pages() -> void:
 	game_page = get_node_or_null("GamePage")
 	end_page = get_node_or_null("EndPage")
 	# 旧 3 个帮助页节点已在 P6 从 Main.tscn 删除，代码不再有任何引用
+	# 结束页 / 教学引导页（P8）同样全部代码生成；必须在下面取 EndLabel / Tutorial*Btn 之前完成
+	_build_end_page()
+	_build_tutorial_page()
 
 	if start_page:
 		start_button = _start_child("StartButton")
@@ -234,10 +237,15 @@ func _setup_pages() -> void:
 		seq_cb.toggled.connect(_on_sequence_toggled)
 
 	if end_page:
-		end_label = end_page.get_node_or_null("EndLabel")
-		end_button = end_page.get_node_or_null("EndButton")
-		if end_button:
-			end_button.pressed.connect(_show_start_page)
+		# 结束页子节点全在结算卡 EndCard 之内（P8）
+		var el = end_page.get_node_or_null("EndCard/EndLabel")
+		if el:
+			end_label = el
+		var eb = end_page.get_node_or_null("EndCard/EndButton")
+		if eb:
+			end_button = eb
+			if not eb.pressed.is_connected(_show_start_page):
+				eb.pressed.connect(_show_start_page)
 
 	# 帮助中心（P5）改为单页 + Tab；旧 3 页的 9 个跳转按钮节点已在 P6 删除
 	# 开始页「补充规则」按钮直接跳到帮助中心的第 3 个 Tab
@@ -458,6 +466,11 @@ func _on_show_tutorial_page() -> void:
 	if start_page: start_page.visible = false
 	if end_page: end_page.visible = false
 	_fade_in_page(tut_page)
+	_page_deco_float(tut_page)
+	_animate_page_intro(tut_page, [
+		"TutorialTitle", "TutorialSubtitle", "TutorialAccent",
+		"Tutorial0Btn", "Tutorial1Btn", "Tutorial2Btn", "TutorialBackBtn",
+	])
 
 func _on_tutorial_back() -> void:
 	var tut_page = get_node_or_null("TutorialPage")
@@ -465,6 +478,7 @@ func _on_tutorial_back() -> void:
 	if start_page: start_page.visible = true
 	if end_page: end_page.visible = false
 	_fade_in_page(start_page)
+	_animate_start_page()
 
 func _on_help_back() -> void:
 	if help_page: help_page.visible = false
@@ -524,7 +538,17 @@ const START_C_ACCENT_DARK := Color(0.13, 0.38, 0.58, 1.0)
 const START_C_MUTED := Color(0.451, 0.498, 0.565, 1.0)   # #737F90 次要文字
 const START_C_WATERMARK := Color(0.176, 0.478, 0.702, 0.12)
 
-var _start_intro_tweens: Array = []
+# 页面入场补间（开始页 / 结束页 / 教学引导页共用一套错峰淡入，切页时统一 kill）
+var _page_intro_tweens: Array = []
+
+# 结束页（P8：子节点全部代码生成，与开始页同一套画风）
+var _end_card: Panel = null
+var _end_title: Label = null
+var _end_status_bar: Panel = null
+var _end_stat_values: Array = []
+var _end_restart_btn: Button = null
+var _end_tutorial_btn: Button = null
+var _end_rule_note: Label = null
 
 
 func _build_start_page() -> void:
@@ -763,13 +787,16 @@ func _start_page_buttons() -> void:
 	start_page.add_child(_start_make_ghost("ExitButton", "退出程序", Vector2(476, 598), Vector2(200, 34)))
 
 
-func _start_make_primary(text: String, pos: Vector2, sz: Vector2) -> Button:
-	var b := _mkb(text, func() -> void: pass, false)
-	b.name = "StartButton"
+# -------- 按钮三件套（P8：开始页 / 结束页 / 教学引导页共用的唯一样式来源）--------
+# 主按钮：主题蓝底 + 深蓝边；hover 提亮 + 蓝色光晕
+func _page_primary_btn(text: String, cb: Callable, sz: Vector2,
+		node_name: String = "", fs: int = 20) -> Button:
+	var b := _mkb(text, cb, false)
+	if node_name != "":
+		b.name = node_name
 	b.custom_minimum_size = sz
 	b.size = sz
-	b.position = pos
-	b.add_theme_font_size_override("font_size", 22)
+	b.add_theme_font_size_override("font_size", fs)
 	var n: StyleBoxFlat = b.get_theme_stylebox("normal").duplicate()
 	n.bg_color = START_C_ACCENT
 	n.border_color = START_C_ACCENT_DARK
@@ -788,13 +815,15 @@ func _start_make_primary(text: String, pos: Vector2, sz: Vector2) -> Button:
 	return b
 
 
-func _start_make_secondary(node_name: String, text: String, pos: Vector2, sz: Vector2) -> Button:
-	var b := _mkb(text, func() -> void: pass, false)
-	b.name = node_name
+# 次按钮：白底 + 主题蓝描边 + 蓝字
+func _page_secondary_btn(text: String, cb: Callable, sz: Vector2,
+		node_name: String = "", fs: int = 19) -> Button:
+	var b := _mkb(text, cb, false)
+	if node_name != "":
+		b.name = node_name
 	b.custom_minimum_size = sz
 	b.size = sz
-	b.position = pos
-	b.add_theme_font_size_override("font_size", 19)
+	b.add_theme_font_size_override("font_size", fs)
 	var n: StyleBoxFlat = b.get_theme_stylebox("normal").duplicate()
 	n.bg_color = Color(1, 1, 1, 0.96)
 	n.border_color = START_C_ACCENT
@@ -813,14 +842,15 @@ func _start_make_secondary(node_name: String, text: String, pos: Vector2, sz: Ve
 	return b
 
 
-# 幽灵按钮：透明底 + 灰字，用于「退出程序 / 查看补充规则」这类次要入口
-func _start_make_ghost(node_name: String, text: String, pos: Vector2, sz: Vector2) -> Button:
-	var b := _mkb(text, func() -> void: pass, false)
-	b.name = node_name
+# 幽灵按钮：透明底 + 灰字，hover 蓝字 + 10% 蓝底
+func _page_ghost_btn(text: String, cb: Callable, sz: Vector2,
+		node_name: String = "", fs: int = 16) -> Button:
+	var b := _mkb(text, cb, false)
+	if node_name != "":
+		b.name = node_name
 	b.custom_minimum_size = sz
 	b.size = sz
-	b.position = pos
-	b.add_theme_font_size_override("font_size", 16)
+	b.add_theme_font_size_override("font_size", fs)
 	b.add_theme_color_override("font_color", START_C_MUTED)
 	b.add_theme_color_override("font_hover_color", START_C_ACCENT)
 	b.add_theme_color_override("font_pressed_color", START_C_ACCENT_DARK)
@@ -832,6 +862,25 @@ func _start_make_ghost(node_name: String, text: String, pos: Vector2, sz: Vector
 	h.bg_color = Color(0.176, 0.478, 0.702, 0.1)
 	b.add_theme_stylebox_override("hover", h)
 	b.pivot_offset = sz * 0.5
+	return b
+
+
+# -------- 开始页按钮薄壳：保持旧签名，视觉/动效零变化 --------
+func _start_make_primary(text: String, pos: Vector2, sz: Vector2) -> Button:
+	var b := _page_primary_btn(text, func() -> void: pass, sz, "StartButton", 22)
+	b.position = pos
+	return b
+
+
+func _start_make_secondary(node_name: String, text: String, pos: Vector2, sz: Vector2) -> Button:
+	var b := _page_secondary_btn(text, func() -> void: pass, sz, node_name, 19)
+	b.position = pos
+	return b
+
+
+func _start_make_ghost(node_name: String, text: String, pos: Vector2, sz: Vector2) -> Button:
+	var b := _page_ghost_btn(text, func() -> void: pass, sz, node_name, 16)
+	b.position = pos
 	return b
 
 
@@ -926,39 +975,53 @@ func _start_make_toggle(node_name: String, text: String, pos: Vector2) -> Button
 	return b
 
 
-# -------- 动效：入场错峰淡入 + 装饰牌缓慢浮动（只动子节点，不动 start_page.modulate）--------
+# -------- 动效：入场错峰淡入 + 装饰牌缓慢浮动（只动子节点，不动页面级 modulate）--------
 func _animate_start_page() -> void:
 	if not start_page:
 		return
-	_start_deco_float()
-	for t in _start_intro_tweens:
-		if t is Tween and t.is_valid():
-			t.kill()
-	_start_intro_tweens.clear()
-	var order := [
+	_page_deco_float(start_page)
+	_animate_page_intro(start_page, [
 		"StartTitle", "StartSubtitle", "StartAccent", "StartMeta", "DecorCards",
 		"SettingsCard", "StartRuleHint", "StartButton", "TutorialBtn", "ExitButton",
-	]
+	])
+
+
+# 通用：任意页面子节点错峰淡入（第 i 个节点延迟 i×50ms；每个节点一条独立补间，
+# 淡入与上浮并行，互不排队 —— 共用一个 tween 会串成 3 秒）
+# 只碰子节点的 modulate / position；页面级 modulate 归 _fade_in_page 独占
+func _animate_page_intro(page: Control, order: Array) -> void:
+	if page == null or not is_instance_valid(page):
+		return
+	for t in _page_intro_tweens:
+		if t is Tween and t.is_valid():
+			t.kill()
+	_page_intro_tweens.clear()
 	var i := 0
 	for n in order:
-		var node = start_page.get_node_or_null(n)
+		var node = page.get_node_or_null(n)
 		if node == null or not (node is Control):
 			continue
-		var target_y: float = node.position.y
+		# 目标位置固定为首次入场时的位置：_show_end_page 会被反复调用，
+		# 若拿「当前 position」当目标，上次动画没播完就会累积偏移
+		if not node.has_meta("intro_base_y"):
+			node.set_meta("intro_base_y", node.position.y)
+		var target_y: float = float(node.get_meta("intro_base_y"))
 		node.modulate.a = 0.0
 		node.position.y = target_y + 14.0
 		var delay := i * 0.05
-		# 每个节点一条独立补间：淡入与上浮并行，互不排队（共用一个 tween 会串成 3 秒）
-		var t := start_page.create_tween()
+		var t := page.create_tween()
 		t.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
 		t.tween_property(node, "modulate:a", 1.0, 0.26).set_delay(delay)
 		t.parallel().tween_property(node, "position:y", target_y, 0.3).set_delay(delay)
-		_start_intro_tweens.append(t)
+		_page_intro_tweens.append(t)
 		i += 1
 
 
-func _start_deco_float() -> void:
-	var holder = start_page.get_node_or_null("DecorCards")
+# 通用：装饰牌缓慢浮动（每页只启动一次，has_meta 去重）
+func _page_deco_float(page: Control) -> void:
+	if page == null or not is_instance_valid(page):
+		return
+	var holder = page.get_node_or_null("DecorCards")
 	if holder == null or holder.has_meta("float_started"):
 		return
 	holder.set_meta("float_started", true)
@@ -1464,6 +1527,451 @@ func _help_find_card(sym: String):
 		if card.symbol == sym:
 			return card
 	return null
+
+
+# ============================================================
+# 五之三、页面通用零件（P8：结束页 / 教学引导页与开始页共用同一套画风）
+# ============================================================
+# 45° 渐变带（同色底 → 白，左下最亮），开始页同款
+func _page_gradient_band(page: Control) -> void:
+	var grad := Gradient.new()
+	grad.set_color(0, PAGE_BG_COLOR)
+	grad.set_color(1, Color(1, 1, 1, 1))
+	var tex := GradientTexture2D.new()
+	tex.gradient = grad
+	tex.fill = GradientTexture2D.FILL_LINEAR
+	tex.fill_from = Vector2(0.0, 1.0)
+	tex.fill_to = Vector2(1.0, 0.0)
+	tex.width = 256
+	tex.height = 256
+
+	var band := TextureRect.new()
+	band.name = "GradientBand"
+	band.texture = tex
+	band.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	band.stretch_mode = TextureRect.STRETCH_SCALE
+	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	page.add_child(band)
+	band.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+
+
+# 元素水印：只负责氛围，一律 ASCII 化学式（默认中文字体没有下标字形）
+func _page_watermarks(page: Control, specs: Array) -> void:
+	var marks := Control.new()
+	marks.name = "Watermarks"
+	marks.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	page.add_child(marks)
+	marks.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for s in specs:
+		var lb := Label.new()
+		lb.text = s["t"]
+		lb.add_theme_font_size_override("font_size", int(s["fs"]))
+		lb.add_theme_color_override("font_color", START_C_WATERMARK)
+		lb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		lb.position = s["p"]
+		marks.add_child(lb)
+
+
+# 倾斜装饰牌（白底 + 真实元素配色，半透明）；holder 名固定 DecorCards 供浮动动效查找
+func _page_deco_cards(page: Control, cards: Array) -> void:
+	var holder := Control.new()
+	holder.name = "DecorCards"
+	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	page.add_child(holder)
+	holder.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	for c in cards:
+		holder.add_child(_start_make_deco_card(c["s"], c["p"], c["a"]))
+
+
+# 页面底 + 渐变带 + 水印 + 装饰牌（结束页 / 教学页共用的三段式背景）
+func _page_backdrop(page: Control, bg_name: String, marks: Array, cards: Array) -> void:
+	var bg := ColorRect.new()
+	bg.name = bg_name
+	bg.color = PAGE_BG_COLOR
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	page.add_child(bg)
+	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_page_gradient_band(page)
+	_page_watermarks(page, marks)
+	_page_deco_cards(page, cards)
+
+
+# ============================================================
+# 五之四、结束页（P8：结算卡 + 统计块 + 按钮组）
+# ============================================================
+# 设计要点
+#   1. 与开始页同一套画风：同色底 + 45° 渐变带 + 水印 + 装饰牌 + 白卡（圆角 10 + 阴影）
+#   2. 骨架只在 _build_end_page() 建一次；_show_end_page() 会被 _refresh_ui() 反复调用，
+#      因此只填数据（幂等），绝不重建节点
+#   3. 节点名 EndLabel / EndButton 保持不变 → _ensure_end_button_connected() 零改动
+const END_CARD_POS := Vector2(256, 114)
+const END_CARD_SIZE := Vector2(640, 420)
+const END_C_STAT_BG := Color(0.949, 0.969, 0.992, 1.0)   # #F2F7FD 统计块浅蓝底
+const END_C_DIVIDER := Color(0.851, 0.878, 0.910, 1.0)   # #D9E0E8 分隔线
+const END_C_NEUTRAL := Color(0.604, 0.647, 0.694, 1.0)   # #9AA5B1 中途退出
+const END_C_WARN := Color(0.906, 0.298, 0.235, 1.0)      # #E74C3C 初始化失败
+
+
+func _build_end_page() -> void:
+	if not end_page:
+		return
+	# 老版本 Main.tscn 的静态子节点整段清掉，保证只有一套 UI
+	for c in end_page.get_children():
+		end_page.remove_child(c)
+		c.queue_free()
+	_page_backdrop(end_page, "EndBg", [
+		{"t": "H2O", "p": Vector2(30, 470), "fs": 72},
+		{"t": "CO2", "p": Vector2(884, 60), "fs": 56},
+		{"t": "NaCl", "p": Vector2(58, 40), "fs": 48},
+		{"t": "O2", "p": Vector2(1000, 520), "fs": 44},
+	], [
+		{"s": "H", "p": Vector2(56, 300), "a": -0.13},
+		{"s": "O", "p": Vector2(986, 330), "a": 0.12},
+	])
+
+	# -------- 结算卡 --------
+	var card := Panel.new()
+	card.name = "EndCard"
+	card.position = END_CARD_POS
+	card.size = END_CARD_SIZE
+	var cs := _make_panel_style("card")
+	cs.bg_color = Color(1, 1, 1, 0.96)
+	card.add_theme_stylebox_override("panel", cs)
+	end_page.add_child(card)
+	_end_card = card
+
+	# 顶部状态条：只留上方两个圆角，才能贴住卡片圆角不露直角
+	var bar := Panel.new()
+	bar.name = "EndStatusBar"
+	bar.position = Vector2.ZERO
+	bar.size = Vector2(END_CARD_SIZE.x, 6)
+	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bs := StyleBoxFlat.new()
+	bs.bg_color = START_C_ACCENT
+	bs.corner_radius_top_left = CARD_RADIUS
+	bs.corner_radius_top_right = CARD_RADIUS
+	bs.corner_detail = 6
+	bar.add_theme_stylebox_override("panel", bs)
+	card.add_child(bar)
+	_end_status_bar = bar
+
+
+	# -------- 结果标题 / 描述 / 分隔线 --------
+	_end_title = _start_label("游戏结束", 36, START_C_TITLE, HORIZONTAL_ALIGNMENT_CENTER)
+	_end_title.name = "EndTitle"
+	_end_title.position = Vector2(0, 34)
+	_end_title.size = Vector2(END_CARD_SIZE.x, 48)
+	card.add_child(_end_title)
+
+	end_label = _start_label("", 18, START_C_SUB, HORIZONTAL_ALIGNMENT_CENTER)
+	end_label.name = "EndLabel"
+	end_label.position = Vector2(0, 88)
+	end_label.size = Vector2(END_CARD_SIZE.x, 26)
+	card.add_child(end_label)
+
+	var div := ColorRect.new()
+	div.name = "EndDivider"
+	div.color = END_C_DIVIDER
+	div.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	div.position = Vector2(32, 124)
+	div.size = Vector2(END_CARD_SIZE.x - 64, 1)
+	card.add_child(div)
+
+	# -------- 统计块：总回合 / 剩余牌库 / 剩余手牌 --------
+	var captions := ["总回合", "剩余牌库", "剩余手牌"]
+	_end_stat_values.clear()
+	for i in range(captions.size()):
+		var tile := Panel.new()
+		tile.name = "EndStat%d" % i
+		tile.position = Vector2(38 + i * 196, 142)
+		tile.size = Vector2(172, 76)
+		tile.add_theme_stylebox_override("panel", _end_stat_style())
+		card.add_child(tile)
+
+		var val := _start_label("—", 26, START_C_ACCENT, HORIZONTAL_ALIGNMENT_CENTER)
+		val.name = "EndStat%dValue" % i
+		val.position = Vector2(0, 10)
+		val.size = Vector2(172, 34)
+		tile.add_child(val)
+		_end_stat_values.append(val)
+
+		var cap := _start_label(captions[i], 13, START_C_MUTED, HORIZONTAL_ALIGNMENT_CENTER)
+		cap.name = "EndStat%dCaption" % i
+		cap.position = Vector2(0, 46)
+		cap.size = Vector2(172, 22)
+		tile.add_child(cap)
+
+	# -------- 按钮组：返回主页（主）/ 再来一局（次）/ 教学引导（幽灵）--------
+	end_button = _page_primary_btn("返回主页", func() -> void: pass, Vector2(260, 50), "EndButton", 20)
+	end_button.position = Vector2(92, 240)
+	card.add_child(end_button)
+
+	_end_restart_btn = _page_secondary_btn("再来一局", _on_end_restart, Vector2(180, 42),
+		"EndRestartBtn", 17)
+	_end_restart_btn.position = Vector2(368, 244)
+	card.add_child(_end_restart_btn)
+
+	_end_tutorial_btn = _page_ghost_btn("教学引导", _on_show_tutorial_page, Vector2(120, 30),
+		"EndTutorialBtn", 15)
+	_end_tutorial_btn.position = Vector2(260, 304)
+	card.add_child(_end_tutorial_btn)
+
+	_end_rule_note = _start_label("", 13, START_C_MUTED, HORIZONTAL_ALIGNMENT_CENTER)
+	_end_rule_note.name = "EndRuleNote"
+	_end_rule_note.position = Vector2(0, 346)
+	_end_rule_note.size = Vector2(END_CARD_SIZE.x, 20)
+	card.add_child(_end_rule_note)
+
+
+func _end_stat_style() -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = END_C_STAT_BG
+	sb.set_corner_radius_all(8)
+	sb.corner_detail = 6
+	return sb
+
+
+# 本局是否为教程局（level 1/2 或 level0 已进入引导流程）
+func _is_tutorial_run() -> bool:
+	return game_manager != null and (game_manager.tutorial_level >= 1
+		or game_manager.tutorial_level0_phase >= 1)
+
+
+# -------- 数据填充：把 game_manager 的状态映射到结算卡（幂等，只改文本 / 颜色 / 连接）--------
+func _fill_end_page(custom_text: String) -> void:
+	if not _end_card:
+		return
+	var is_tutorial := _is_tutorial_run()
+	var w = game_manager.get_winner() if game_manager else null
+	var head := "游戏结束"
+	var head_col := START_C_ACCENT
+	var desc := custom_text
+	if w != null:
+		var human_win: bool = not w.is_ai
+		head = "胜利！" if human_win else "本局结束"
+		head_col = START_C_ACCENT if human_win else START_C_SUB
+		if desc == "":
+			desc = "获胜者：%s" % w.player_name
+	elif custom_text == "游戏已退出":
+		head = "游戏已退出"
+		head_col = END_C_NEUTRAL
+		# 描述不复读标题：给出下一步动作
+		if desc == custom_text:
+			desc = "本局未分胜负，随时再来一局"
+	elif custom_text != "":
+		head_col = END_C_WARN
+		head = custom_text
+		if desc == custom_text:
+			desc = "请返回主页重新开始"
+	if desc == "":
+		desc = "本局结束"
+	if _end_title:
+		_end_title.text = head
+	if end_label:
+		end_label.text = desc
+	if _end_status_bar:
+		var sb: StyleBoxFlat = _end_status_bar.get_theme_stylebox("panel")
+		if sb:
+			sb.bg_color = head_col
+
+	# -------- 统计三件套：总回合 / 剩余牌库 / 剩余手牌 --------
+	var turns := "—"
+	var deck_left := "—"
+	var hand_left := "—"
+	if game_manager:
+		turns = str(game_manager.turn_count)
+		var db = game_manager.get_database()
+		if db:
+			deck_left = str(db.get_remaining_count())
+		if w != null:
+			hand_left = str(w.hand.size())
+		else:
+			var ps = game_manager.get_players()
+			if ps.size() > 0:
+				hand_left = str(ps[0].hand.size())
+	var texts := [turns, deck_left, hand_left]
+	for i in range(_end_stat_values.size()):
+		if _end_stat_values[i]:
+			_end_stat_values[i].text = texts[i]
+
+	# -------- 规则回顾 --------
+	if _end_rule_note:
+		if game_manager:
+			var org := "有机物 ✓" if game_manager.get_organic_rules_enabled() else "有机物 ✗"
+			var seq := "顺序 ✓" if game_manager.get_sequence_rules_enabled() else "顺序 ✗"
+			_end_rule_note.text = "本局规则：%s    %s" % [org, seq]
+		else:
+			_end_rule_note.text = ""
+
+	# -------- 按钮去向：教程局回关卡列表，自由局回开始页 --------
+	if end_button:
+		_ensure_end_button_connected(_on_show_tutorial_page if is_tutorial else _show_start_page)
+		end_button.text = "返回关卡" if is_tutorial else "返回主页"
+	if _end_restart_btn:
+		_end_restart_btn.text = "再试一次" if is_tutorial else "再来一局"
+	if _end_tutorial_btn:
+		_end_tutorial_btn.visible = not is_tutorial
+
+
+# 「再来一局」：自由局按开始页当前设置重开；教程局重开同一关（level0 也传 0）
+func _on_end_restart() -> void:
+	if _is_tutorial_run():
+		_on_start_tutorial(game_manager.tutorial_level)
+	else:
+		_on_start_game()
+
+
+# ============================================================
+# 五之五、教学引导页（P8：三张关卡卡 + 标题块 + 返回）
+# ============================================================
+# 整卡即按钮：Tutorial0Btn / 1 / 2 就是 720×104 的白卡本身（内部 Label 全部不参与拾取），
+# 因此 _setup_pages() 里的 pressed.connect(_on_start_tutorial.bind(i)) 零改动
+const TUT_CARD_X := 216.0
+const TUT_CARD_W := 720.0
+const TUT_CARD_H := 104.0
+const TUT_CARD_GAP := 16.0
+const TUT_CARD_Y0 := 176.0
+
+var _tut_cards: Array = []
+
+
+func _build_tutorial_page() -> void:
+	var page = get_node_or_null("TutorialPage")
+	if page == null:
+		return
+	for c in page.get_children():
+		page.remove_child(c)
+		c.queue_free()
+	_page_backdrop(page, "TutorialBg", [
+		{"t": "H2O", "p": Vector2(36, 430), "fs": 68},
+		{"t": "CO2", "p": Vector2(896, 70), "fs": 54},
+		{"t": "CH4", "p": Vector2(1000, 500), "fs": 46},
+	], [
+		{"s": "Cl", "p": Vector2(64, 96), "a": -0.12},
+		{"s": "Na", "p": Vector2(984, 300), "a": 0.13},
+	])
+
+	# -------- 标题块（与开始页同档字号：40 / 16 / 72×4）--------
+	var title := _start_label("教学引导", 40, START_C_TITLE, HORIZONTAL_ALIGNMENT_CENTER)
+	title.name = "TutorialTitle"
+	title.position = Vector2(0, 64)
+	title.size = Vector2(1152, 52)
+	page.add_child(title)
+
+	var sub := _start_label("从认识牌面到族炸接炸，三步上手", 16, START_C_SUB,
+		HORIZONTAL_ALIGNMENT_CENTER)
+	sub.name = "TutorialSubtitle"
+	sub.position = Vector2(0, 120)
+	sub.size = Vector2(1152, 24)
+	page.add_child(sub)
+
+	var accent := ColorRect.new()
+	accent.name = "TutorialAccent"
+	accent.color = START_C_ACCENT
+	accent.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	accent.position = Vector2(540, 150)
+	accent.size = Vector2(72, 4)
+	page.add_child(accent)
+
+	# -------- 三张关卡卡 --------
+	var levels := [
+		{"t": "游戏入门", "d": "熟悉游戏界面、了解基础流程与核心规则 · 限前3周期牌库"},
+		{"t": "基础入门", "d": "原子牌·单质·化合物·比大小 / 禁止族炸"},
+		{"t": "族炸进阶", "d": "族炸接炸·溢出化合物·手牌上限"},
+	]
+	_tut_cards.clear()
+	for i in range(levels.size()):
+		var card := _make_level_card(i, levels[i]["t"], levels[i]["d"])
+		card.position = Vector2(TUT_CARD_X, TUT_CARD_Y0 + i * (TUT_CARD_H + TUT_CARD_GAP))
+		page.add_child(card)
+		_tut_cards.append(card)
+
+	# -------- 返回 --------
+	# 回调统一由 _setup_pages() 连接（与开始页按钮一致），这里不传，避免重复 connect
+	var back := _page_ghost_btn("← 返回", func() -> void: pass, Vector2(160, 42),
+		"TutorialBackBtn", 16)
+	back.position = Vector2(496, 544)
+	page.add_child(back)
+
+
+# 关卡卡：整卡一个 Button；hover 只改描边 / 阴影（720 宽做 1.05 缩放会顶到装饰牌）
+func _make_level_card(idx: int, title_text: String, desc_text: String) -> Button:
+	var b := Button.new()
+	b.name = "Tutorial%dBtn" % idx
+	b.custom_minimum_size = Vector2(TUT_CARD_W, TUT_CARD_H)
+	b.size = Vector2(TUT_CARD_W, TUT_CARD_H)
+	b.text = ""
+	b.focus_mode = Control.FOCUS_NONE
+	b.add_theme_stylebox_override("normal", _level_card_style(false, false))
+	b.add_theme_stylebox_override("hover", _level_card_style(true, false))
+	b.add_theme_stylebox_override("pressed", _level_card_style(false, true))
+	b.add_theme_stylebox_override("focus", _make_panel_style("tab_off"))
+	b.mouse_entered.connect(_on_level_card_hover.bind(b, true))
+	b.mouse_exited.connect(_on_level_card_hover.bind(b, false))
+
+	var badge := Panel.new()
+	badge.name = "LevelBadge"
+	badge.position = Vector2(24, 28)
+	badge.size = Vector2(48, 48)
+	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bs := StyleBoxFlat.new()
+	bs.bg_color = START_C_ACCENT
+	bs.set_corner_radius_all(8)
+	badge.add_theme_stylebox_override("panel", bs)
+	b.add_child(badge)
+
+	var num := _start_label(str(idx), 24, Color(1, 1, 1, 1), HORIZONTAL_ALIGNMENT_CENTER)
+	num.name = "LevelBadgeNum"
+	num.position = Vector2(0, 11)
+	num.size = Vector2(48, 32)
+	badge.add_child(num)
+
+	var tl := _start_label(title_text, 20, START_C_TITLE, HORIZONTAL_ALIGNMENT_LEFT)
+	tl.name = "Tutorial%dTitle" % idx
+	tl.position = Vector2(92, 18)
+	tl.size = Vector2(470, 28)
+	b.add_child(tl)
+
+	var dl := _start_label(desc_text, 14, START_C_MUTED, HORIZONTAL_ALIGNMENT_LEFT)
+	dl.name = "Tutorial%dDesc" % idx
+	dl.position = Vector2(92, 50)
+	dl.size = Vector2(470, 40)
+	dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	b.add_child(dl)
+
+	var go := _start_label("开始 →", 15, START_C_ACCENT, HORIZONTAL_ALIGNMENT_CENTER)
+	go.name = "Tutorial%dGo" % idx
+	go.position = Vector2(600, 40)
+	go.size = Vector2(96, 24)
+	b.add_child(go)
+	return b
+
+
+func _level_card_style(hover: bool, pressed: bool) -> StyleBoxFlat:
+	var sb := _make_panel_style("card")
+	sb.bg_color = Color(1, 1, 1, 0.96)
+	sb.shadow_size = 3
+	sb.shadow_offset = Vector2(0, 2)
+	if hover:
+		sb.border_color = START_C_ACCENT
+		sb.set_border_width_all(BORDER_W_ACTIVE)
+		sb.shadow_color = Color(0.176, 0.478, 0.702, 0.22)
+		sb.shadow_size = 8
+	if pressed:
+		sb.bg_color = Color(0.937, 0.965, 0.988, 1.0)
+		sb.border_color = START_C_ACCENT
+		sb.set_border_width_all(BORDER_W_ACTIVE)
+	return sb
+
+
+# 关卡卡 hover：「开始 →」由主题蓝加深，作为卡片被选中的视觉提示
+func _on_level_card_hover(card: Button, entered: bool) -> void:
+	if not is_instance_valid(card):
+		return
+	var col := START_C_ACCENT_DARK if entered else START_C_ACCENT
+	for c in card.get_children():
+		if c is Label and String(c.name).begins_with("Tutorial") and String(c.name).ends_with("Go"):
+			c.add_theme_color_override("font_color", col)
 
 
 # ============================================================
@@ -3693,30 +4201,23 @@ func _hide_warning_toast() -> void:
 		_warning_toast.visible = false
 
 func _show_end_page(custom_text: String) -> void:
-	var tut_page = get_node_or_null("TutorialPage")
+	# 已被 _refresh_ui 反复调用：已在结算页时只刷新数据，不重播淡入 / 入场动画（否则每帧闪一下）
+	var already_shown: bool = end_page.visible and is_equal_approx(end_page.modulate.a, 1.0)
 	start_page.visible = false
 	game_page.visible = false
 	end_page.visible = true
 	if help_page: help_page.visible = false
-	# 放在 visible 之后、提前 return 之前，保证「有获胜者」分支也能淡入
+	# 结束页独占屏幕：教学关卡列表（可能刚从开始页打开）也一并收起，
+	# 否则它会盖在 EndPage 之上（TutorialPage 在 Main.tscn 里排在 EndPage 之后）
+	var tut_page = get_node_or_null("TutorialPage")
+	if tut_page: tut_page.visible = false
+	# 先填数据（标题 / 统计 / 按钮去向），再淡入：观众看到的第一帧就是最终态
+	_fill_end_page(custom_text)
+	if already_shown:
+		return
 	_fade_in_page(end_page)
-	var is_tutorial = (game_manager != null and (game_manager.tutorial_level >= 1 or game_manager.tutorial_level0_phase >= 1))
-	if end_label:
-		if game_manager:
-			var w = game_manager.get_winner()
-			if w:
-				end_label.text = "获胜者: %s" % w.player_name
-				if is_tutorial:
-					if tut_page: tut_page.visible = false
-					if end_button:
-						_ensure_end_button_connected(_on_show_tutorial_page)
-				else:
-					_ensure_end_button_connected(_show_start_page)
-				return
-		end_label.text = custom_text if custom_text != "" else "游戏结束"
-	_ensure_end_button_connected(_show_start_page)
-	if is_tutorial:
-		if tut_page: tut_page.visible = false
+	_page_deco_float(end_page)
+	_animate_page_intro(end_page, ["EndCard"])
 
 
 func _ensure_end_button_connected(target: Callable) -> void:

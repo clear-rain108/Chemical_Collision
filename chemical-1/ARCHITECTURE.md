@@ -77,7 +77,8 @@ chemical-1/
 │   ├── verify_hand_layout.gd          ← 手牌布局 / 悬停状态机 / 样式工厂 / 警告 toast
 │   ├── verify_hand_reorder.gd         ← 手牌拖拽重排（手动排列 / 按序恢复 / 选中索引进→对象）
 │   ├── verify_motion.gd               ← 动效与排版：页面淡入 / 按钮缩放 / 卡牌字号
-│   └── verify_help_page.gd            ← 帮助中心：结构 / Tab 懒加载 / 字号 / 牌库数字
+│   ├── verify_help_page.gd            ← 帮助中心：结构 / Tab 懒加载 / 字号 / 牌库数字
+│   └── verify_end_page.gd             ← 结束页 / 教学页：结构画风 / 四态文案 / 按钮去向 / 统计数字
 ├── CHEMICAL_COLLISION_GAME.md         ← 游戏设计文档
 ├── GAMEPLAY_RULES.md                  ← 玩法规则文档
 ├── ARCHITECTURE.md                    ← 本文档
@@ -211,7 +212,7 @@ CompoundSolver.is_compound() / is_organic()
 PlayerManager.PlayerInfo
 属性: player_name, hand, is_ai, has_passed, clan_bomb_cooling, hand_manual_order
 方法: get_hand_count(), add_card(), remove_cards(),
-      sort_hand_by_atomic_number(force := false), move_card(from_idx, to_idx)
+	  sort_hand_by_atomic_number(force := false), move_card(from_idx, to_idx)
 ```
 
 > **手牌顺序的唯一真源是 `hand` 数组本身**，界面每次都照抄数组顺序，不存第二套顺序。
@@ -230,6 +231,7 @@ PlayerManager.PlayerInfo
 | clan_bomb_disabled | 禁用族炸（第一关） |
 | tutorial_level | 0=自由模式, 1=第一关, 2=第二关 |
 | tutorial_step | 当前教程步骤 |
+| turn_count | 本局累计换手次数（`next_turn()` 每次推进 +1，`init_game` / `init_tutorial` 归零）；结束页「总回合」的唯一来源 |
 | compound_immune | 溢出化合物免疫族炸 |
 | table_custom_valences | 桌面化合物实际化合价（play_cards 出牌时保存，渲染化学式/排序/化合价显示用）|
 | _get_hand_limit() | min(players×4, 18) |
@@ -308,11 +310,11 @@ AIPlayer.auto_play(game_manager, ui_refresh)
 | 页面节点 | 说明 |
 |----------|------|
 | StartPage | 开始页（P6：**全部子节点代码生成** + 渐变带/水印/装饰牌/错峰淡入） |
-| TutorialPage | 教学引导页（关卡选择） |
+| TutorialPage | 教学引导页（P8：**全部子节点代码生成** —— 标题块 + 3 张 720×104 关卡卡 + 返回，整卡即按钮） |
 | HelpPage | 帮助中心（P5：单页 + 3 Tab + 滚动 + 卡片，**全部代码生成**） |
 | ~~HelpPage_Rules / _Cards / _Supp~~ | P6 已从 Main.tscn 整段删除（P5 的文案校对备份完成使命） |
 | GamePage | 游戏主界面（牌面+操作） |
-| EndPage | 结束页 |
+| EndPage | 结束页（P8：**全部子节点代码生成** —— 结算卡 + 顶部状态条 + 3 统计块 + 按钮组） |
 
 **页面淡入**（P3）：根节点下有一个常驻同色底 `PageBackdrop`（`#E6F0FA`、`z_index = -100`、首个子节点、
 `MOUSE_FILTER_IGNORE`），由 `_ensure_page_backdrop()` 在 `_ready` 里幂等创建（必须早于任何淡入）。
@@ -324,6 +326,38 @@ AIPlayer.auto_play(game_manager, ui_refresh)
 | `visible` 仍**同步**设置，不延迟隐藏旧页 | 真正的交叉淡化必须延迟隐藏旧页，而 `_on_help_back()` 会**同步**读 `*.visible` 判断返回到哪一页，延迟隐藏会引入竞态 |
 | 常驻同色底必须在根节点、且先于所有页面绘制 | 淡入瞬间 alpha=0，露出的必须是同色背景，否则会闪出窗口清屏色（深灰） |
 | 帮助页内部 tab（规则 / 图鉴 / 补充）不淡入 | 同层即时切换更自然，每次点标签闪一下反而劣化。P5 后这条由「切 Tab 只改 Scroll `visible`」结构性保证（`_set_help_tab` 不碰 `_fade_in_page`），`verify_motion` / `verify_help_page` 各有一条断言锁死 |
+
+### 结束页 / 教学引导页（P8：与开始页同一套画风）
+
+**动机**：结束页是 4 个 Label + 1 个默认灰按钮、教学页是 11 个散落的 Label/Button，与 P6 重做后的开始页
+（渐变带 + 水印 + 装饰牌 + 白卡）完全脱节。
+
+| 复用零件 | 作用 |
+|---|---|
+| `_page_backdrop(page, bg_name, marks, cards)` | 同色底 + 45° 渐变带 + 元素水印 + 倾斜装饰牌，两页一行接入 |
+| `_page_primary_btn` / `_page_secondary_btn` / `_page_ghost_btn` | 按钮三件套（蓝底 / 白底蓝边 / 透明），开始页的 `_start_make_*` 已是其薄壳 |
+| `_animate_page_intro(page, order)` / `_page_deco_float(page)` | 子节点错峰淡入 + 装饰牌浮动（不碰页面级 `modulate`） |
+
+**结束页**：`EndCard` 640×420 @ (256,114)，结构 = 顶部 6px 状态条 + 标题 + 描述 + 分隔线 +
+3 个统计块（总回合 / 剩余牌库 / 剩余手牌）+ 按钮组（返回主页或返回关卡 / 再来一局或再试一次 / 教学引导）。
+
+| 状态 | 判定 | 状态条 | 标题 |
+|---|---|---|---|
+| 玩家获胜 | `winner_index` 指向非 AI | `START_C_ACCENT` 主题蓝 | 胜利！ |
+| AI 获胜 | `winner_index` 指向 AI | `START_C_SUB` 深灰 | 本局结束 |
+| 中途退出 | 自定义文案「游戏已退出」 | `END_C_NEUTRAL` 中性灰 | 游戏已退出 |
+| 初始化失败 | 其它自定义文案 | `END_C_WARN` 警示红 | 透传文案 |
+
+**教学引导页**：标题块（40 / 16 / 72×4 强调条）+ 3 张 720×104 关卡卡 + 返回。
+关卡卡整卡就是一个 `Button`（`Tutorial0Btn/1Btn/2Btn` 名字不变，`_setup_pages` 的 `pressed.connect` 零改动），
+hover 只改描边 / 阴影 / 「开始 →」颜色 —— 720 宽做 1.05 缩放会顶到装饰牌。
+
+| 约束 | 原因 |
+|---|---|
+| 骨架只在 `_build_end_page()` / `_build_tutorial_page()` 建一次，`_fill_end_page()` 只填数据 | `_show_end_page()` 被 `_refresh_ui()` 反复调用，重建会丢焦点并抖动 |
+| 页面级 `modulate` 归 `_fade_in_page` 独占 | `verify_motion` 锁死页面淡入语义；入场动画只动子节点 |
+| `_animate_page_intro` 的目标 y 记在节点 meta `intro_base_y` | 反复进入时若拿「当前 position」当目标，上次动画没播完会累积 +14 偏移 |
+| `_show_end_page()` 无条件收起 `TutorialPage` | `TutorialPage` 在 `Main.tscn` 里排在 `EndPage` 之后，漏关会整块盖住结算卡 |
 
 ### 帮助中心（P5：单页 + 3 Tab + 滚动 + 卡片）
 
@@ -440,9 +474,9 @@ HelpPage (Control, full rect, visible=false)
 ```
 _build_card_button()      → btn.set_meta("card", card)
 _update_hand_buttons()    → ① _selected_cards(cp)：遍历 selected_indices，用 hand_buttons[i].get_meta("card")
-                            取对象（必须抢在 hand_buttons.clear() 之前！）
-                          ② sort_hand_by_atomic_number()
-                          ③ _remap_selection(cp, cards)：cp.hand.find(card) 重新算出索引
+							取对象（必须抢在 hand_buttons.clear() 之前！）
+						  ② sort_hand_by_atomic_number()
+						  ③ _remap_selection(cp, cards)：cp.hand.find(card) 重新算出索引
 ```
 
 提示文本同理：`_hint_owner` + `_hint_hand_size` 之外再加 `_hint_order_sig`（顺序签名），
@@ -603,14 +637,14 @@ AIPlayer.auto_play(game_manager, ui_refresh):
 ```
 Main (Control) ← GameUI.gd
 ├── StartPage          ← 空容器；子节点全部由 _build_start_page() 生成（P6）
-├── TutorialPage       ← 教学引导页：关卡1/关卡2 + 返回
+├── TutorialPage       ← 空容器；子节点全部由 _build_tutorial_page() 生成（P8）
 ├── GamePage           ← 游戏主界面
 │   ├── GameBackground ← Color(0.78,0.88,0.98)
 │   ├── TitleLabel / InfoLabel / TableLabel / DeckCountLabel
 │   ├── HandLabel / HandContainer (Control，手动重叠布局)
 │   ├── ActionPanel (HBox) / CardInfoLabel / TutorialLabel
 │   └── HintButton / HelpBtn / QuitButton
-└── EndPage
+└── EndPage            ← 空容器；子节点全部由 _build_end_page() 生成（P8）
 ```
 
 > P6 后 `Main.tscn` 只剩 373 行：`StartPage` 是空容器，`HelpPage` 由 `_build_help_page()` 生成，

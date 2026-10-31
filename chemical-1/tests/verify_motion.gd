@@ -38,6 +38,7 @@ func _run():
 
 	await _test_page_fade(scene)
 	await _test_button_scale(scene)
+	await _test_end_page_motion(scene)
 	await _test_card_fonts(scene)
 
 	if fails == 0:
@@ -165,7 +166,53 @@ func _test_button_scale(scene) -> void:
 	await process_frame
 
 
-# ---------------- 3. 卡牌字号 ----------------
+# ---------------- 3. 结束页入场 ----------------
+# 页面级 modulate 归 _fade_in_page 独占；子节点入场由 _animate_page_intro 负责。
+# 反复进入结束页（_refresh_ui 会重入）时基准位置不能累积上浮 +14
+func _wait_intro(scene) -> void:
+	var guard: int = 0
+	while guard < 600:
+		var running := false
+		for t in scene._page_intro_tweens:
+			if t is Tween and t.is_valid() and t.is_running():
+				running = true
+				break
+		if not running:
+			return
+		await process_frame
+		guard += 1
+
+
+func _test_end_page_motion(scene) -> void:
+	scene._init_game(4, 3)
+	await process_frame
+	var end_page = scene.get_node("EndPage")
+	var card = end_page.get_node_or_null("EndCard")
+	_check(card != null, "结束页有结算卡 EndCard")
+	if card == null:
+		return
+	var base_y: float = card.position.y
+	scene._on_quit_game()
+	_check(end_page.visible, "退出后结束页可见")
+	_check(end_page.modulate.a < 0.2, "结束页从透明淡入 (a=%.2f)" % end_page.modulate.a)
+	_check(card.modulate.a < 0.2, "结算卡子节点错峰淡入从透明开始")
+	_check(card.position.y > base_y, "结算卡入场自下方上浮 (%.1f > %.1f)" % [card.position.y, base_y])
+	await _wait_tween(scene._page_fade_tween)
+	await _wait_intro(scene)
+	_check(abs(end_page.modulate.a - 1.0) < 0.01, "结束页淡入收敛到完全不透明")
+	_check(abs(card.position.y - base_y) < 0.01, "结算卡落回基准位置 (y=%.1f)" % card.position.y)
+
+	# 反复进入结束页：基准位置在首次入场时记录，不随重入累积偏移
+	for i in range(3):
+		scene._show_end_page("")
+		await process_frame
+	await _wait_intro(scene)
+	_check(abs(card.position.y - base_y) < 0.01,
+		"重入 3 次后结算卡不偏移 (y=%.1f / 基准 %.1f)" % [card.position.y, base_y])
+	_check(abs(end_page.modulate.a - 1.0) < 0.01, "重入期间页面 alpha 不被子节点动画改写")
+
+
+# ---------------- 4. 卡牌字号 ----------------
 func _test_card_fonts(scene) -> void:
 	scene._init_game(4, 3)
 	await process_frame
