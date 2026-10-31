@@ -494,5 +494,32 @@ GameUI 侧（`_on_hint_toggled` 重写）：
 附带修复：`_start_flash_rule_hint()` 里的 `get_meta("tween", null)` 在 Godot 中等同单参数调用，
 meta 不存在时会刷 `ERROR`；改为 `has_meta()` 判定，并给 `StartRuleHint` 加颜色参数。
 
-验收：新增 `tests/verify_start_page.gd`（28 条断言）全绿；14 个测试套件全绿、0 FAILED；
+验收：新增 `tests/verify_start_page.gd`（30 条断言）全绿；14 个测试套件全绿、0 FAILED；
 真实窗口 `--resolution 1152x648 --quit-after 300` 无 ERROR / WARNING。
+
+### 8.6 补充规则复查（同类问题排查）
+
+两条补充规则（有机物胜利 / 顺序牌型）走的就是 8.5 里修好的同一条 `_start_child()` 链路，
+逐项核对后**功能侧无死链**：
+
+| 环节 | 实现位置 | 结论 |
+|---|---|---|
+| 开关 → 开局写入 | `GameUI._init_game()` → `organic_rules_enabled` / `sequence_rules_enabled` | ✅ 两条开关互不影响 |
+| 有机物打出即胜 | `GameManager.play_cards()` 有机物分支 | ✅ |
+| 顺序 → 方向反转 | `direction_clockwise = not direction_clockwise` | ✅ 顺/逆时针提示同步 |
+| 顺序 → 指定牌型 | `play_cards()` 返回 `1` → `GameUI` 弹「单质 / 化合物 / 族炸」三选框 | ✅ |
+| 未按指定牌型出 | `player_fail_sequence_constraint()`：罚抽 2 张 + `has_passed` + 约束解除 | ✅ |
+| 族炸打断 | 族炸分支 `sequence_constraint_active = false`，接炸链照常 | ✅ |
+| 游戏页规则提示 | `get_organic_rules_enabled()` / `get_sequence_rules_enabled()` 拼信息栏 | ✅ |
+
+唯一残留的是**文案**（和第 1 个问题同类型：写的东西界面上不存在）：
+
+- 帮助 Tab3 两张卡都写「需在开始页勾选『规则补充』」，但 P6 开始页早已拆成
+  「有机物胜利规则」/「顺序牌型规则」两个独立开关，界面上找不到「规则补充」这个复选框
+  → 改为指向真实开关名
+- 「顺序牌型」卡写「打出后桌面清空」，实际是 `table_pattern = SEQUENCE`（牌权被抢、
+  不再比大小），桌面仍会展示刚打出的顺序牌 → 改为「打出后抢走牌权（不比大小）」
+
+回归锁：`verify_help_page.gd` 新增 3 条断言（文案不含「规则补充」、必须指向两个真实开关名、
+不含「桌面清空」）；`verify_start_page.gd` 新增各 1 条（只勾有机物时顺序仍关闭 / 只勾顺序时
+有机物仍关闭）。

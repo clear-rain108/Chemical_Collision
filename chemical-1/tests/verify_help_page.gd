@@ -139,6 +139,16 @@ func _run() -> void:
 	_check(g2.size() == 1 and g2[0].get_child_count() == 4,
 		"Tab2 共 4 张卡 (实际 %d)" % (g2[0].get_child_count() if g2.size() == 1 else -1))
 
+	# 补充规则文案必须指向开始页真实存在的开关名（曾写成不存在的「规则补充」复选框）
+	var supp_text := ""
+	for card in HelpContentScript.get_supp_cards():
+		for line in card.get("lines", []):
+			supp_text += str(line.get("t", "")) + "|"
+	_check(supp_text.find("规则补充") == -1, "补充规则文案不再引用不存在的「规则补充」复选框")
+	_check(supp_text.find("有机物胜利规则") >= 0 and supp_text.find("顺序牌型规则") >= 0,
+		"补充规则文案指向开始页真实开关「有机物胜利规则」/「顺序牌型规则」")
+	_check(supp_text.find("桌面清空") == -1, "顺序牌型不再写成「桌面清空」（实际是抢走牌权、不比大小）")
+
 	scene._on_help_show_rules()
 	await process_frame
 	_check(scene.help_scrolls[0].visible and not scene.help_scrolls[1].visible, "可切回 Tab0")

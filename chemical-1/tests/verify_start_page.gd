@@ -100,12 +100,18 @@ func _run() -> void:
 		_check(scene.game_manager.get_players().size() == 5,
 			"总人数按设置生效 = 5（实际 %d）" % scene.game_manager.get_players().size())
 		_check(scene.game_manager.organic_rules_enabled, "有机物规则按开关生效")
+		_check(not scene.game_manager.get_sequence_rules_enabled(),
+			"只勾有机物时，顺序规则保持关闭（两条开关互不影响）")
 		_check(_count_ai(scene.game_manager) == 2,
 			"AI 人数按设置生效 = 2（实际 %d）" % _count_ai(scene.game_manager))
 
-	# 第二局：绕过下限把 AI 设成 0（模拟脚本 / 旧数据），开局必须抬到 1，
-	# 否则剩下的座位是没人操作的人类，开局即卡死
+	# 第二局：绕开下限把 AI 设成 0（模拟脚本 / 旧数据），开局必须抬到 1，
+	# 否则剩下的座位是没人操作的人类，开局即卡死；同时验证「只勾顺序」也能独立生效
 	scene._show_start_page()
+	await process_frame
+	organic.button_pressed = false
+	var seq_cb = scene._start_child("SequenceCheckBox")
+	seq_cb.button_pressed = true
 	await process_frame
 	scene.player_spin.value = 4
 	scene.ai_spin.min_value = 0
@@ -115,6 +121,9 @@ func _run() -> void:
 	await process_frame
 	_check(scene.game_manager != null and _count_ai(scene.game_manager) == 1,
 		"AI=0 被抬到 1，不会出现无人操作的人类（实际 %d）" % _count_ai(scene.game_manager))
+	_check(scene.game_manager != null and scene.game_manager.get_sequence_rules_enabled()
+			and not scene.game_manager.get_organic_rules_enabled(),
+		"只勾顺序时，顺序规则生效且有机物规则关闭")
 
 	# ---------------- 5. 帮助页示例牌：化合价 vs 张数 ----------------
 	scene._open_help_at_tab(1)

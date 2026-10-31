@@ -212,7 +212,7 @@ detect_pattern(cards, skip_clan_bomb=false) 判定优先级:
 ## 13. 游戏流程
 
 ```
-Start Page → 选择模式（自由/第一关/第二关）→ 勾选补充规则
+Start Page → 选择模式（自由/第一关/第二关）→ 勾选「有机物胜利规则」/「顺序牌型规则」（两个独立开关）
   ↓
 GameManager.init_game / init_tutorial
   ├── 172 张牌洗牌 → 每人发 8 张（或预设手牌）
@@ -292,7 +292,15 @@ GameManager.init_game / init_tutorial
 
 ## 16. 补充规则
 
-补充规则可在开始页通过勾选框启用/禁用。启用后，游戏页会显示"【补充规则】有机物胜利 + 顺序牌型"提示。
+补充规则由开始页设置卡里的**两个独立开关**控制（互不影响）：
+
+| 开关 | 节点名 | 开启后 |
+|------|--------|--------|
+| 有机物胜利规则 | `OrganicCheckBox` | 允许打出有机物，且打出即获胜 |
+| 顺序牌型规则 | `SequenceCheckBox` | 允许打出顺序牌，触发方向反转 + 指定牌型 |
+
+两个开关的状态在开局时写入 `GameManager.organic_rules_enabled` / `sequence_rules_enabled`；
+任一开启，游戏页信息栏会显示"【补充规则】有机物胜利 + 顺序牌型"提示。
 
 ### 16.1 有机物胜利规则
 
