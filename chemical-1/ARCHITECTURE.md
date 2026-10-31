@@ -374,11 +374,11 @@ HelpPage (Control, full rect, visible=false)
 
 ```
 点击 → HintAdvisor.suggest(game_manager)
-     → {indices, pattern, valence, organic, label, text}
-     → selected_indices = indices
-     → 化合物：compound_selections = valence，step_mode = 2（面板直接是「确认打出」）
-       其余：step_mode = 1（面板是「作为单质 / 合成化合物 / 族炸 / 顺序打出」）
-     → _hint_text 写进 CardInfoLabel
+	 → {indices, pattern, valence, organic, label, text}
+	 → selected_indices = indices
+	 → 化合物：compound_selections = valence，step_mode = 2（面板直接是「确认打出」）
+	   其余：step_mode = 1（面板是「作为单质 / 合成化合物 / 族炸 / 顺序打出」）
+	 → _hint_text 写进 CardInfoLabel
 ```
 
 | 模块 | 职责 |
@@ -576,7 +576,18 @@ Main (Control) ← GameUI.gd
 > P6 后 `Main.tscn` 只剩 373 行：`StartPage` 是空容器，`HelpPage` 由 `_build_help_page()` 生成，
 > 旧 `HelpPage_Rules / _Cards / _Supp`（589 行）已删除。开始页生成的节点名与旧场景逐一对应
 > （`StartButton` / `PlayerCountSpin` / `AiCountSpin` / `OrganicCheckBox` / `SequenceCheckBox` /
-> `TutorialBtn` / `ExitButton` / `SupplementaryHelpBtn`），所以 `_setup_pages()` 的绑定代码不用改。
+> `TutorialBtn` / `ExitButton` / `SupplementaryHelpBtn`）。
+>
+> ⚠ **节点名一致 ≠ 路径一致**：人数框 / AI 框 / 两个规则开关 / 补充规则入口都嵌在 `SettingsCard`
+> 卡片内，只有 `StartButton` / `TutorialBtn` / `ExitButton` 直接挂在 `StartPage` 下。
+> 取这些控件必须走 `_start_child(name)`（内部 `find_child(name, true, false)` 递归查找）；
+> 用 `start_page.get_node_or_null("PlayerCountSpin")` 会拿到 `null` 并**静默失效**
+> （踩过的坑：AI 人数永远 3、AI 上限锁死 7、补充规则开关永远关、点「查看补充规则」没反应）。
+>
+> 人数约束：`1 ≤ AI ≤ 总人数 - 1`（至少 1 个对手、至少留 1 个座位给人类；AI=0 时其余座位
+> 是没人操作的人类，开局即卡死）。`_on_player_count_changed()` 在总人数变化时同步压
+> `ai_spin.max_value` 并在越界时用 `StartRuleHint` 告知；`_on_start_game()` 再对上下限各 clamp
+> 一次，防御脚本 / 键盘输入绕过 UI 的路径。
 
 ---
 

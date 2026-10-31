@@ -1,7 +1,7 @@
 # UI 视觉打磨推进计划
 
 > **最后更新**: 2026-10-31  
-> **当前状态**: P1 / P1.x / P2 / P3 / P5 / P6 完成（P6：提示按钮自动选牌 + 开始页代码生成 + 旧帮助页清理）  
+> **当前状态**: P1 / P1.x / P2 / P3 / P5 / P6 完成（P6：提示按钮自动选牌 + 开始页代码生成 + 旧帮助页清理，含 §8.5 三处收尾修复）  
 > **相关文档**: [ARCHITECTURE.md](./ARCHITECTURE.md) 第 8 节「表现层 - GameUI.gd」
 
 ---
@@ -16,7 +16,7 @@
 | **P2.x** | 手牌悬停切换流畅化（4 个根因） | ✅ 完成（2026-10-24） |
 | **P3** | 动效与排版：页面淡入 / 按钮缩放发光 / 卡牌字号 | ✅ 完成（2026-10-30，见 §4.1） |
 | **P5** | 帮助中心重构：3 个独立页合并为单页 3 Tab + 滚动 + 卡片（Plan B 新手向） | ✅ 完成（2026-10-30，见 §7） |
-| **P6** | 提示按钮「自动选最优组合 + 解释」/ 开始页全部代码生成 / 旧帮助页节点清理 | ✅ 完成（2026-10-31，见 §8） |
+| **P6** | 提示按钮「自动选最优组合 + 解释」/ 开始页全部代码生成 / 旧帮助页节点清理 | ✅ 完成（2026-10-31，见 §8；含 §8.5 收尾修复） |
 | P4 / P7 | 美术升级方向文档的其余条目（卡牌重绘 / 字体 / 图标 / 音频） | ⏳ 未展开（核对结果见 §6） |
 
 ---
@@ -448,8 +448,11 @@ GameUI 侧（`_on_hint_toggled` 重写）：
 
 - `Main.tscn` 的 `StartPage` 只剩空容器（删除 173 行静态子节点），全部由 `_build_start_page()` 生成，
   **节点名与旧场景完全一致**（`StartButton` / `PlayerCountSpin` / `AiCountSpin` / `OrganicCheckBox` /
-  `SequenceCheckBox` / `TutorialBtn` / `ExitButton` / `SupplementaryHelpBtn`），因此
-  `_setup_pages()` / `_init_game()` / `_on_start_game()` 零改动
+  `SequenceCheckBox` / `TutorialBtn` / `ExitButton` / `SupplementaryHelpBtn`）
+- ⚠ **节点名一致不等于路径一致**（P6 收尾修复）：人数框 / AI 框 / 两个规则开关 / 补充规则入口都被
+  放进了 `SettingsCard` 卡片内，而绑定代码当时仍按「StartPage 直接子节点」取值 → 全部拿到 `null`
+  且静默失效。现在统一走 `_start_child(name)`（`find_child(name, true, false)` 递归查找），
+  并新增 `tests/verify_start_page.gd` 把这个层级契约锁住
 - 美术全部程序化，不依赖图片：45° `GradientTexture2D` 渐变带、5 处元素水印（H2O/CO2/NaCl/CH4/O2）、
   5 张倾斜装饰牌（真实元素配色 + 原子序数 + 中文名 + 原子量）
 - 交互层次：主按钮（主题蓝实心）/ 次级按钮（白底蓝边）/ 幽灵按钮（透明底灰字）三级
@@ -479,3 +482,17 @@ GameUI 侧（`_on_hint_toggled` 重写）：
 > 与本轮改动的 tween 无关。
 
 6 张真实截图（3 Tab 顶部 + 滚动到底）逐张核对排版。
+
+### 8.5 P6 收尾修复（试玩反馈的 3 个问题）
+
+| 现象 | 根因 | 修法 |
+|---|---|---|
+| 帮助页「看三张典型牌」第 4 行显示 `×6 / ×8 / ×10`，与同卡文案「其下依次是中文名、常见化合价」矛盾 | `_make_help_mini_card()` 原本只服务 29 种元素网格（那里确实该显示牌库张数），被示例行复用后语义串了 | 加 `show_valence` 参数：示例行传 `true` → `_help_valence_text()`（`+1 / -2 / -1 +1…`，最多 2 个价态 + 「…」防溢出 96px 卡宽）；网格保持 `×N` |
+| 开始页「查看补充规则 >」点了没反应 | `SupplementaryHelpBtn` 嵌在 `SettingsCard` 内，`start_page.get_node_or_null()` 取不到 → 信号根本没连上 | 统一改 `_start_child()`（`find_child(name, true, false)`）递归查找 |
+| 人数怎么填都能开局，且永远 3 AI / 1 人类 | 同源：`player_spin` / `ai_spin` 为 `null` → `_on_start_game()` 走兜底 `4 / 3`；`OrganicCheckBox` / `SequenceCheckBox` 同样为 `null`，两条补充规则开关也一起失效 | 同一个 `_start_child()` 修复；另加 **`1 ≤ AI ≤ 总人数 - 1`** 联动：`_on_player_count_changed()` 压 `ai_spin.max_value` 并用 `StartRuleHint` 告知，`_on_start_game()` 再对上下限各 clamp 一次兜底（AI=0 时其余座位是没人操作的人类，会直接卡死，故下限 1） |
+
+附带修复：`_start_flash_rule_hint()` 里的 `get_meta("tween", null)` 在 Godot 中等同单参数调用，
+meta 不存在时会刷 `ERROR`；改为 `has_meta()` 判定，并给 `StartRuleHint` 加颜色参数。
+
+验收：新增 `tests/verify_start_page.gd`（28 条断言）全绿；14 个测试套件全绿、0 FAILED；
+真实窗口 `--resolution 1152x648 --quit-after 300` 无 ERROR / WARNING。

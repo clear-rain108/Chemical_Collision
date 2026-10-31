@@ -170,15 +170,21 @@ func _setup_pages() -> void:
 	# 旧 3 个帮助页节点已在 P6 从 Main.tscn 删除，代码不再有任何引用
 
 	if start_page:
-		start_button = start_page.get_node_or_null("StartButton")
-		player_spin = start_page.get_node_or_null("PlayerCountSpin")
-		var tut_btn = start_page.get_node_or_null("TutorialBtn")
+		start_button = _start_child("StartButton")
+		# 人数 / AI 数 / 规则开关 / 补充规则入口都嵌在 SettingsCard 里，
+		# 必须用 _start_child() 递归查找（P6 起 start_page 的直接子节点只剩视觉块）
+		player_spin = _start_child("PlayerCountSpin")
+		var tut_btn = _start_child("TutorialBtn")
 		if tut_btn:
 			tut_btn.pressed.connect(_on_show_tutorial_page)
-		ai_spin = start_page.get_node_or_null("AiCountSpin")
+		ai_spin = _start_child("AiCountSpin")
 		if start_button:
 			start_button.pressed.connect(_on_start_game)
-		var exit_btn = start_page.get_node_or_null("ExitButton")
+		# AI 座位数联动：AI ≤ 总人数 - 1，总人数一变就把 AI 数一起压下来
+		if player_spin and ai_spin:
+			player_spin.value_changed.connect(_on_player_count_changed)
+			ai_spin.max_value = maxi(0, int(player_spin.value) - 1)
+		var exit_btn = _start_child("ExitButton")
 		if exit_btn:
 			exit_btn.pressed.connect(_on_exit_program)
 
@@ -195,10 +201,10 @@ func _setup_pages() -> void:
 		if tut_back: tut_back.pressed.connect(_on_tutorial_back)
 
 	# 补充规则勾选框（两个独立勾选框）
-	var organic_cb = start_page.get_node_or_null("OrganicCheckBox") if start_page else null
+	var organic_cb = _start_child("OrganicCheckBox")
 	if organic_cb:
 		organic_cb.toggled.connect(_on_organic_toggled)
-	var seq_cb = start_page.get_node_or_null("SequenceCheckBox") if start_page else null
+	var seq_cb = _start_child("SequenceCheckBox")
 	if seq_cb:
 		seq_cb.toggled.connect(_on_sequence_toggled)
 
@@ -210,7 +216,7 @@ func _setup_pages() -> void:
 
 	# 帮助中心（P5）改为单页 + Tab；旧 3 页的 9 个跳转按钮节点已在 P6 删除
 	# 开始页「补充规则」按钮直接跳到帮助中心的第 3 个 Tab
-	var supp_help_btn = start_page.get_node_or_null("SupplementaryHelpBtn") if start_page else null
+	var supp_help_btn = _start_child("SupplementaryHelpBtn")
 	if supp_help_btn:
 		supp_help_btn.pressed.connect(_on_help_show_supp)
 
@@ -255,6 +261,14 @@ func _ensure_layers() -> void:
 		overlay_layer = _make_layer("OverlayLayer", Z_SCRIM)
 	if not is_instance_valid(toast_layer):
 		toast_layer = _make_layer("ToastLayer", Z_TOAST)
+
+
+# 开始页控件查找：P6 起人数框 / 规则开关 / 补充规则入口都挂在 SettingsCard 卡片内，
+# 不再是 StartPage 的直接子节点 → 统一用递归查找，避免又退回「按路径取不到 = 静默失效」
+func _start_child(node_name: String) -> Node:
+	if start_page == null or not is_instance_valid(start_page):
+		return null
+	return start_page.find_child(node_name, true, false)
 
 
 func _make_layer(layer_name: String, z: int) -> Control:
@@ -677,7 +691,7 @@ func _start_page_settings() -> void:
 	card.add_child(ps)
 
 	card.add_child(_start_setting_label("AiCountLabel", "AI 人数", Vector2(32, 72)))
-	var ai_s := _start_make_spin(0, 7, 3, "AiCountSpin")
+	var ai_s := _start_make_spin(1, 3, 3, "AiCountSpin")
 	ai_s.position = Vector2(300, 66)
 	ai_s.size = Vector2(150, 38)
 	card.add_child(ai_s)
@@ -935,16 +949,18 @@ func _start_deco_float() -> void:
 		i += 1
 
 
-# 勾选补充规则时在开始页内联提示 2 秒（GamePage 的 InfoLabel 此刻不可见）
-func _start_flash_rule_hint(text: String) -> void:
+# 勾选补充规则 / 人数自动纠正时在开始页内联提示 2 秒（GamePage 的 InfoLabel 此刻不可见）
+func _start_flash_rule_hint(text: String, col: Color = START_C_ACCENT) -> void:
 	if not start_page:
 		return
 	var lb = start_page.get_node_or_null("StartRuleHint")
 	if lb == null:
 		return
+	lb.add_theme_color_override("font_color", col)
 	lb.text = text
 	lb.modulate.a = 1.0
-	var old = lb.get_meta("tween", null)
+	# get_meta(name, null) 在 Godot 里等同于单参数调用（仍然报错），改判 has_meta
+	var old = lb.get_meta("tween") if lb.has_meta("tween") else null
 	if old is Tween and old.is_valid():
 		old.kill()
 	var t := lb.create_tween()
@@ -1336,13 +1352,15 @@ func _make_help_demo_row(symbols: Array) -> HBoxContainer:
 			continue
 		var holder := MarginContainer.new()
 		holder.custom_minimum_size = Vector2(96, 0)
-		holder.add_child(_make_help_mini_card(card))
+		holder.add_child(_make_help_mini_card(card, true))
 		row.add_child(holder)
 	return row
 
 
 # 图鉴迷你卡：竖向流式布局，宽度随网格列自适应（不再用绝对坐标）
-func _make_help_mini_card(card) -> PanelContainer:
+# show_valence = true 时第 4 行显示常见化合价（「看三张典型牌」示例），
+# 否则显示牌库张数 ×N（29 种元素网格，卡片文案已说明「下方数字为张数」）
+func _make_help_mini_card(card, show_valence: bool = false) -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	panel.custom_minimum_size = Vector2(96, 124)
@@ -1366,10 +1384,27 @@ func _make_help_mini_card(card) -> PanelContainer:
 
 	vb.add_child(_help_label(card.symbol, 26, _help_symbol_color(card), HORIZONTAL_ALIGNMENT_CENTER))
 	vb.add_child(_help_label(card.name_cn, 13, HELP_C_TEXT, HORIZONTAL_ALIGNMENT_CENTER))
-	vb.add_child(_help_label("×%d" % HelpContentScript.get_element_copies(card.symbol), 12,
-		Color(0.36, 0.39, 0.44, 1.0), HORIZONTAL_ALIGNMENT_CENTER))
+	if show_valence:
+		vb.add_child(_help_label(_help_valence_text(card), 12,
+			Color(0.55, 0.2, 0.2, 1.0), HORIZONTAL_ALIGNMENT_CENTER))
+	else:
+		vb.add_child(_help_label("×%d" % HelpContentScript.get_element_copies(card.symbol), 12,
+			Color(0.36, 0.39, 0.44, 1.0), HORIZONTAL_ALIGNMENT_CENTER))
 	vb.add_child(_help_label("%.1f" % card.atomic_weight, 11, Color(0.45, 0.48, 0.52, 1.0), HORIZONTAL_ALIGNMENT_CENTER))
 	return panel
+
+
+# 常见化合价文本：正价带 +、负价带 -（与手牌卡面 CardValence 一致）
+# 迷你卡宽度只有 96，多价元素（Cl 有 5 个）只显示前 2 个 + 「…」，避免撑破卡片
+func _help_valence_text(card) -> String:
+	var parts: Array = []
+	var total: int = card.common_valence.size()
+	for i in range(mini(total, 2)):
+		var v: int = card.common_valence[i]
+		parts.append(("+%d" % v) if v > 0 else str(v))
+	if parts.is_empty():
+		return "—"
+	return " ".join(parts) + ("…" if total > 2 else "")
 
 
 # 图鉴专用符号色：原配色里稀有气体是 (0.95,0.95,0.95)，
@@ -1422,14 +1457,32 @@ func _on_sequence_toggled(pressed: bool) -> void:
 		_show_info_simple("已禁用顺序牌型规则")
 	_start_flash_rule_hint("已启用顺序牌型规则" if pressed else "已禁用顺序牌型规则")
 
+# 总人数变化 → AI 上限跟着变（AI 至少给人类留 1 个座位）
+# 例：总人数 4 → AI 最多 3；把总人数改回 3 时 AI 会自动从 3 降到 2
+func _on_player_count_changed(value: float) -> void:
+	if ai_spin == null:
+		return
+	var seat_for_ai := maxi(0, int(value) - 1)
+	var before := int(ai_spin.value)
+	ai_spin.max_value = seat_for_ai   # Range 会自动把超限的 value 压回 max
+	if before > seat_for_ai:
+		_start_flash_rule_hint("AI 人数已自动降为 %d（最多 = 总人数 - 1）" % seat_for_ai)
+
 func _on_start_game() -> void:
 	var total = int(player_spin.value) if player_spin else 4
 	var ai = int(ai_spin.value) if ai_spin else 3
 	if total < GameManagerScript.MIN_PLAYERS or total > GameManagerScript.MAX_PLAYERS:
 		total = 4
-	if ai >= total:
-		_show_info_simple("AI 人数不能等于或超过总玩家人数！请重新设置。")
-		return
+	# 防御：AI 至少 1 人（0 AI 时其余座位是没人操作的人类，开局即卡死），
+	# 且最多 total-1（至少给人类留 1 个座位）
+	if ai < 1:
+		ai = 1
+		if ai_spin:
+			ai_spin.value = ai
+	if ai > total - 1:
+		ai = total - 1
+		if ai_spin:
+			ai_spin.value = ai   # 只压当前值，不动 max_value（否则会把上限永久锁死）
 	start_page.visible = false
 	game_page.visible = true
 	end_page.visible = false
@@ -1478,11 +1531,11 @@ func _show_info_simple(text: String) -> void:
 
 func _init_game(total: int = 4, ai: int = 3) -> void:
 	game_manager = GameManagerScript.new()
-	# 读取开始页的补充规则勾选框状态（两个独立勾选框）
-	var organic_cb = start_page.get_node_or_null("OrganicCheckBox") if start_page else null
+	# 读取开始页的补充规则勾选框状态（两个独立勾选框，嵌在 SettingsCard 内）
+	var organic_cb = _start_child("OrganicCheckBox")
 	if organic_cb:
 		game_manager.organic_rules_enabled = organic_cb.button_pressed
-	var seq_cb_node = start_page.get_node_or_null("SequenceCheckBox") if start_page else null
+	var seq_cb_node = _start_child("SequenceCheckBox")
 	if seq_cb_node:
 		game_manager.sequence_rules_enabled = seq_cb_node.button_pressed
 	var ok = game_manager.init_game(total, ai)
