@@ -245,7 +245,10 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 	if pattern == CardPatternsScript.CardPattern.CLAN_BOMB:
 		if clan_bomb_disabled:
 			return -3  # 本局禁止族炸
-		if not clan_bomb_chain_active and player.clan_bomb_cooling:
+		# 冷却优先于接炸链：冷却期间一律不能再出族炸（含接炸），
+		# 只能出化合物解除，或跳过放弃接炸（见 GAMEPLAY_RULES「族炸冷却」）。
+		# 若在此处放行接炸，冷却玩家可借别人的族炸反复接炸，冷却形同虚设。
+		if player.clan_bomb_cooling:
 			return -3
 		if compound_immune and not clan_bomb_chain_active:
 			return -4  # 溢出化合物免疫族炸
@@ -740,7 +743,7 @@ func get_all_players_info() -> String:
 			marker = " ← "
 		var ai_tag = "[AI]" if p.is_ai else "[P]"
 		var pass_tag = " [跳过]" if p.has_passed else ""
-		var bomb_tag = " [禁炸]" if p.clan_bomb_cooling else ""
+		var bomb_tag = " [❄冷却]" if p.clan_bomb_cooling else ""
 		info += "%s %s: %d 张牌%s%s%s\n" % [ai_tag, p.player_name, p.get_hand_count(), pass_tag, bomb_tag, marker]
 	if table_player_index >= 0:
 		var tp = players[table_player_index]
@@ -771,6 +774,8 @@ func get_available_patterns(player_idx: int) -> String:
 	if clan_bomb_chain_active:
 		if player_idx == clan_bomb_owner:
 			return "等待他人接炸..."
+		if p.clan_bomb_cooling:
+			return "❄ 族炸冷却中，不能接炸 / 跳过(抽1张)"
 		return "仅可出: 更大的族炸 / 跳过(抽1张)"
 	if sequence_constraint_active and player_idx != table_player_index:
 		var cn = CardPatternsScript.get_pattern_name(sequence_constraint)
@@ -786,6 +791,8 @@ func get_available_patterns(player_idx: int) -> String:
 			s += "+族炸"
 		elif clan_bomb_disabled:
 			s += " (族炸已禁用)"
+		elif p.clan_bomb_cooling:
+			s += " (族炸❄冷却中)"
 		s += " / 跳过"
 		return s
 	if p.clan_bomb_cooling:

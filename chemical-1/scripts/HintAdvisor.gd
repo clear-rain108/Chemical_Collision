@@ -344,7 +344,8 @@ static func _check(gm, cards: Array, cv: Dictionary, intended: int) -> bool:
 	if pattern == P_CLAN:
 		if gm.clan_bomb_disabled:
 			return false
-		if not gm.clan_bomb_chain_active and cp.clan_bomb_cooling:
+		# 与 GameManager.play_cards 保持一致：冷却优先于接炸链（含链中接炸）
+		if cp.clan_bomb_cooling:
 			return false
 		if gm.compound_immune and not gm.clan_bomb_chain_active:
 			return false

@@ -45,7 +45,7 @@ play_cards(player_index, cards, custom_valences) → int
 | 检查项 | 玩家逻辑 | AI逻辑 | 一致? |
 |--------|---------|--------|:----:|
 | 族炸禁用检查 | `play_cards()` 中 `clan_bomb_disabled → -3` | 同样走 `play_cards()` | ✅ |
-| 族炸冷却检查 | `play_cards()` 中 `clan_bomb_cooling → -3` | 同样走 `play_cards()` | ✅ |
+| 族炸冷却检查 | `play_cards()` 中 `clan_bomb_cooling → -3`（**优先于接炸链**，链中同样拦截） | 同样走 `play_cards()` | ✅ |
 | 溢出化合物免疫族炸 | `play_cards()` 中 `compound_immune → -4` | 同样走 `play_cards()` | ✅ |
 | 接炸模式只出族炸 | `play_cards()` 中 `clan_bomb_chain_active → -1` | 同样走 `play_cards()` | ✅ |
 | 牌型匹配检查 | `play_cards()` 中 pattern match | 同样走 `play_cards()` | ✅ |
@@ -127,7 +127,7 @@ play_cards(player_index, cards, custom_valences) → int
 | 规则 | 代码位置 | 对AI生效 |
 |------|----------|:-------:|
 | 族炸禁用 | `clan_bomb_disabled → return -3` | ✅ |
-| 族炸冷却 | `clan_bomb_cooling → return -3` | ✅ |
+| 族炸冷却 | `clan_bomb_cooling → return -3`（先于接炸链判定，链中不放行） | ✅ |
 | 溢出免疫族炸 | `compound_immune → return -4` | ✅ |
 | 接炸模式限制 | `clan_bomb_chain_active → return -1` (非族炸) | ✅ |
 | 牌型匹配 | `table_pattern != pattern → return -4` | ✅ |
