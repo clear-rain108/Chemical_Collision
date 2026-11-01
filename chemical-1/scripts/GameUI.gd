@@ -3616,8 +3616,9 @@ func _update_hand_drag() -> void:
 	if _drag_press_idx < 0:
 		# 首次检测到按下：直接用命中判定取源牌，不依赖悬停状态机是否已经抬起
 		# （压在 60ms 稳定延迟内的快速拖动也能立刻生效）
+		# 用 _hit_card_at：已抬起的牌压住相邻牌，它的绘制区归它自己
 		var mp: Vector2 = hand_container.get_local_mouse_position()
-		var hit: int = _hover_hit_index(mp)
+		var hit: int = _hit_card_at(mp)
 		if hit >= 0:
 			_drag_press_idx = hit
 			_drag_press_pos = get_global_mouse_position()
@@ -3832,6 +3833,19 @@ func _hover_hit_index(mp: Vector2) -> int:
 		if _card_hover_rect(b).has_point(mp):
 			hit = i
 	return hit
+
+
+# 指针真正指着的那张牌 —— 点击 / 拖拽起点都用它，保证「所见即所得」：
+#   1) 已抬起的牌 z_index=20，压住了左右相邻牌，它的绘制矩形内一律归它；
+#      若这里仍按最大索引取，玩家看着 Ca（已抬起）、点下去却选中被它盖住的右侧那张。
+#   2) 没有抬起牌（刚移过来、还在 60ms 稳定延迟内快速点击）时，
+#      按静止几何取最大索引 —— 静止堆叠时后一张本来就画在前一张上面。
+func _hit_card_at(mp: Vector2) -> int:
+	if _hover_idx >= 0 and _hover_idx < hand_buttons.size():
+		var cur = hand_buttons[_hover_idx]
+		if is_instance_valid(cur) and _card_raised_rect(cur).has_point(mp):
+			return _hover_idx
+	return _hover_hit_index(mp)
 
 
 # 真正执行切换：先落下旧牌再抬起新牌，信息栏顺序才不会串
@@ -4168,11 +4182,11 @@ func _update_valence_buttons() -> void:
 # Button 原生拾取用的是「当前几何」，而悬停抬起的牌已经上移了 HOVER_LIFT：
 # 鼠标落在重叠区下沿时，抬起牌让出的那条带会判给被它压住的下层牌 ——
 # 视觉上最上层是抬起的那张，点中的却是下面那张。
-# 这里改用与悬停 / 拖拽同一套「静止几何 + 取最大索引」规则重新定位。
+# 这里改用与悬停 / 拖拽同一套「所见即所得」规则重新定位（见 _hit_card_at）。
 func _on_card_pressed() -> void:
 	if hand_container == null or hand_buttons.is_empty():
 		return
-	var idx: int = _hover_hit_index(hand_container.get_local_mouse_position())
+	var idx: int = _hit_card_at(hand_container.get_local_mouse_position())
 	if idx < 0 or idx >= hand_buttons.size():
 		return
 	_on_card_clicked(idx)

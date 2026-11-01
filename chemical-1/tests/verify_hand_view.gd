@@ -52,7 +52,7 @@ func _test_click_hit(scene) -> void:
 		return
 	var cw: float = scene.CARD_W
 
-	# 信号接线：点击必须经「静止几何 + 取最上层」重算，
+	# 信号接线：点击必须经「所见即所得」重算命中，
 	# 若仍绑死索引（_on_card_clicked.bind(idx)）就会重现「点最上层却选中下层」
 	var wired := false
 	var conns: Array = scene.hand_buttons[0].pressed.get_connections()
@@ -60,7 +60,7 @@ func _test_click_hit(scene) -> void:
 		var cb = c.get("callable")
 		if cb != null and cb.get_method() == "_on_card_pressed":
 			wired = true
-	_check(wired, "卡牌点击接到 _on_card_pressed（按静止几何重算命中）")
+	_check(wired, "卡牌点击接到 _on_card_pressed（按指针位置重算命中）")
 
 	var overlap_ok := true
 	var strip_ok := true
@@ -71,7 +71,7 @@ func _test_click_hit(scene) -> void:
 		if p1.x >= p0.x + cw:
 			continue   # 两张没重叠（牌少时），跳过
 		sample += 1
-		# 重叠带中点：视觉上是后一张压在上面
+		# 静止堆叠（没有抬起牌）：后一张画在上面，重叠带归它
 		var mx: float = (p1.x + p0.x + cw) * 0.5
 		var got: int = scene.call("_hover_hit_index", Vector2(mx, p0.y + 50.0))
 		if got != i + 1:
@@ -84,7 +84,7 @@ func _test_click_hit(scene) -> void:
 			strip_ok = false
 			print("  · 左条 x=%.1f 期望 %d 实际 %d" % [sx, i, got2])
 	_check(sample > 0, "手牌确实处于重叠排列（采样 %d 对）" % sample)
-	_check(overlap_ok, "重叠带命中判给视觉最上层")
+	_check(overlap_ok, "静止堆叠：重叠带判给后一张")
 	_check(strip_ok, "每张牌露出的左条判给自己")
 
 	# 抬起后多出来的顶部容错带仍归最后一张
@@ -92,6 +92,56 @@ func _test_click_hit(scene) -> void:
 	var top_mp := Vector2(plast.x + cw * 0.5, plast.y - 10.0)
 	_check(scene.call("_hover_hit_index", top_mp) == n - 1,
 		"抬起后的顶部容错带仍归最后一张")
+
+	# 回归点（用户实测踩到）：第 i 张已抬起（z=20 压在右侧那张之上），
+	# 鼠标落在两者重叠带里 —— 视觉上是抬起的这张，点击 / 拖拽起点就必须选中它。
+	# 只按「取最大索引」会判给右侧那张，正是「悬停显示 Ca、点下去选中 Ni」。
+	var raised_ok := true
+	var fork_ok := true
+	var fallback_ok := true
+	var rc := 0
+	for i in range(mini(3, n - 1)):
+		var q0: Vector2 = scene.hand_buttons[i].get_meta("base_pos")
+		var q1: Vector2 = scene.hand_buttons[i + 1].get_meta("base_pos")
+		if q1.x >= q0.x + cw:
+			continue
+		scene.call("_set_hover_index", i)
+		if scene._hover_idx != i:
+			raised_ok = false
+			print("  · _set_hover_index(%d) 未生效（当前 %d）" % [i, scene._hover_idx])
+			continue
+		rc += 1
+		var band_x: float = (q1.x + q0.x + cw) * 0.5
+		var band := Vector2(band_x, q0.y + 40.0)
+		var hit_self: int = scene.call("_hit_card_at", band)
+		if hit_self != i:
+			raised_ok = false
+			print("  · 抬起 %d 后点重叠带 x=%.1f 期望 %d 实际 %d"
+				% [i, band_x, i, hit_self])
+		# 同一点按「取最大索引」会落到右侧那张 —— 证明两条规则确实分叉
+		if scene.call("_hover_hit_index", band) != i + 1:
+			fork_ok = false
+		# 右侧那张露在抬起牌外面的部分：不在抬起矩形内，仍归它自己
+		# 露出条 = [第 i 张右边缘, 第 i+2 张左边缘)（步距 60、牌宽 95 → 宽 25px），
+		# 取靠内侧 5px，避免落进第 i+2 张
+		var right_x: float = q0.x + cw + 5.0
+		var hit_next: int = scene.call("_hit_card_at", Vector2(right_x, q1.y + 50.0))
+		if hit_next != i + 1:
+			raised_ok = false
+			print("  · 抬起 %d 时点右侧露出部分 x=%.1f 期望 %d 实际 %d"
+				% [i, right_x, i + 1, hit_next])
+		# 抬起牌让出的底部 20px（视觉上已是右侧那张）→ 判给右侧那张
+		var under := Vector2(band_x, q0.y + scene.CARD_H - 5.0)
+		var hit_under: int = scene.call("_hit_card_at", under)
+		if hit_under != i + 1:
+			fallback_ok = false
+			print("  · 抬起 %d 后点其让出的底部带 期望 %d 实际 %d"
+				% [i, i + 1, hit_under])
+	_check(rc > 0, "已构造出「抬起牌 + 重叠带」场景（%d 组）" % rc)
+	_check(raised_ok, "抬起牌压住的重叠带判给它自己，右侧露出部分判给右牌")
+	_check(fork_ok, "同一点按“取最大索引”会落到右牌（两条规则已分叉）")
+	_check(fallback_ok, "抬起牌让出的底部 20px 判给视觉上的右牌")
+	scene.call("_set_hover_index", -1)
 
 
 # ------------------------------------------------------------
