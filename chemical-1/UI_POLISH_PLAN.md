@@ -414,7 +414,7 @@ for %f in (hand_layout hand_runtime hand_reorder integration constraint logger o
 | `hand_manual_order` + `move_card()` | `PlayerManager.PlayerInfo` | 手动模式标志；`move_card` = `remove_at` + `insert`，成功即进入手动模式 |
 | `sort_hand_by_atomic_number(force := false)` | 同上 | 手动模式下直接 return → `GameManager` / `TutorialController` 既有调用点零改动 |
 | 拖拽状态机 | `GameUI.gd` §十二之二 | `_process → _update_hand_drag()` 轮询 + 6px 阈值；幽灵牌 + 插入线（`Z_DRAG = 30`）；松手落库、拖出区外取消 |
-| 「按序 ⇅」按钮 | `GameUI.gd` §八之三 | 仅手动模式显示，位置 (704, 528)，与 CardInfoLabel / HintButton / 日志栏均不重叠；点击走 `force = true` 并退回自动模式 |
+| 「按序 ⇅」按钮 | `GameUI.gd` §八之三 | 仅手动模式显示，位置 **(338, 558) 112×32** —— P11 起并进游戏页工具行（与「显示提示 / 帮助 / 退出游戏」同基线、同高、间距 10），见 §8.8；点击走 `force = true` 并退回自动模式 |
 | 选中索引 → 卡片对象 | `GameUI._selected_cards()` / `_remap_selection()` | 按钮 `set_meta("card", card)`；重建前用**旧按钮的 meta** 取对象（必须早于 `hand_buttons.clear()`），排序后再用 `hand.find()` 重算索引 |
 | 提示作废 | `_hint_order_sig` | 顺序签名一变就作废 `_hint_text`，避免「提示的牌」与「高亮的牌」错位 |
 | `verify_hand_reorder.gd`（新增） | `tests/` | 44 条断言，含「自动排列回归锁」 |
@@ -666,3 +666,58 @@ meta 不存在时会刷 `ERROR`；改为 `has_meta()` 判定，并给 `StartRule
 | 元素 chip 132×34、7 个一行（第 2 行只剩 Br/I），右侧与下方大片留白 | chip 收到 **104×28**、字号 15 → 13、内边距 12 → 10，9 个排成**一整行**（`x = 20 + i*112`，右边界 1020 ≤ 1020）；腾出的下半区改为「固定加入 · 前 20 号元素（H ~ Ca）」清单，由 `get_base_element_symbols()` 生成两行符号（`ElementPoolBase0/1`），后续新增元素自动跟随，不需要再改 UI |
 | `chip.size = 104×28` 被夹回 270×32 | `custom_minimum_size` / `size` 必须在 `add_child()` **之后**设置：节点在树外时 `update_minimum_size()` 直接返回，`set_size()` 仍按旧的最小尺寸夹取 |
 | 编辑器里一批红 / 黄诊断 | 红：`--check-only` 与 Godot 自带 LSP（`--lsp-port` + `textDocument/didOpen`）对 `GameManager` / `CardDatabase` / `HelpContent` 的诊断均为空，旧红是 godot-tools 缓存了磁盘中间状态；黄：GameUI 的 9 条真实警告逐条修掉——`INT_AS_ENUM_WITHOUT_CAST`×2（`align: int` → `HorizontalAlignment`）、`SHADOWED_VARIABLE`（小页 `help_btn` → `supp_help_btn`）、`SHADOWED_GLOBAL_IDENTIFIER`（`wrap` → `wrap_box`、`mini` → `mini_btn`）、`SHADOWED_VARIABLE_BASE_CLASS`（参数 `size` → `rect_size`）、`UNUSED_VARIABLE`（删掉未用的 `cp_idx`）、`INTEGER_DIVISION`×2（改 `int(x / 3.0)`）；另修 `GameManager.set_tutorial_level0_phase(phase)` 参数遮蔽成员 → `new_phase` |
+
+---
+
+### 8.8 P11 游戏页工具按钮统一（样式接管 + 几何归一）
+
+**问题**：`GamePage` 的「显示提示 / 帮助 / 退出游戏」是全场**唯一没接管主题**的控件 ——
+`Main.tscn` 里只有 `text` + `font_size = 13`，`GameUI.gd` 也从未给它们套样式，于是它们一直画 Godot
+**默认主题**：灰 `#6B6B6B` 实底、4px 圆角、无描边、无阴影。旁边是「白卡 + 1px 中性边 + 8 圆角 + 软投影」
+的卡片与「`#2C3E50` + 蓝光晕」的操作按钮 —— 三套语言挤在一屏。几何上三颗按钮的 y 分别是
+567 / 568 / 569、宽 130 / 100 / 100、间距 8 / 9，基线不齐看着发飘。更实际的问题是「显示提示」是
+`toggle_mode`，**开 / 关两态长得一模一样**，按下后玩家看不出提示到底生效没有。
+
+**方案**：只做「样式接管 + 几何归一」，文本 / 信号 / 行为一律不动
+（`_on_hint_toggled` / `_on_show_help` / `_on_quit_game` 原样保留）。
+
+| 维度 | 改前 | 改后 |
+|---|---|---|
+| 底色 / 描边 / 圆角 / 阴影 | 引擎默认：`#6B6B6B` / 无 / 4px / 无 | `_make_panel_style("button")` 同源：`#2C3E50` / 1px `#668CB2` / 8px / 3px 软投影 |
+| hover | 默认浅灰提亮，无光晕 | 与 `_mkb` 同参：`#455F80` 底 + 亮蓝边 + 6px 蓝色光晕 |
+| pressed | 默认深灰 | 普通档 `#1F2B3B`；「显示提示」改 **主题蓝 `#2D7AB3` 实底**（= 开态） |
+| hover_pressed | 无 | 「显示提示」开着再悬停 → 蓝色 `lightened(0.12)`，不闪回深蓝灰 |
+| disabled | 默认灰 | 同色 35% 透明 |
+| focus | 默认白框 | `StyleBoxEmpty`（点击后不再跳出画风的焦点环） |
+| 字号 / 字色 | 13 / 默认 | 14 / 白（悬停、按下均白） |
+| 「退出游戏」 | 与其它按钮同色 | **只**把 hover / pressed 转暖红（`BORDER_WARN` + 浅红底 + 红字）；静止态不变 —— 它是「结束本局进结算页」的半破坏性动作，不该和「帮助」抢注意力 |
+| 几何 | y 567 / 568 / 569，130 / 100 / 100，间距 8 / 9 | 统一高 **32**、同一基线 **y=558**、间距 **10**、右边界 **x=820**；宽 132 / 96 / 112 |
+| 悬停缩放 | 无（默认主题按钮不缩放） | 复用 `_attach_btn_motion()`：pivot 居中 + 1.05 / 0.96 |
+| 「按序 ⇅」 | 单独一行 (704, 528) 112×30 | 并进同一行 (338, 558) 112×32 —— 手动排列模式下整行是 `[按序 ⇅][显示提示][帮助][退出游戏]` |
+
+**为什么右边界钉在 820**：`HandContainer` 与 `CardInfoLabel` 的右边缘都是 820，`LogLabel` 从 824 起。
+整行从右往左排（宽度改了三处常量也不会漂），上边留 32px（信息栏底边 526）、下边留 9px（出牌区顶边 599）。
+
+**关键实现**
+
+| 改动 | 位置 | 要点 |
+|---|---|---|
+| `TOOL_BTN_*` / `REORDER_BTN_*` / `TOOL_ROW_HL_*` | `GameUI.gd` §八之四 | 几何唯一来源；`TOOL_ROW_LEFT` / `REORDER_BTN_LEFT` / 教程高亮框都由右边界与宽度**推导** |
+| `_style_game_tool_buttons()` | 同上，`_setup_pages()` 尾部调用 | 先排几何再上样式；三颗按钮走 `[button, width]` 表，加按钮只加一行 |
+| `_style_tool_btn(b, is_toggle, danger)` | 同上 | 6 个状态项全覆盖；`is_toggle` → 蓝实底开态，`danger` → 暖红悬停 / 按下 |
+| `_attach_btn_motion(b)` | 同上，从 `_mkb()` 尾部抽出 | `_mkb` 与工具按钮共用；pivot 先取 `size`、为 0 时回落 `custom_minimum_size`，再由 `resized` 校正 |
+| `_level0_ui_steps()` | 同上 | 从 `_level0_start_phase1()` 抽出的**纯数据**函数，「按钮区」一步直接用 `TOOL_ROW_HL_*`（行 bbox 外扩 6px）；测试也能直接读，不必先造 GM + 刷 UI |
+| `Main.tscn` | `HintButton` / `HelpBtn` / `QuitButton` | offset 同步成 460/558/592/590、602/558/698/590、708/558/820/590，`font_size` 13 → 14（运行期以脚本常量为准，场景只是编辑器预览） |
+
+**踩到的坑（都已锁进测试）**
+
+1. 只改 `normal` 不够：Godot 的 `hover` / `pressed` / `disabled` / `focus` 是**独立主题项**，
+   没覆盖的话真实鼠标一停上去就掉回默认深灰主题（同一个坑 `_build_card_button()` 也踩过）。
+2. 引擎默认主题的 `Button` 只列了 5 个 stylebox，但「toggle 开着 + 悬停」时
+   `get_draw_mode()` 返回 `DRAW_HOVER_PRESSED(4)` —— `hover_pressed` override 真的会被用到；
+   测试用一颗探针按钮把这条钉死，避免写成死代码。
+3. `Button.size` 在树外会被 `custom_minimum_size` 夹取 → 先设最小尺寸再设 `size`。
+
+**验收**：23 个测试套件全绿（新增 `tests/verify_tool_buttons.gd` **109 条**：绑定 4 / 样式接管 52 /
+悬停光晕 10 / 语义态 12 / 几何 8 / 相邻区块不重叠 5 / 按序按钮 5 / 教程高亮框 7 / 悬停缩放 6）；
+`--headless --quit-after 90` 无 ERROR；真实窗口核对 4 组状态（常态 / 悬停 / 提示开 / 退出悬停）。

@@ -111,30 +111,30 @@ offset_bottom = 644.0
 
 [node name="HintButton" type="Button" parent="GamePage" unique_id=1179826737]
 layout_mode = 0
-offset_left = 423.0
-offset_top = 567.0
-offset_right = 553.0
-offset_bottom = 597.0
-theme_override_font_sizes/font_size = 13
+offset_left = 460.0
+offset_top = 558.0
+offset_right = 592.0
+offset_bottom = 590.0
+theme_override_font_sizes/font_size = 14
 toggle_mode = true
 text = "显示提示"
 
 [node name="HelpBtn" type="Button" parent="GamePage" unique_id=452447435]
 layout_mode = 0
-offset_left = 561.0
-offset_top = 568.0
-offset_right = 661.0
-offset_bottom = 598.0
-theme_override_font_sizes/font_size = 13
+offset_left = 602.0
+offset_top = 558.0
+offset_right = 698.0
+offset_bottom = 590.0
+theme_override_font_sizes/font_size = 14
 text = "帮助"
 
 [node name="QuitButton" type="Button" parent="GamePage" unique_id=180300628]
 layout_mode = 0
-offset_left = 670.0
-offset_top = 569.0
-offset_right = 770.0
-offset_bottom = 599.0
-theme_override_font_sizes/font_size = 13
+offset_left = 708.0
+offset_top = 558.0
+offset_right = 820.0
+offset_bottom = 590.0
+theme_override_font_sizes/font_size = 14
 text = "退出游戏"
 
 [node name="CardInfoLabel" type="Label" parent="GamePage" unique_id=244830457]

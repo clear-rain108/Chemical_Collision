@@ -1,7 +1,7 @@
 # 化学碰撞 — 程序架构与实现文档
 
-> **版本**: 14.2  
-> **日期**: 2026-10-23  
+> **版本**: 14.3  
+> **日期**: 2026-11-01  
 > **引擎**: Godot 4.x / GDScript
 
 ---
@@ -553,7 +553,7 @@ _update_hand_buttons()    → ① _selected_cards(cp)：遍历 selected_indices�
 
 | 项 | 实现 |
 |---|---|
-| 缩放 | 悬停 1.05、按下 0.96，90ms `TRANS_CUBIC`；`pivot_offset` 居中（`custom_minimum_size * 0.5`，`resized` 时跟随实际 size） |
+| 缩放 | 悬停 1.05、按下 0.96，90ms `TRANS_CUBIC`；`pivot_offset` 居中，由 `_attach_btn_motion()` 统一接线（先取 `size`，树外 size 为 0 时回落 `custom_minimum_size`，随后 `resized` 跟随实际 size） |
 | 发光 | 悬停 StyleBox 用 `shadow_color = (0.35, 0.55, 0.85, 0.55)` + `shadow_size = 6` + `offset = 0` 模拟光晕（`StyleBoxFlat` 没有真发光，只能靠外扩阴影） |
 | 单补间 | 每按钮只保留一个补间（meta `btn_scale_tween`，起新动画前先 `kill()`），与手牌 `hover_tween` 同一约束 |
 | 不自激 | 缩放只向外扩，不会把指针挤出原边界 → `mouse_entered / mouse_exited` 不会反复翻转 |
@@ -561,6 +561,36 @@ _update_hand_buttons()    → ① _selected_cards(cp)：遍历 selected_indices�
 
 > 手牌按钮**不走** `_mkb()`：它由 `_build_card_button()` 生成，悬停由 `_process` 轮询状态机驱动，
 > 不能接 `mouse_entered / mouse_exited`（会自激，见上一节）。
+
+### 游戏页工具按钮（提示 / 帮助 / 退出，P11）
+
+这三颗按钮是 `GamePage` 里**唯一点名存在**的原生 `Button`（`Main.tscn` 只给了 `text`），
+一直没人接管主题，于是画的是引擎默认主题（灰底 / 4px 圆角 / 无描边 / 无阴影），
+与页面其余部分两套语言。P11 起由 `GameUI.gd` §八之四接管：
+
+| 函数 | 职责 |
+|---|---|
+| `_style_game_tool_buttons()` | `_setup_pages()` 尾部调用：先按常量排几何（`[button, width]` 表），再逐颗上样式 |
+| `_style_tool_btn(b, is_toggle, danger)` | 单颗按钮的 6 个状态项全覆盖；`is_toggle` → 开态蓝实底，`danger` → 暖红悬停/按下 |
+| `_attach_btn_motion(b)` | 从 `_mkb()` 尾部抽出的公共接线（pivot 居中 + `resized` 校正 + hover/press 缩放） |
+
+| 状态 | 取值 |
+|---|---|
+| `normal` | `_make_panel_style("button")`：`#2C3E50` + 1px `#668CB2` + 8 圆角 + 3px 软投影 |
+| `hover` | `#455F80` + 亮蓝边 + 6px 蓝光晕（与 `_mkb` 同参）；`danger` 档（退出游戏）改 `BORDER_WARN` 暖红 |
+| `pressed` | `#1F2B3B`；`is_toggle` 档（显示提示）改主题蓝 `#2D7AB3` —— 这就是 **toggle 开态** |
+| `hover_pressed` | `is_toggle` 档：主题蓝 `lightened(0.12)` + 8px 蓝光晕 |
+| `disabled` | 同色 35% 透明 |
+| `focus` | `StyleBoxEmpty`（否则点击后跳出默认白焦点环） |
+
+几何由常量**推导**而非写死：`TOOL_BTN_TOP/H/GAP/RIGHT` + 三档宽度 →
+`TOOL_ROW_LEFT`、`REORDER_BTN_LEFT`（「按序 ⇅」并进同一行）、`TOOL_ROW_HL_*`（教程高亮框）。
+整行右边界 `x=820`，与 `HandContainer` / `CardInfoLabel` 的右边缘同一条竖线（`LogLabel` 从 824 起）。
+
+> 为什么 6 个状态项都要覆盖：Godot 的 `hover` / `pressed` / `disabled` / `focus` 是**独立主题项**，
+> 只改 `normal` 时真实鼠标一停上去就会掉回默认深灰主题（同一坑在 `_build_card_button()` 也踩过）。
+> 另外「toggle 开着 + 悬停」走的是 `get_draw_mode() == DRAW_HOVER_PRESSED(4)`，
+> 只覆盖 `pressed` 会在移入时闪一帧深蓝灰。
 
 ### 层级与浮层（Content / Overlay / Toast）
 
@@ -653,7 +683,7 @@ Main (Control) ← GameUI.gd
 │   ├── TitleLabel / InfoLabel / TableLabel / DeckCountLabel
 │   ├── HandLabel / HandContainer (Control，手动重叠布局)
 │   ├── ActionPanel (HBox) / CardInfoLabel / TutorialLabel
-│   └── HintButton / HelpBtn / QuitButton
+│   └── HintButton / HelpBtn / QuitButton   ← 工具行：样式 + 几何由 _style_game_tool_buttons() 接管（§8）
 └── EndPage            ← 空容器；子节点全部由 _build_end_page() 生成（P8）
 ```
 
@@ -712,5 +742,5 @@ GameManager.init_game / init_tutorial
 
 ---
 
-**文档版本**: 14.1  
-**最后更新**: 2026-10-23
+**文档版本**: 14.3  
+**最后更新**: 2026-11-01

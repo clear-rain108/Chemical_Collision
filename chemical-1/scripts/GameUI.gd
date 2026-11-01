@@ -290,6 +290,8 @@ func _setup_pages() -> void:
 			quit_button.pressed.connect(_on_quit_game)
 		if help_btn:
 			help_btn.pressed.connect(_on_show_help)
+		# 工具行（提示 / 帮助 / 退出）：接管引擎默认主题 + 几何归一，见「八之四」
+		_style_game_tool_buttons()
 
 	# 帮助中心（P5）：单页 + 3 Tab + 滚动 + 卡片，全部代码生成（不改 Main.tscn）
 	help_page = _build_help_page()
@@ -2404,8 +2406,15 @@ func _level0_start_phase1() -> void:
 	game_manager.set_tutorial_level0_phase(1)
 	level0_active = true
 	level0_step = 0
+	level0_ui_highlight_steps = _level0_ui_steps()
+	_level0_show_ui_step(0)
 
-	level0_ui_highlight_steps = [
+
+# 第零关 Phase 1 的 6 步标注数据（纯数据、无副作用）：
+# 抽成函数是为了让 tests/verify_tool_buttons.gd 能直接取「按钮区」矩形，
+# 不必为了读一条数据先去造 GameManager + 刷 UI。
+func _level0_ui_steps() -> Array:
+	return [
 		{
 			"title": "玩家顺序和手牌数",
 			"desc": "这是【玩家顺序和手牌数】\n显示每位玩家的名字、AI标签、手牌张数，以及当前轮到谁（◄标记）",
@@ -2445,8 +2454,10 @@ func _level0_start_phase1() -> void:
 			"title": "其他细节（按钮区）",
 			"desc": "这是【其他细节-按钮区】\n包括显示提示按钮、帮助按钮（查看规则）、退出游戏按钮",
 			"target": "quit_button",
-			"pos": Vector2(420, 565),
-			"size": Vector2(355, 38),
+			# 高亮框 = 工具行 bbox 外扩 6px；常量只有一处定义（§八之四 TOOL_ROW_HL_*），
+			# 改工具行几何不会漏改这里
+			"pos": TOOL_ROW_HL_POS,
+			"size": TOOL_ROW_HL_SIZE,
 		},
 	]
 	_level0_show_ui_step(0)
@@ -3057,17 +3068,18 @@ func _build_mini_card_button(card, custom_valence = null) -> Button:
 # 八之三、手牌「按序 ⇅」按钮（P7）
 # ============================================================
 # 只在「玩家手动拖拽过 + 当前可操作」时出现，是手动排列模式唯一的出口。
-# 位置 (704,528)：上不压 CardInfoLabel（底边 526）、下不压 HintButton（y 567），
-# 右侧到日志栏（x 824）留 8px，也不与手牌列的悬停抬起区重叠。
+# 位置 (338,558) = 工具行（显示提示 / 帮助 / 退出游戏）左侧同一基线：
+# 手动排列模式下整行变成 [按序 ⇅][显示提示][帮助][退出游戏]，间距与高度完全一致；
+# 上不压 CardInfoLabel（底边 526）、下不压 ActionPanel（顶边 599）。
 func _build_hand_reorder_button() -> void:
 	if not game_page or is_instance_valid(_reorder_btn):
 		return
 	var b := _mkb("按序 ⇅", _on_hand_reorder, false)
 	b.name = "HandReorderBtn"
-	b.custom_minimum_size = Vector2(112, 30)
-	b.size = Vector2(112, 30)
-	b.position = Vector2(704, 528)
-	b.add_theme_font_size_override("font_size", 13)
+	b.custom_minimum_size = Vector2(REORDER_BTN_W, TOOL_BTN_H)
+	b.size = Vector2(REORDER_BTN_W, TOOL_BTN_H)
+	b.position = Vector2(REORDER_BTN_LEFT, TOOL_BTN_TOP)
+	b.add_theme_font_size_override("font_size", 14)
 	b.tooltip_text = "按原子序数升序重新排列手牌（恢复自动排序）"
 	b.visible = false
 	_layer(0).add_child(b)
@@ -3189,15 +3201,30 @@ func _update_action_panel() -> void:
 		else:
 			action_panel.add_child(_mkb("跳过", _on_pass, false))
 	elif step_mode == 1:
-		if game_manager.is_clan_bomb_chain_active() and game_manager.get_current_player_index() != game_manager.get_clan_bomb_owner():
-			action_panel.add_child(_mkb("作为族炸打出", _on_clan_bomb, false))
+		var in_chain: bool = game_manager.is_clan_bomb_chain_active() \
+				and game_manager.get_current_player_index() != game_manager.get_clan_bomb_owner()
+		if in_chain:
+			# 接炸链中：冷却期间同样不能出族炸，只能跳过（见 GAMEPLAY_RULES「族炸冷却」）
+			if cp.clan_bomb_cooling:
+				if cp.get_hand_count() >= game_manager.get_hand_limit():
+					action_panel.add_child(_mkb("弃牌跳过(上限)", _on_pass, false))
+				else:
+					action_panel.add_child(_mkb("跳过(❄冷却中不能接炸)", _on_pass, false))
+			else:
+				action_panel.add_child(_mkb("作为族炸打出", _on_clan_bomb, false))
 			action_panel.add_child(_mkb("返回", _on_back, false))
 		else:
 			action_panel.add_child(_mkb("作为单质打出", _on_element, false))
 			action_panel.add_child(_mkb("合成化合物", _on_choose_compound, false))
 			if game_manager.get_sequence_rules_enabled():
 				action_panel.add_child(_mkb("作为顺序打出", _on_sequence, false))
-			action_panel.add_child(_mkb("作为族炸打出", _on_clan_bomb, false))
+			# 冷却 / 禁炸时按钮保留但要置灰，避免「点了才报错」
+			if cp.clan_bomb_cooling:
+				action_panel.add_child(_mkb("族炸❄冷却中", _on_clan_bomb, true))
+			elif game_manager.clan_bomb_disabled:
+				action_panel.add_child(_mkb("族炸已禁用", _on_clan_bomb, true))
+			else:
+				action_panel.add_child(_mkb("作为族炸打出", _on_clan_bomb, false))
 			action_panel.add_child(_mkb("返回", _on_back, false))
 	elif step_mode == 2:
 		_update_valence_buttons()
@@ -3239,16 +3266,25 @@ func _mkb(text: String, cb: Callable, dis: bool) -> Button:
 	b.add_theme_stylebox_override("disabled", style_disabled)
 
 	# 缩放交互（P3 · 美术文档 §7.4）：pivot 居中，悬停 1.05 / 按下 0.96
-	# 缩放只向外扩，不会把指针挤出原边界，因此 entered/exited 不会自激抖动
-	b.pivot_offset = b.custom_minimum_size * 0.5
+	# 与游戏页工具按钮共用同一套接线（见 _attach_btn_motion）
+	_attach_btn_motion(b)
+
+	b.pressed.connect(cb)
+	return b
+
+
+# -------- 缩放交互接线（P3）：pivot 居中 + 悬停 1.05 / 按下 0.96 --------
+# 缩放只向外扩，不会把指针挤出原边界，因此 entered/exited 不会自激抖动。
+# pivot 取值有讲究：_mkb 生成的按钮此刻还没进容器（size=0），直接读 size 会得到 0，
+# 缩放就会绕着左上角甩 → 用 custom_minimum_size 兜底；工具按钮来自 Main.tscn，
+# 进树前已有 size，直接用 size。两者随后都由 resized 校正到 size*0.5。
+func _attach_btn_motion(b: Button) -> void:
+	b.pivot_offset = (b.size if b.size != Vector2.ZERO else b.custom_minimum_size) * 0.5
 	b.resized.connect(func() -> void: b.pivot_offset = b.size * 0.5)
 	b.mouse_entered.connect(_on_button_hover_scale.bind(b, true))
 	b.mouse_exited.connect(_on_button_hover_scale.bind(b, false))
 	b.button_down.connect(_on_button_press_scale.bind(b, true))
 	b.button_up.connect(_on_button_press_scale.bind(b, false))
-
-	b.pressed.connect(cb)
-	return b
 
 
 # -------- 按钮缩放补间（P3）：每个按钮只保留一个 tween --------
@@ -3278,6 +3314,134 @@ func _on_button_press_scale(btn: Button, down: bool) -> void:
 	else:
 		# 松开后指针通常仍在按钮内（说明还悬停着），回到悬停尺寸
 		_tween_button_scale(btn, BUTTON_HOVER_SCALE if btn.is_hovered() else 1.0)
+
+
+# ============================================================
+# 八之四、游戏页工具按钮（显示提示 / 帮助 / 退出游戏）
+# ============================================================
+# 历史问题（本次修）：这三颗按钮是 GamePage 里唯一没有接管样式的控件，一直画引擎
+# 默认主题（灰 #6B6B6B 实底 / 4px 圆角 / 无描边 / 无阴影 / 13px 灰白字），与页面其余
+# 部分两套语言都不同源：卡片是「白底 + 1px 中性边 + 8 圆角 + 软投影」，按钮是
+# 「深蓝灰 #2C3E50 + 8 圆角 + 悬停蓝色光晕」。另外三个节点 y 分别是 567/568/569、
+# 宽 130/100/100 —— 基线不齐、间距不一，肉眼看着发飘。
+#
+# 本节的职责只有两件事：样式接管 + 几何归一。文本、信号、行为一律不动。
+#   · 底 / 边 / 圆角 / 阴影全部取自 _make_panel_style("button")，不再出现手写数值
+#   · hover 复用 _mkb 的亮蓝光晕；focus 置空，免得默认焦点环跳出画风
+#   · 「显示提示」是 toggle：pressed / hover_pressed 换成主题蓝实底 → 开启态一眼可辨
+#   · 「退出游戏」是半破坏性动作（_on_quit_game → 结算页，不是退程序）：仅 hover 转暖红
+#
+# 几何：运行期以本节常量为准（Main.tscn 的 offset 只是编辑器预览，两边保持同步），
+# 整行右边界对齐 x=820 —— 与 HandContainer / CardInfoLabel 右边缘同一条竖线
+# （LogLabel 从 x=824 起）。手动排列模式的「按序 ⇅」并进同一行左侧。
+const TOOL_BTN_TOP := 558          # 上让 CardInfoLabel(底 526) 32px，下让 ActionPanel(顶 599) 9px
+const TOOL_BTN_H := 32
+const TOOL_BTN_GAP := 10
+const TOOL_BTN_RIGHT := 820
+const TOOL_BTN_W_HINT := 132
+const TOOL_BTN_W_HELP := 96
+const TOOL_BTN_W_QUIT := 112
+const TOOL_ROW_LEFT := TOOL_BTN_RIGHT - (TOOL_BTN_W_HINT + TOOL_BTN_W_HELP + TOOL_BTN_W_QUIT + TOOL_BTN_GAP * 2)
+const REORDER_BTN_W := 112
+const REORDER_BTN_LEFT := TOOL_ROW_LEFT - TOOL_BTN_GAP - REORDER_BTN_W
+# 教程第零关「按钮区」高亮框：工具行 bbox 外扩 6px（_level0_ui_steps 直接引用）
+const TOOL_ROW_HL_PAD := 6
+const TOOL_ROW_HL_POS := Vector2(TOOL_ROW_LEFT - TOOL_ROW_HL_PAD, TOOL_BTN_TOP - TOOL_ROW_HL_PAD)
+const TOOL_ROW_HL_SIZE := Vector2(
+		TOOL_BTN_RIGHT - TOOL_ROW_LEFT + TOOL_ROW_HL_PAD * 2,
+		TOOL_BTN_H + TOOL_ROW_HL_PAD * 2)
+
+
+func _style_game_tool_buttons() -> void:
+	if hint_button == null or help_btn == null or quit_button == null:
+		return
+	# 几何归一：等高、同基线、等间距，右边界固定 → 三颗按钮不会再「各自为政」
+	var row: Array = [
+		[hint_button, TOOL_BTN_W_HINT],
+		[help_btn, TOOL_BTN_W_HELP],
+		[quit_button, TOOL_BTN_W_QUIT],
+	]
+	var x: int = TOOL_ROW_LEFT
+	for entry in row:
+		var b: Button = entry[0]
+		var w: int = entry[1]
+		b.custom_minimum_size = Vector2(w, TOOL_BTN_H)
+		b.size = Vector2(w, TOOL_BTN_H)
+		b.position = Vector2(x, TOOL_BTN_TOP)
+		x += w + TOOL_BTN_GAP
+	_style_tool_btn(hint_button, true, false)
+	_style_tool_btn(help_btn, false, false)
+	_style_tool_btn(quit_button, false, true)
+
+
+# 单颗工具按钮的四态样式（normal / hover / pressed / disabled / focus）
+# is_toggle: toggle 按钮的 pressed 同时就是「ON」态 → 换成主题蓝实底
+# danger:    半破坏性动作 → hover / pressed 走暖红
+func _style_tool_btn(b: Button, is_toggle: bool, danger: bool) -> void:
+	var normal := _make_panel_style("button")
+	b.add_theme_stylebox_override("normal", normal)
+
+	# 悬停：提亮 + 主题蓝发光（参数与 _mkb 完全一致，见 P3「悬停时亮色发光」）
+	var hover := normal.duplicate() as StyleBoxFlat
+	hover.bg_color = Color(0.27, 0.38, 0.5, 1.0)
+	hover.border_color = Color(0.55, 0.75, 0.95, 1.0)
+	hover.shadow_color = Color(0.35, 0.55, 0.85, 0.55)
+	hover.shadow_size = 6
+	hover.shadow_offset = Vector2.ZERO
+	b.add_theme_stylebox_override("hover", hover)
+
+	# 按下：略暗（与 _mkb 同色）
+	var pressed := normal.duplicate() as StyleBoxFlat
+	pressed.bg_color = Color(0.12, 0.17, 0.23, 1.0)
+	b.add_theme_stylebox_override("pressed", pressed)
+
+	var disabled := normal.duplicate() as StyleBoxFlat
+	disabled.bg_color = Color(0.173, 0.243, 0.314, 0.35)
+	b.add_theme_stylebox_override("disabled", disabled)
+
+	# 焦点框置空：否则键盘/点击后会出现默认主题的蓝框，跳出「白卡 + 深蓝灰按钮」的画风
+	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+
+	b.add_theme_font_size_override("font_size", 14)
+	b.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+	b.add_theme_color_override("font_hover_color", Color(1, 1, 1, 1))
+	b.add_theme_color_override("font_pressed_color", Color(1, 1, 1, 1))
+	b.add_theme_color_override("font_disabled_color", Color(1, 1, 1, 0.5))
+
+	if is_toggle:
+		# 开启态（toggle ON）：主题蓝实底 + 深蓝边 + 蓝光晕
+		var on_style := _make_panel_style("button")
+		on_style.bg_color = START_C_ACCENT
+		on_style.border_color = START_C_ACCENT_DARK
+		on_style.shadow_color = Color(0.176, 0.478, 0.702, 0.45)
+		on_style.shadow_size = 6
+		on_style.shadow_offset = Vector2.ZERO
+		b.add_theme_stylebox_override("pressed", on_style)
+		# 开启态 + 悬停：只把蓝色提亮一档，别退回深蓝灰，否则「按着 + 移入」会闪一下
+		var on_hover := on_style.duplicate() as StyleBoxFlat
+		on_hover.bg_color = START_C_ACCENT.lightened(0.12)
+		on_hover.border_color = START_C_ACCENT
+		on_hover.shadow_color = Color(0.176, 0.478, 0.702, 0.6)
+		on_hover.shadow_size = 8
+		b.add_theme_stylebox_override("hover_pressed", on_hover)
+
+	if danger:
+		# 「退出游戏」= 结束本局进结算页：悬停转暖红（BORDER_WARN 与警告 toast 同色）
+		var danger_hover := normal.duplicate() as StyleBoxFlat
+		danger_hover.bg_color = Color(1.0, 0.953, 0.925, 1.0)
+		danger_hover.border_color = BORDER_WARN
+		danger_hover.shadow_color = Color(0.906, 0.298, 0.235, 0.45)
+		danger_hover.shadow_size = 6
+		danger_hover.shadow_offset = Vector2.ZERO
+		b.add_theme_stylebox_override("hover", danger_hover)
+		b.add_theme_color_override("font_hover_color", BORDER_WARN)
+		# 按下也走暖色：否则「悬停红 → 按下又变蓝灰」会割裂
+		var danger_pressed := danger_hover.duplicate() as StyleBoxFlat
+		danger_pressed.bg_color = Color(0.996, 0.902, 0.882, 1.0)
+		b.add_theme_stylebox_override("pressed", danger_pressed)
+		b.add_theme_color_override("font_pressed_color", BORDER_WARN)
+
+	_attach_btn_motion(b)
 
 
 # ============================================================
@@ -4551,7 +4715,12 @@ func _handle_result(result: int) -> void:
 		return
 	var msg = "非法出牌！"
 	if result == -2: msg = "牌不够大！"
-	elif result == -3: msg = "不能出族炸！"
+	elif result == -3:
+		var cp_err = game_manager.get_current_player() if game_manager != null else null
+		if cp_err != null and cp_err.clan_bomb_cooling:
+			msg = "族炸冷却中 ❄：需先打出一张化合物才能解除冷却"
+		else:
+			msg = "不能出族炸！"
 	elif result == -4: msg = "牌型不匹配！"
 	elif result == -6: msg = "不符合顺序指定的牌型约束！"
 	elif result == -7: msg = "卤族元素(F/Cl/Br/I)之间不可互相化合！（可在开始页勾选『允许卤族互化』）"
