@@ -92,6 +92,7 @@ var _hover_pending_at: int = 0          # 目标开始等待的时间戳（毫�
 var log_lines: Array = []               # 日志行缓存
 const MAX_LOG_LINES = 6
 var ai_triggered: bool = false          # AI 自动操作防重复
+var _hand_read_only: bool = false       # 手牌区只读（AI 回合显示玩家自己的牌，但不可操作）
 
 # 手牌重叠布局参数
 const CARD_W := 95.0                    # 卡牌宽度
@@ -3107,8 +3108,13 @@ func _update_log_label() -> void:
 func _update_card_info_label() -> void:
 	if not card_info_label or not game_manager: return
 	var cp = game_manager.get_current_player()
-	if cp == null or cp.is_ai:
+	if cp == null:
 		card_info_label.text = ""
+		return
+	if cp.is_ai:
+		# 手牌区此时显示玩家自己的牌（只读），这里说明在等谁，
+		# 否则玩家会误以为界面卡住
+		card_info_label.text = "等待 %s 行动中… 现在不是你的回合，手牌仅供查看" % cp.player_name
 		return
 	# 一次性提示（重排完成等）：只显示到下一次刷新，不占用提示按钮的状态
 	if _reorder_tip != "":
@@ -3354,7 +3360,9 @@ func _get_card_color(card) -> Color:
 		"金属": return Color(0.5, 0.5, 0.5)
 		"非金属": return Color(0.0, 0.7, 0.2)
 		"准金属": return Color(0.0, 0.7, 0.2)
-		"稀有气体": return Color(0.95, 0.95, 0.95)
+		# 稀有气体：原为近白 (0.95)，在白卡面上与底色几乎融成一片 → 改青色。
+		# 色相刻意与「非金属 / 准金属 = 绿 (0,0.7,0.2)」「N = 紫 (0.4,0.2,0.8)」拉开距离
+		"稀有气体": return Color(0.0, 0.6, 0.65)
 	return Color(0.8, 0.8, 0.8)
 
 
@@ -3367,10 +3375,15 @@ func _update_hand_buttons() -> void:
 	_restore_card_info()
 	# 拖拽幽灵牌 / 指示线也是容器子节点，重建前必须收掉，否则引用悬空
 	_cancel_drag()
-	var cp = game_manager.get_current_player()
+	var actor = game_manager.get_current_player()
+	# 视角座位：单人类模式永远看自己（AI 回合只读）；热座模式只看当前人类。
+	# 旧实现在 AI 回合直接把手牌区换成一句「等待 XX 行动中...」，
+	# 玩家整轮看不到自己的牌 → 改成始终显示自己的手牌，只是不可操作。
+	var view = _hand_view_player(actor)
+	_hand_read_only = view != null and actor != null and view != actor
 	# 选中快照必须抢在 hand_buttons.clear() 之前：旧按钮上的 card meta 是
 	# 「玩家看见并点中的那张牌」的唯一可靠来源（数据层顺序可能已被拖拽 / 抽牌排序改过）
-	var keep_selected: Array = _selected_cards(cp)
+	var keep_selected: Array = _selected_cards(view)
 	# 旧按钮即将销毁，悬停状态机必须一并清零，否则会指向失效索引
 	_hover_idx = -1
 	_hover_pending_idx = -1
@@ -3381,38 +3394,81 @@ func _update_hand_buttons() -> void:
 	hand_buttons.clear()
 	ai_triggered = false
 
-	if cp == null:
+	# AI 调度与手牌渲染解耦：即使显示的是玩家自己的牌，也要继续推动 AI 行动
+	var ai_acting: bool = actor != null and actor.is_ai and not game_manager.is_game_over()
+	if ai_acting and not ai_triggered:
+		ai_triggered = true
+		var timer = get_tree().create_timer(1.5)
+		timer.timeout.connect(_ai_auto_play)
+
+	if view == null:
+		# 热座的 AI 回合：谁的牌都不能显示（同屏多人会互相看到手牌）
+		if actor != null:
+			var wl = Label.new()
+			wl.text = "等待 %s 行动中..." % actor.player_name
+			wl.add_theme_font_size_override("font_size", 28)
+			# 手牌区背景是浅蓝，默认白色字几乎不可见
+			wl.add_theme_color_override("font_color", Color(0.33, 0.4, 0.5, 1))
+			# Control 容器不会自动布局子节点，需显式定位
+			wl.position = Vector2(200, 20)
+			wl.size = Vector2(420, 48)
+			hand_container.add_child(wl)
 		_update_hand_reorder_button()
 		return
 
-	if cp.is_ai:
-		var wl = Label.new()
-		wl.text = "等待 %s 行动中..." % cp.player_name
-		wl.add_theme_font_size_override("font_size", 28)
-		# 手牌区背景是浅蓝，默认白色字几乎不可见
-		wl.add_theme_color_override("font_color", Color(0.33, 0.4, 0.5, 1))
-		# Control 容器不会自动布局子节点，需显式定位
-		wl.position = Vector2(200, 20)
-		wl.size = Vector2(420, 48)
-		hand_container.add_child(wl)
-		if not ai_triggered:
-			ai_triggered = true
-			var timer = get_tree().create_timer(1.5)
-			timer.timeout.connect(_ai_auto_play)
-	else:
+	# 只读视角不能排序：自动排序会把手动排列覆盖掉，而玩家此刻并不能操作
+	if not _hand_read_only:
 		# 自动排列模式下这里会排序；手动排列模式直接返回，玩家排好的顺序得以保留
-		cp.sort_hand_by_atomic_number()
-		# 顺序可能已变 → 用卡片对象把选中索引重算一遍
-		_remap_selection(cp, keep_selected)
-		for i in range(cp.hand.size()):
-			var card = cp.hand[i]
-			var btn = _build_card_button(card, i)
-			hand_container.add_child(btn)
-			hand_buttons.append(btn)
-		_layout_hand_cards()
+		view.sort_hand_by_atomic_number()
+	# 顺序可能已变 → 用卡片对象把选中索引重算一遍
+	_remap_selection(view, keep_selected)
+	for i in range(view.hand.size()):
+		var card = view.hand[i]
+		var btn = _build_card_button(card, i)
+		# 只读：不接鼠标（保持视觉不变，也不会误改选中态）
+		if _hand_read_only:
+			btn.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hand_container.add_child(btn)
+		hand_buttons.append(btn)
+	_layout_hand_cards()
+	if not _hand_read_only:
 		_restore_hover_after_rebuild()
 	# 「按序」按钮只在「手动排列 + 可操作阶段」出现
 	_update_hand_reorder_button()
+
+
+# 人类座位列表（PlayerManager 保证人类排在 0..H-1，H = 总人数 - AI 数）
+func _human_players() -> Array:
+	var out: Array = []
+	if game_manager == null:
+		return out
+	for p in game_manager.players:
+		if p != null and not p.is_ai:
+			out.append(p)
+	return out
+
+
+# 手牌视角座位：
+#   单人类（1 人 + N AI）：永远看自己；AI 回合只读 → 修掉「AI 回合看不到自己的牌」
+#   热座（多人类）    ：只看当前人类；AI 回合返回 null，由调用方显示等待提示
+#                        （同屏多人绝不能同时显示各自手牌）
+# 联机改造（P11-C1）时改成返回「本地座位」即可，guest 永远只有自己。
+func _hand_view_player(actor = null):
+	if game_manager == null:
+		return null
+	var a = actor
+	if a == null:
+		a = game_manager.get_current_player()
+	if a == null:
+		return null
+	var humans: Array = _human_players()
+	if humans.size() <= 1:
+		if a.is_ai:
+			return humans[0] if humans.size() == 1 else a
+		return a
+	if a.is_ai:
+		return null
+	return a
 
 
 # -------- 选中状态：索引 ↔ 卡片对象 的双向保护 --------
@@ -3523,6 +3579,9 @@ func _apply_card_compact(btn: Button, compact: bool) -> void:
 # 当前局面是否允许拖拽（教程关 / 非选牌阶段 / 非玩家回合一律禁止）
 func _can_reorder_hand() -> bool:
 	if game_manager == null or game_manager.is_game_over():
+		return false
+	# 只读视角（AI 回合查看自己的牌）不许改顺序
+	if _hand_read_only:
 		return false
 	# 教程关（含第 0 关引导阶段）禁用：引导高亮框按固定坐标绘制，拖牌会让提示错位
 	if game_manager.tutorial_level > 0 or game_manager.tutorial_level0_phase > 0:
@@ -3821,6 +3880,12 @@ func _hover_keep_above(gmp: Vector2, gr: Rect2) -> bool:
 
 # 核心判定（鼠标位置可注入）：自动化测试用它脱离真实鼠标验证防抖
 func _update_hover_at(mp: Vector2) -> void:
+	# 只读视角不跑悬停状态机：牌不该抬起，否则看着像可点。
+	# 唯一的强制点放在这里 —— _update_hand_hover 与测试注入都必须经过它。
+	if _hand_read_only:
+		if _hover_idx != -1: _set_hover_index(-1)
+		_hover_pending_idx = -1
+		return
 	# 1) 已抬起的牌以 z=20 压住相邻牌：它画出来的矩形内必须归它自己，
 	#    否则鼠标沿顶栏滑过时会不断判给被压住的后一张，形成来回跳
 	if _hover_idx >= 0 and _hover_idx < hand_buttons.size():
@@ -3992,7 +4057,7 @@ func _build_card_button(card, idx: int) -> Button:
 	var l_group = Label.new()
 	l_group.text = card.group
 	l_group.add_theme_font_size_override("font_size", 11)
-	# 固定深灰：族名用元素类别色时（如稀有气体近白）几乎看不见
+	# 固定深灰：不跟随元素类别色（类别色深浅差异大，族名要保持稳定可读）
 	l_group.add_theme_color_override("font_color", Color(0.3, 0.32, 0.36, 1))
 	l_group.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	l_group.size = Vector2(52, 15)
@@ -4043,7 +4108,9 @@ func _build_card_button(card, idx: int) -> Button:
 	l_mass.position = Vector2(3, 102)
 	btn.add_child(l_mass)
 
-	btn.pressed.connect(_on_card_clicked.bind(idx))
+	# 点击目标由「静止几何 + 取最上层」重算（与悬停同规则），
+	# 不直接用 Button 原生拾取：悬停抬升会把牌上移，原生拾取会落到被让开的下层牌
+	btn.pressed.connect(_on_card_pressed)
 	# 不再连接 mouse_entered/mouse_exited：悬停由 _update_hand_hover() 轮询固定矩形判定，
 	# 否则卡牌上浮会改变自身拾取几何，导致进入/离开无限翻转（抽搐）
 	return btn
@@ -4098,10 +4165,26 @@ func _update_valence_buttons() -> void:
 # ============================================================
 # 十四、用户交互回调
 # ============================================================
+# Button 原生拾取用的是「当前几何」，而悬停抬起的牌已经上移了 HOVER_LIFT：
+# 鼠标落在重叠区下沿时，抬起牌让出的那条带会判给被它压住的下层牌 ——
+# 视觉上最上层是抬起的那张，点中的却是下面那张。
+# 这里改用与悬停 / 拖拽同一套「静止几何 + 取最大索引」规则重新定位。
+func _on_card_pressed() -> void:
+	if hand_container == null or hand_buttons.is_empty():
+		return
+	var idx: int = _hover_hit_index(hand_container.get_local_mouse_position())
+	if idx < 0 or idx >= hand_buttons.size():
+		return
+	_on_card_clicked(idx)
+
+
 func _on_card_clicked(index: int) -> void:
 	# 拖拽结束后 Button 会补发一次 pressed：吞掉，避免"拖完顺带选中"
 	if _drag_suppress_click:
 		_drag_suppress_click = false
+		return
+	# 只读视角（AI 回合查看自己的手牌）不接受选牌
+	if _hand_read_only:
 		return
 	if step_mode != 0 and step_mode != 3: return
 	# 玩家自己动牌 → 提示作废，回到用户自己的选择
