@@ -95,7 +95,7 @@ theme_override_font_sizes/font_size = 16
 text = "我的手牌:"
 
 [node name="HandContainer" type="Control" parent="GamePage" unique_id=582537591]
-layout_mode = 0
+anchors_preset = 0
 offset_left = 16.0
 offset_top = 310.0
 offset_right = 820.0
