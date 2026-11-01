@@ -93,6 +93,9 @@ var log_lines: Array = []               # 日志行缓存
 const MAX_LOG_LINES = 6
 var ai_triggered: bool = false          # AI 自动操作防重复
 var _hand_read_only: bool = false       # 手牌区只读（AI 回合显示玩家自己的牌，但不可操作）
+# 热座交接（B2）：已确认「正在看自己手牌」的人类座位；-1 = 还没人确认。
+# 只记座位号不记人 → 同一位玩家连续行动（顺序牌型的二次选择）不会重复弹遮罩。
+var _hotseat_ready_seat: int = -1
 
 # 手牌重叠布局参数
 const CARD_W := 95.0                    # 卡牌宽度
@@ -2337,6 +2340,7 @@ func _on_start_tutorial(level: int) -> void:
 	if help_page: help_page.visible = false
 	_fade_in_page(game_page)
 	_step_reset()
+	_hotseat_ready_seat = -1   # 教程单机：顺手清零，回到主开始页也不会带着旧座位
 	_hide_warning_toast()   # 清掉上一局残留的警告 toast
 
 	if level == 0:
@@ -2388,6 +2392,7 @@ func _init_game(total: int = 4, ai: int = 3) -> void:
 			_show_end_page("初始化失败")
 			return
 	_step_reset()
+	_hotseat_ready_seat = -1   # 新一局：谁都没认领屏幕（热座第一步也要先点）
 	_hide_warning_toast()   # 新一局开始：隐藏上一局残留的警告 toast
 	_refresh_ui()
 
@@ -3116,6 +3121,10 @@ func _update_card_info_label() -> void:
 		# 否则玩家会误以为界面卡住
 		card_info_label.text = "等待 %s 行动中… 现在不是你的回合，手牌仅供查看" % cp.player_name
 		return
+	# 热座：手牌还盖着，先说清楚该把屏幕交给谁
+	if _hotseat_handoff_pending():
+		card_info_label.text = "轮到 %s：请把屏幕交给 TA，自行点击上方按钮查看手牌" % cp.player_name
+		return
 	# 一次性提示（重排完成等）：只显示到下一次刷新，不占用提示按钮的状态
 	if _reorder_tip != "":
 		card_info_label.text = _reorder_tip
@@ -3166,6 +3175,9 @@ func _update_action_panel() -> void:
 	if not action_panel or not game_manager: return
 	for child in action_panel.get_children():
 		child.queue_free()
+	# 热座交接未认领前不给任何操作按钮：否则可以绕过遮罩直接点「跳过 / 出牌」
+	if _hotseat_handoff_pending():
+		return
 	var cp = game_manager.get_current_player()
 	if cp == null or cp.is_ai or game_manager.is_game_over(): return
 
@@ -3280,6 +3292,11 @@ func _on_hint_toggled(pressed: bool) -> void:
 	if not pressed:
 		_clear_hint()
 		_update_card_info_label()
+		return
+	# 热座交接未认领：提示会暴露「有没有能打的组合」，也等于替下一位玩家先看了牌
+	if _hotseat_handoff_pending():
+		if hint_button != null and is_instance_valid(hint_button):
+			hint_button.set_pressed_no_signal(false)
 		return
 	_apply_hint()
 
@@ -3416,6 +3433,13 @@ func _update_hand_buttons() -> void:
 		_update_hand_reorder_button()
 		return
 
+	# 热座交接：多人类同屏时，轮到某个真人先盖住手牌区，
+	# 由 TA 自己点一下再展示 —— 否则上一位玩家的牌会直接摊在下一位面前（同一块屏）。
+	if _hotseat_handoff_pending():
+		_render_hotseat_handoff(actor)
+		_update_hand_reorder_button()
+		return
+
 	# 只读视角不能排序：自动排序会把手动排列覆盖掉，而玩家此刻并不能操作
 	if not _hand_read_only:
 		# 自动排列模式下这里会排序；手动排列模式直接返回，玩家排好的顺序得以保留
@@ -3469,6 +3493,71 @@ func _hand_view_player(actor = null):
 	if a.is_ai:
 		return null
 	return a
+
+
+# -------- 热座交接（B2）--------
+# 同屏多人类时，谁轮到谁就得先「认领」屏幕：手牌默认盖住，本人点一下才展示。
+# 单人类（1 人 + N AI）用不上 —— 只有一个能看牌的人，遮罩只会多一步点击。
+func _is_hotseat() -> bool:
+	return _human_players().size() >= 2
+
+
+# 当前是否「该展示手牌但还没人认领」：只有热座 + 当前是人类时才成立
+func _hotseat_handoff_pending() -> bool:
+	if game_manager == null or not _is_hotseat():
+		return false
+	var cp = game_manager.get_current_player()
+	if cp == null or cp.is_ai:
+		return false
+	return _hotseat_ready_seat != game_manager.get_current_player_index()
+
+
+# 认领成功：记下座位并立刻重画手牌 / 操作面板
+func _on_hotseat_handoff_confirmed() -> void:
+	if game_manager == null:
+		return
+	_hotseat_ready_seat = game_manager.get_current_player_index()
+	_update_hand_buttons()
+	_update_action_panel()
+	_update_card_info_label()
+
+
+# 交接遮罩：整块盖住手牌区（此帧根本没有渲染任何牌，遮罩只是「请先认领」的入口）
+func _render_hotseat_handoff(actor) -> void:
+	if hand_container == null or not is_instance_valid(hand_container):
+		return
+	var who: String = actor.player_name if actor != null else "下一位玩家"
+	var btn := Button.new()
+	btn.name = "HotseatHandoffBtn"
+	btn.position = Vector2.ZERO
+	btn.size = hand_container.size
+	btn.text = "轮到 %s · 点击查看手牌" % who
+	btn.add_theme_font_size_override("font_size", 24)
+	btn.add_theme_color_override("font_color", Color(1, 1, 1, 1))
+	# 与操作面板按钮同一套样式，玩家一眼能认出「这是个要点的按钮」
+	var style := _make_panel_style("button")
+	btn.add_theme_stylebox_override("normal", style)
+	var style_hover = style.duplicate()
+	style_hover.bg_color = Color(0.27, 0.38, 0.5, 1.0)
+	style_hover.border_color = Color(0.55, 0.75, 0.95, 1.0)
+	btn.add_theme_stylebox_override("hover", style_hover)
+	var style_pressed = style.duplicate()
+	style_pressed.bg_color = Color(0.12, 0.17, 0.23, 1.0)
+	btn.add_theme_stylebox_override("pressed", style_pressed)
+	btn.pressed.connect(_on_hotseat_handoff_confirmed)
+	hand_container.add_child(btn)
+
+	# 副提示（Button 不支持多行文本）→ 单独 Label 盖在按钮内，不能吃鼠标
+	var tip := Label.new()
+	tip.name = "HotseatHandoffTip"
+	tip.text = "请先把屏幕交给 %s，其他人回避后再点击" % who
+	tip.add_theme_font_size_override("font_size", 15)
+	tip.add_theme_color_override("font_color", Color(0.82, 0.9, 1.0, 1.0))
+	tip.position = Vector2(0, hand_container.size.y - 44.0)
+	tip.size = Vector2(hand_container.size.x, 26)
+	tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	tip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	btn.add_child(tip)
 
 
 # -------- 选中状态：索引 ↔ 卡片对象 的双向保护 --------
@@ -3582,6 +3671,9 @@ func _can_reorder_hand() -> bool:
 		return false
 	# 只读视角（AI 回合查看自己的牌）不许改顺序
 	if _hand_read_only:
+		return false
+	# 热座交接未认领：手牌还盖着，重排按钮 / 拖拽都该消失
+	if _hotseat_handoff_pending():
 		return false
 	# 教程关（含第 0 关引导阶段）禁用：引导高亮框按固定坐标绘制，拖牌会让提示错位
 	if game_manager.tutorial_level > 0 or game_manager.tutorial_level0_phase > 0:

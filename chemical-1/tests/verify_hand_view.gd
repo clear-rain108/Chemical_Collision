@@ -34,6 +34,7 @@ func _run():
 	_test_click_hit(scene)
 	await _test_single_human_ai_turn(scene)
 	await _test_hotseat_ai_turn(scene)
+	await _test_hotseat_handoff(scene)
 
 	if fails == 0:
 		print("ALL HAND VIEW TESTS PASSED")
@@ -153,6 +154,7 @@ func _test_single_human_ai_turn(scene) -> void:
 	_check(humans.size() == 1, "默认开局为单人类模式（人类 %d 人）" % humans.size())
 	if humans.size() != 1:
 		return
+	_check(scene.call("_hotseat_handoff_pending") == false, "单人类模式不需要交接")
 	var me = humans[0]
 	var me_idx: int = gm.players.find(me)
 	var ai_idx := -1
@@ -227,8 +229,15 @@ func _test_hotseat_ai_turn(scene) -> void:
 
 	# 人类回合：显示当前玩家的手牌，可操作
 	gm.current_player_index = 1
+	scene._hotseat_ready_seat = -1     # 直接 init_game 不经过 _init_game，手动复位
 	scene.call("_update_hand_buttons")
 	await process_frame
+	# 热座（B2）：人类回合先盖住，本人点一下才展示
+	_check(scene.call("_hotseat_handoff_pending") == true, "热座人类回合：先要求交接")
+	_check(scene.hand_buttons.is_empty(), "热座人类回合：交接前不渲染手牌")
+	scene.call("_on_hotseat_handoff_confirmed")
+	await process_frame
+	_check(scene.call("_hotseat_handoff_pending") == false, "热座人类回合：认领后不再要求交接")
 	_check(scene.hand_buttons.size() == gm.players[1].hand.size(),
 		"热座人类回合：渲染当前玩家手牌 (渲染 %d / 实有 %d)"
 			% [scene.hand_buttons.size(), gm.players[1].hand.size()])
@@ -236,10 +245,94 @@ func _test_hotseat_ai_turn(scene) -> void:
 	_check(scene.call("_can_reorder_hand") == true, "热座人类回合：允许重排")
 
 
+# ------------------------------------------------------------
+# 5) 热座交接遮罩（B2）：轮到谁谁认领屏幕，交接前不给任何操作入口
+# ------------------------------------------------------------
+func _test_hotseat_handoff(scene) -> void:
+	var gm = scene.game_manager
+	gm.init_game(4, 1, 20261102)      # 3 人类 + 1 AI
+	scene._hotseat_ready_seat = -1
+	gm.current_player_index = 0
+	scene.call("_update_hand_buttons")
+	scene.call("_update_action_panel")
+	scene.call("_update_card_info_label")
+	await process_frame
+
+	_check(scene.call("_is_hotseat") == true, "热座模式判定为真（≥2 人类）")
+	_check(scene.call("_hotseat_handoff_pending") == true, "开局第一步先要求交接")
+	_check(scene.hand_buttons.is_empty(), "交接前手牌区不渲染任何牌")
+
+	var btn = scene.hand_container.get_node_or_null("HotseatHandoffBtn")
+	_check(btn != null and btn is Button, "手牌区显示交接遮罩按钮")
+	_check(btn != null and str(btn.text).contains(gm.players[0].player_name),
+		"遮罩写明轮到谁：%s" % (str(btn.text) if btn != null else "（无）"))
+	_check(btn != null and btn.size == scene.hand_container.size,
+		"遮罩铺满手牌区 (%s / %s)"
+			% [str(btn.size) if btn != null else "-", str(scene.hand_container.size)])
+	_check(btn != null and btn.position == Vector2.ZERO, "遮罩从手牌区左上角开始")
+	_check(_label_text(scene.hand_container, "其他人回避") != "",
+		"遮罩带副提示（请先把屏幕交给 TA）")
+
+	# 交接前：没有任何可以绕过交接的入口
+	_check(scene.action_panel.get_child_count() == 0,
+		"交接前操作面板为空（不能直接点「跳过」）")
+	_check(scene.call("_can_reorder_hand") == false, "交接前不允许重排手牌")
+	var hint_before: String = scene._hint_text
+	scene.call("_on_hint_toggled", true)
+	_check(scene._hint_text == hint_before, "交接前点「显示提示」不生效")
+	_check(scene.card_info_label.text.contains("请把屏幕交给"),
+		"信息栏提示交接：%s" % scene.card_info_label.text)
+
+	# 认领之后一切恢复
+	scene.call("_on_hotseat_handoff_confirmed")
+	await process_frame
+	_check(scene.call("_hotseat_handoff_pending") == false, "认领后不再要求交接")
+	_check(scene.hand_container.get_node_or_null("HotseatHandoffBtn") == null, "认领后遮罩移除")
+	_check(scene.hand_buttons.size() == gm.players[0].hand.size(),
+		"认领后渲染自己的手牌 (渲染 %d / 实有 %d)"
+			% [scene.hand_buttons.size(), gm.players[0].hand.size()])
+	_check(scene.call("_can_reorder_hand") == true, "认领后允许重排")
+	_check(scene.action_panel.get_child_count() > 0, "认领后操作面板出现按钮")
+
+	# 同一位玩家连续行动（顺序牌型的二次选择）不该再弹一次
+	scene.call("_step_reset")
+	scene.call("_update_hand_buttons")
+	await process_frame
+	_check(scene.call("_hotseat_handoff_pending") == false,
+		"同一位玩家连续行动不重复交接")
+	_check(scene.hand_buttons.size() == gm.players[0].hand.size(),
+		"连续行动时手牌保持可见")
+
+	# 换到下一位人类 → 重新交接
+	gm.current_player_index = 2
+	scene.call("_update_hand_buttons")
+	await process_frame
+	_check(scene.call("_hotseat_handoff_pending") == true, "换人后重新要求交接")
+	_check(scene.hand_buttons.is_empty(), "交接前不显示下一位的手牌")
+	_check(scene.hand_container.get_node_or_null("HotseatHandoffBtn") != null, "遮罩重新出现")
+
+	# AI 回合：不走交接，走「等待 XX 行动中」
+	gm.current_player_index = 3
+	scene.call("_update_hand_buttons")
+	await process_frame
+	_check(scene.call("_hotseat_handoff_pending") == false, "AI 回合不弹交接遮罩")
+	_check(scene.hand_container.get_node_or_null("HotseatHandoffBtn") == null, "AI 回合遮罩移除")
+
+	# 新开一局必须清空交接状态
+	scene._hotseat_ready_seat = 2
+	scene.call("_init_game", 4, 1)
+	await process_frame
+	_check(scene._hotseat_ready_seat == -1, "新开一局清空交接状态")
+
+
 func _label_text(root_node: Node, needle: String) -> String:
 	for c in root_node.get_children():
 		if c is Label and str(c.text).contains(needle):
 			return str(c.text)
+		# 交接遮罩的副提示挂在按钮里 → 递归找
+		var nested := _label_text(c, needle)
+		if nested != "":
+			return nested
 	return ""
 
 
