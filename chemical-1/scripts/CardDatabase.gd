@@ -90,16 +90,30 @@ func generate_deck(allowed_symbols: Array = []) -> void:
 				elem[5], elem[6], elem[7], elem[8], elem[9],
 				elem[10], elem[11], elem[12]
 			)
+			# uid = 生成下标：牌库结构唯一且与洗牌无关（联机事件寻址用）
+			card.uid = deck.size()
 			deck.append(card)
 
 
 # ============================================================
 # 四、洗牌与抽牌（Fisher-Yates 算法）
 # ============================================================
-func shuffle() -> void:
+# rng_seed < 0（默认）：走全局 randi()，单机行为与历史版本完全一致。
+# rng_seed >= 0：用独立 RandomNumberGenerator，同一 seed 在任意机器 / 任意次运行
+#   都得到同一副牌序 —— 联机确定性（主机权威 + 事件重放）的前提。
+func shuffle(rng_seed: int = -1) -> void:
 	var n = deck.size()
+	if rng_seed < 0:
+		for i in range(n - 1, 0, -1):
+			var j = randi() % (i + 1)
+			var temp = deck[i]
+			deck[i] = deck[j]
+			deck[j] = temp
+		return
+	var rng = RandomNumberGenerator.new()
+	rng.seed = rng_seed
 	for i in range(n - 1, 0, -1):
-		var j = randi() % (i + 1)
+		var j = rng.randi() % (i + 1)
 		var temp = deck[i]
 		deck[i] = deck[j]
 		deck[j] = temp

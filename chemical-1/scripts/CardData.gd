@@ -58,6 +58,11 @@ var common_valence: Array = []      # 常见化合价列表，如 [1, 2]
 var electronegativity: float = 0.0  # 电负性
 var atomic_weight: float = 0.0      # 相对原子质量
 var description: String = ""        # 描述文本
+# 牌的身份：= 该牌在 generate_deck() 产物中的下标（0 .. 牌库张数-1）。
+# 生成顺序只取决于 allowed_symbols，与洗牌 / 元素限制开关无关 → 同配置的任意客户端天然一致，
+# 因此联机事件用 uid 寻址，不需要 UUID / 不依赖洗牌种子。
+# 手工构造的卡（教程预设 / 单元测试）保持默认 0，不参与联机寻址。
+var uid: int = 0
 
 
 # ============================================================
@@ -120,6 +125,7 @@ func to_dict() -> Dictionary:
 		"electronegativity": electronegativity,
 		"atomic_weight": atomic_weight,
 		"description": description,
+		"uid": uid,
 	}
 
 
@@ -139,4 +145,5 @@ static func from_dict(data: Dictionary):
 	card.electronegativity = data.get("electronegativity", 0.0)
 	card.atomic_weight = data.get("atomic_weight", 0.0)
 	card.description = data.get("description", "")
+	card.uid = int(data.get("uid", 0))   # 旧存档无 uid → 0，不报错
 	return card

@@ -19,6 +19,12 @@ const MIN_PLAYERS = PlayerManagerScript.MIN_PLAYERS
 const MAX_PLAYERS = PlayerManagerScript.MAX_PLAYERS
 const INITIAL_HAND_SIZE = PlayerManagerScript.INITIAL_HAND_SIZE
 
+# 联机地基（P11-B）常量 —— 事件返回码与哈希参数
+const EVENT_UNKNOWN = -100        # 未知事件类型（与规则码 -1..-8 不冲突）
+const EVENT_BAD_PAYLOAD = -101    # uid 不存在 / 重复 / 座位越界
+const FNV_OFFSET_BASIS = 2166136261
+const FNV_PRIME = 16777619
+
 # ============================================================
 # 二、核心变量 (牌库/玩家/桌面)
 # ============================================================
@@ -65,6 +71,15 @@ var sequence_constraint: int = -1              # 顺序指定牌型约束（-1=�
 var sequence_constraint_active: bool = false   # 顺序约束是否激活
 
 # ============================================================
+# 三之三、联机地基状态（P11-B）
+# ============================================================
+# 牌库种子：<0 = 随机（单机默认，行为与历史版本一致）；
+#           >=0 = 确定性洗牌（联机时由主机下发，两端必得同一副牌序）
+var deck_seed: int = -1
+# 已成功推进局面的联机事件序列（主机广播日志 / 客人重放 / 回放 / 断线重连）
+var event_log: Array = []
+
+# ============================================================
 # 四、教程状态变量（委托到 TutorialController）
 # ============================================================
 var tutorial_controller: RefCounted = null
@@ -82,7 +97,9 @@ var level0_last_player_action: String = ""  # 玩家上一次操作类型
 # ============================================================
 # 六、游戏初始化
 # ============================================================
-func init_game(player_count: int = 4, ai_count: int = 3) -> bool:
+# rng_seed：牌库洗牌种子。默认 -1 = 随机（单机行为不变）；
+#           联机时由主机下发，两端同一 seed → 同一副牌序（确定性前提）。
+func init_game(player_count: int = 4, ai_count: int = 3, rng_seed: int = -1) -> bool:
 	if player_count < MIN_PLAYERS or player_count > MAX_PLAYERS:
 		push_error("init_game: player_count=%d out of range [%d,%d]" % [player_count, MIN_PLAYERS, MAX_PLAYERS])
 		return false
@@ -116,10 +133,12 @@ func init_game(player_count: int = 4, ai_count: int = 3) -> bool:
 	level0_rule_tip = ""
 	level0_last_player_action = ""
 	logger.clear_logs()
+	deck_seed = rng_seed
+	event_log.clear()
 
 	database = CardDatabaseScript.new()
 	database.generate_deck(get_allowed_symbols())
-	database.shuffle()
+	database.shuffle(rng_seed)
 
 	# 创建玩家（人类在前，AI在后）
 	var human_count = player_count - ai_count
@@ -902,6 +921,7 @@ func _cards_to_string(cards: Array) -> String:
 		syms.append(c.symbol)
 	return "[%s]" % ", ".join(syms)
 
+
 func is_game_over() -> bool:
 	return phase == 2
 
@@ -909,3 +929,224 @@ func get_winner() -> PlayerManagerScript.PlayerInfo:
 	if winner_index < 0 or winner_index >= players.size():
 		return null
 	return players[winner_index]
+
+
+# ============================================================
+# 十二、联机地基 API（P11-B）
+# 只读快照 / 事件寻址 / 一致性校验。单机流程一次都不调用这些函数，
+# 规则逻辑与历史版本完全一致。设计说明见 MULTIPLAYER_ARCHITECTURE.md
+# ============================================================
+
+# 座位号是否合法（0 .. 人数-1）
+func is_valid_seat(idx: int) -> bool:
+	return idx >= 0 and idx < players.size()
+
+
+# 某座位的手牌 uid 列表（协议层 / 快照用）
+func get_hand_uids(player_index: int) -> Array:
+	if not is_valid_seat(player_index):
+		return []
+	return _uids_of(players[player_index].hand)
+
+
+# 全量快照：握手 / 重连 / 失配修复。
+# 只用可 JSON 化的基础类型；手牌以 uid 表示，不复制卡牌对象。
+func to_snapshot() -> Dictionary:
+	var seats: Array = []
+	for p in players:
+		seats.append({
+			"name": p.player_name,
+			"is_ai": p.is_ai,
+			"hand_uids": _uids_of(p.hand),
+			"hand_count": p.get_hand_count(),
+			"has_passed": p.has_passed,
+			"clan_bomb_cooling": p.clan_bomb_cooling,
+			"hand_manual_order": p.hand_manual_order,
+		})
+	return {
+		"deck_seed": deck_seed,
+		"current_player_index": current_player_index,
+		"turn_count": turn_count,
+		"phase": phase,
+		"winner_index": winner_index,
+		"is_round_starter": is_round_starter,
+		"direction_clockwise": direction_clockwise,
+		"compound_immune": compound_immune,
+		"clan_bomb_chain_active": clan_bomb_chain_active,
+		"clan_bomb_owner": clan_bomb_owner,
+		"clan_bomb_disabled": clan_bomb_disabled,
+		"sequence_constraint": sequence_constraint,
+		"sequence_constraint_active": sequence_constraint_active,
+		"table": {
+			"uids": _uids_of(table_cards),
+			"pattern": table_pattern,
+			"player_index": table_player_index,
+			"custom_valences": _string_keys(table_custom_valences),
+		},
+		"deck_remaining": database.get_remaining_count() if database != null else 0,
+		"players": seats,
+		"log_count": log_messages.size(),
+	}
+
+
+func _uids_of(cards: Array) -> Array:
+	var out: Array = []
+	for c in cards:
+		out.append(int(c.uid))
+	return out
+
+
+func _string_keys(src: Dictionary) -> Dictionary:
+	var out: Dictionary = {}
+	for k in src:
+		out[String(k)] = src[k]
+	return out
+
+
+# ---- 一致性指纹（FNV-1a 32 位，自实现以保证跨平台 / 跨版本一致）----
+# 不用 Godot 内建 hash()：其算法与 int 宽度不保证跨平台相同。
+func state_hash() -> int:
+	return _fnv1a(FNV_OFFSET_BASIS, _canonical_string())
+
+
+func _fnv1a(h: int, text: String) -> int:
+	var bytes := text.to_utf8_buffer()
+	for b in bytes:
+		h = (h ^ b) & 0xFFFFFFFF
+		h = (h * FNV_PRIME) & 0xFFFFFFFF
+	return h
+
+
+# 规范化状态串：手牌按 uid 升序（手牌顺序是 UI 偏好，不影响规则），
+# 化合价字典按键排序 —— 保证「同一个局面」在任何端得到同一个指纹。
+func _canonical_string() -> String:
+	var parts: Array = []
+	parts.append("seed=%d" % deck_seed)
+	parts.append("cur=%d" % current_player_index)
+	parts.append("turn=%d" % turn_count)
+	parts.append("phase=%d" % phase)
+	parts.append("win=%d" % winner_index)
+	parts.append("starter=%s" % str(is_round_starter))
+	parts.append("dir=%s" % str(direction_clockwise))
+	parts.append("immune=%s" % str(compound_immune))
+	parts.append("chain=%s:%d" % [str(clan_bomb_chain_active), clan_bomb_owner])
+	parts.append("no_bomb=%s" % str(clan_bomb_disabled))
+	parts.append("cons=%d:%s" % [sequence_constraint, str(sequence_constraint_active)])
+	parts.append("table=%s/%d/%d/%s" % [
+		str(_uids_of(table_cards)),
+		table_pattern,
+		table_player_index,
+		str(_sorted_pairs(table_custom_valences)),
+	])
+	parts.append("deck=%d" % (database.get_remaining_count() if database != null else -1))
+	for p in players:
+		var uids := _uids_of(p.hand)
+		uids.sort()
+		parts.append("seat=%s/%s/%s/%s/%s" % [
+			p.player_name,
+			str(uids),
+			str(p.has_passed),
+			str(p.clan_bomb_cooling),
+			str(p.is_ai),
+		])
+	parts.append("logs=%d" % log_messages.size())
+	return "\n".join(parts)
+
+
+func _sorted_pairs(src: Dictionary) -> Array:
+	var keys: Array = src.keys()
+	keys.sort()
+	var out: Array = []
+	for k in keys:
+		out.append("%s=%s" % [String(k), str(src[k])])
+	return out
+
+
+# ---- 事件应用（客人重放 / 主机本地执行 / 自动化测试）----
+# 事件格式（全部可 JSON 化）：
+#   {"type":"play",          "by":0, "uids":[12,44], "valences":{"H":1}, "pattern":-1}
+#   {"type":"pass",          "by":0}
+#   {"type":"discard_pass",  "by":0, "uid":12}
+#   {"type":"sequence_pick", "by":0, "pattern":2}
+#   {"type":"sequence_skip", "by":0}
+# 返回：play 透传 play_cards 的返回码（0 / 1 / -1..-8）；其它成功返回 0；
+#       EVENT_UNKNOWN = 未知类型；EVENT_BAD_PAYLOAD = 座位 / uid 非法。
+# 只有「成功推进局面」的事件才写入 event_log —— 失败事件不污染回放。
+func apply_event(ev: Dictionary) -> int:
+	var event_type := String(ev.get("type", ""))
+	var by := int(ev.get("by", -1))
+	var result := EVENT_UNKNOWN
+	match event_type:
+		"play":
+			var cards = _cards_by_uids(by, ev.get("uids", []))
+			if cards == null:
+				return EVENT_BAD_PAYLOAD
+			result = play_cards(by, cards, _valences_from(ev.get("valences", {})), int(ev.get("pattern", -1)))
+		"pass":
+			if not is_valid_seat(by):
+				return EVENT_BAD_PAYLOAD
+			player_pass(by)
+			result = 0
+		"discard_pass":
+			if not is_valid_seat(by):
+				return EVENT_BAD_PAYLOAD
+			var card = _card_by_uid(by, int(ev.get("uid", -1)))
+			if card == null:
+				return EVENT_BAD_PAYLOAD
+			player_discard_and_pass(by, card)
+			result = 0
+		"sequence_pick":
+			if not is_valid_seat(by):
+				return EVENT_BAD_PAYLOAD
+			set_sequence_constraint(int(ev.get("pattern", -1)))
+			result = 0
+		"sequence_skip":
+			if not is_valid_seat(by):
+				return EVENT_BAD_PAYLOAD
+			# 与 UI「跳过指定」按钮完全等价（清约束 + 轮转）
+			sequence_constraint_active = false
+			sequence_constraint = -1
+			next_turn()
+			result = 0
+		_:
+			return EVENT_UNKNOWN
+	if result >= 0:
+		event_log.append(ev.duplicate(true))
+	return result
+
+
+func _card_by_uid(player_index: int, uid: int):
+	for c in players[player_index].hand:
+		if int(c.uid) == uid:
+			return c
+	return null
+
+
+# uid 列表 → 手牌卡对象；任一 uid 不存在 / 重复 / 越界 → null（整笔事件作废）
+# 注意：返回类型不标注 Array —— 失败时返回 null，需要 Variant 承载
+func _cards_by_uids(player_index: int, uids):
+	if not is_valid_seat(player_index) or not (uids is Array) or uids.is_empty():
+		return null
+	var out: Array = []
+	var seen: Dictionary = {}
+	for raw in uids:
+		var uid := int(raw)
+		if seen.has(uid):
+			return null
+		seen[uid] = true
+		var card = _card_by_uid(player_index, uid)
+		if card == null:
+			return null
+		out.append(card)
+	return out
+
+
+# 化合价字典规范化：键转 String，值保持 bool（"_organic" 标记）/ 转 int（JSON 数字是 float）
+func _valences_from(src) -> Dictionary:
+	var out: Dictionary = {}
+	if not (src is Dictionary):
+		return out
+	for k in src:
+		var v = src[k]
+		out[String(k)] = v if (v is bool) else int(v)
+	return out
