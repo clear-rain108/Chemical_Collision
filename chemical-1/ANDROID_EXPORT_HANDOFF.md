@@ -1,15 +1,23 @@
 # Chemical Collision（化学碰撞）Android 导出交接文档
 
-> 交接时间：2026-11-02
+> 交接时间：2026-11-02（同日追加：release 签名已配好，产物按 `debug\` / `release\` / `_obsolete\` 分类）
 > 上一手已把「Godot 4.7.2 导出模板 + Android SDK + 导出预设 + 启动图标」全部配好，
-> **现在可以直接导出可安装的 APK**。下面写清环境、改动、验证结果、待办和踩过的坑。
+> **现在 debug / release 两种包都能直接导出**。下面写清环境、改动、验证结果、待办和踩过的坑。
 
 ---
 
 ## 1. 一句话现状
 
-Godot 编辑器里「项目 → 导出 → Android」已经能出包，产出的是**已签名的 debug APK**（27.3 MB，arm64-v8a）。
-**尚未在真机上跑过**，GL 兼容渲染的实际表现未验证。
+**debug 与 release 两条出包链路都已跑通**（v2+v3 签名验证通过，`arm64-v8a`），产物按用途分类存放：
+
+```
+D:\Export_Godot_Pack\android_export\
+├── debug\    chemical-pre1002-debug.apk      28,602,366 B   调试签名（自测 / 测试机）
+├── release\  chemical-pre1002-release.apk    26,787,359 B   发布签名（分发 / 上架）
+└── _obsolete\chemical-pre1002-unsigned-20261102-1929.apk     签名失败留下的未签名半成品（装不上）
+```
+
+**尚未在真机上跑过**，GL 兼容渲染与触屏适配（`ARCHITECTURE.md` §12 的 A1/B/C）的实际表现未验证。
 
 ---
 
@@ -17,12 +25,13 @@ Godot 编辑器里「项目 → 导出 → Android」已经能出包，产出的
 
 | 项 | 值 |
 |---|---|
-| Godot 编辑器 | `C:\Users\clearrain\Desktop\Godot_v4.7.2-stable_win64\Godot_v4.7.2-stable_win64.exe`（`4.7.2.stable.official.ed1daf0bf`） |
+| Godot 编辑器 | `D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe`（`4.7.2.stable.official.ed1daf0bf`，命令行用 console 版才有输出） |
 | 工程目录 | `D:\Github_Library\Chemical\Chemical_Collision\chemical-1`（git 仓库，当前分支 `new`） |
 | 导出模板 | `%APPDATA%\Godot\export_templates\4.7.2.stable\`（35 个文件 / 1.93 GB，`version.txt` = `4.7.2.stable`） |
 | Android SDK | `C:\Users\clearrain\AppData\Local\Android\Sdk` |
 | JDK | `C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot`（Godot 4.7 要求 17） |
 | 调试签名 | `%APPDATA%\Godot\keystores\debug.keystore`，别名 `androiddebugkey`，密码 `android`，有效期到 2053 |
+| 发布签名 | `D:\keys\chemical-release.keystore`，别名 `chemical`，有效期 10000 天（约 27 年）；密码存在 `D:\keys\chemical-release.credentials.txt`（**勿提交、勿丢**，丢了已安装用户无法更新） |
 
 **SDK 已安装组件**：`cmdline-tools`（sdkmanager 19.0）、`platform-tools`（adb）、`build-tools;35.0.0` + `build-tools;36.0.0`、`platforms;android-35` + `platforms;android-36`，许可协议已全部接受。
 
@@ -36,7 +45,9 @@ export/android/debug_keystore_pass = android
 
 ---
 
-## 3. 本次改动（`git diff` 只有两个文件）
+## 3. 首次配好环境那一轮的改动（历史记录）
+
+> 后续轮次的改动见：触屏适配 A1/B/C → `ARCHITECTURE.md` §12；release 签名与双包分类 → 本文 §6.1 / §7.8 / §7.9。
 
 ```
 chemical-1/export_presets.cfg | 16 行
@@ -79,22 +90,22 @@ textures/vram_compression/import_etc2_astc=true
 
 ---
 
-## 4. 已验证的结果
+## 4. 已验证的结果（2026-11-02 复验，两个包都是 CLI 无头导出后实测）
 
-用 CLI 无头导出并校验过（不是纸上谈兵）：
+| 项 | debug 包 | release 包 |
+|---|---|---|
+| 路径 | `D:\Export_Godot_Pack\android_export\debug\chemical-pre1002-debug.apk` | `D:\Export_Godot_Pack\android_export\release\chemical-pre1002-release.apk` |
+| 大小 | 28,602,366 B（27.3 MB） | 26,787,359 B（25.5 MB） |
+| 签名 | v2 ✅ v3 ✅（`CN=Godot, OU=Godot Engine, O=Stichting Godot, C=NL`） | v2 ✅ v3 ✅（`CN=Chemical Collision, O=ClearRain, C=CN`） |
+| 包名 / 版本 | `com.clearrain.chemicalcollision` / `versionCode 1` / `1.0.0` | 同左 |
+| 应用名 | `化学碰撞` | 同左 |
+| SDK | `minSdk 24` / `targetSdk 36` / `compileSdk 36` | 同左 |
+| native-code | `arm64-v8a` | 同左 |
+| 权限 | `android.permission.VIBRATE` ✅（选牌震动依赖它） | 同左 |
 
-```
-package: name='com.clearrain.chemicalcollision' versionCode='1' versionName='1.0.0'
-application-label: '化学碰撞'
-application-icon: res/mipmap-anydpi-v26/icon.xml     ← 自适应图标生效
-minSdkVersion 24 / targetSdkVersion 36 / compileSdk 36
-native-code: arm64-v8a
-签名: APK Signature Scheme v2 + v3 通过
-大小: 27.27 MB
-```
+导出日志里的三个关键行：`Adding permission android.permission.VIBRATE` → `正在签名调试/发布 APK……` → `Signed` → `[ DONE ] export`。
 
-产物：`C:\Users\clearrain\Documents\deepseek-harness\default-workspace\sdk-dl\chemical-debug.apk`
-（APK 内部 `assets/` 已包含 `project.binary`、`*.gdc`、`backend/*.ctex`、`assets.sparsepck`——**手机只要传这一个 APK**，不像 Windows 要 exe + pck。）
+APK 内部 `assets/` 已包含 `project.binary`、`*.gdc`、`backend/*.ctex`、`assets.sparsepck`——**手机只要传这一个 APK**，不像 Windows 要 exe + pck。
 
 ---
 
@@ -109,13 +120,15 @@ native-code: arm64-v8a
    ```
    如果黑屏 → 说明 GL 兼容也有问题，改回 `renderer/rendering_method.mobile="mobile"` 或用 Vulkan 试。
 
-2. **release keystore**（要上架 Google Play / 分发给别人时才需要）
-   现在 `package/signed=true` 但没有 release 密钥，导 release 包会用 debug 密钥签，**不能上架**。
+2. ~~**release keystore**~~ ✅ **已完成（2026-11-02）**
+   `D:\keys\chemical-release.keystore`（别名 `chemical`，RSA 2048，10000 天）已生成，
+   并写进 `.godot/export_credentials.cfg` 的 `keystore/release*` 三项（该文件在 `.gitignore` 里）。
+   密码存在 `D:\keys\chemical-release.credentials.txt`——**这两个文件务必备份，丢了就无法给已安装用户发更新**。
+   重新生成（慎用，会让已发布包无法升级）：
    ```powershell
    & "C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot\bin\keytool.exe" -genkeypair -v `
      -keystore D:\keys\chemical-release.keystore -alias chemical -keyalg RSA -keysize 2048 -validity 10000
    ```
-   生成后填进导出面板 Android → 密钥库（或 `.godot/export_credentials.cfg` 的 `keystore/release*` 三项），**密钥务必备份，丢了就无法更新已上架应用**。
 
 3. **模拟器测试**：预设只勾了 `arm64-v8a`，x86_64 模拟器装不上。要测模拟器就勾 `architectures/x86_64`（APK 会大 70 MB 左右）。
 
@@ -125,28 +138,64 @@ native-code: arm64-v8a
 
 ---
 
-## 6. 常用命令
+## 6. 出包分类与常用命令
+
+### 6.1 产物分类（一律按签名类型分目录，不要混放）
+
+```
+D:\Export_Godot_Pack\android_export\
+├── debug\
+│   └── chemical-pre1002-debug.apk      28.6 MB   debug 签名
+├── release\
+│   └── chemical-pre1002-release.apk    26.8 MB   release 签名
+└── _obsolete\
+    └── chemical-pre1002-unsigned-20261102-1929.apk   未签名半成品（装不上，确认后可删）
+```
+
+| 目录 | 签名 | 用途 | 备注 |
+|---|---|---|---|
+| `debug\` | `androiddebugkey`（`%APPDATA%\Godot\keystores\debug.keystore`） | 自测、给测试机装、看日志 | 可 `adb install -r` 直接覆盖同签名旧包 |
+| `release\` | `chemical`（`D:\keys\chemical-release.keystore`） | 分发、上架 | **与 debug 包签名不同，装前必须先卸载 debug 包** |
+
+`.idsig` 是 apksigner v4 增量签名的副产物，**只在 `adb install --incremental` 时用**，拷手机不需要它。
+
+**谁读哪把钥匙（这次报错的根源）：**
+
+| 导出方式 | 密钥库来源 | 缺了报什么 |
+|---|---|---|
+| `--export-debug` / 勾「调试导出」 | 编辑器设置 `export/android/debug_keystore` | 找不到调试密钥库 |
+| `--export-release` / 直接点「导出项目」 | 预设 → `.godot/export_credentials.cfg` 的 `keystore/release` | **找不到发布密钥库** |
+
+两把钥匙**互不通用**：release 导出不会退回用 debug 密钥库。
+
+### 6.2 命令
 
 ```powershell
-$godot = "C:\Users\clearrain\Desktop\Godot_v4.7.2-stable_win64\Godot_v4.7.2-stable_win64.exe"
+$godot = "D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe"
 $proj  = "D:\Github_Library\Chemical\Chemical_Collision\chemical-1"
 $sdk   = "C:\Users\clearrain\AppData\Local\Android\Sdk"
+$out   = "D:\Export_Godot_Pack\android_export"
 
-# 导出 debug APK（路径随便给，会覆盖预设里的 export_path）
-& $godot --headless --path $proj --export-debug "Android" "D:\out\game-debug.apk"
+# 调试包（走编辑器设置里的 debug keystore）
+& $godot --headless --path $proj --export-debug   "Android" "$out\debug\chemical-pre1002-debug.apk"
 
-# 导出 release APK（需要先配 release keystore）
-& $godot --headless --path $proj --export-release "Android" "D:\out\game-release.apk"
+# 发布包（走 .godot/export_credentials.cfg 里的 keystore/release）
+& $godot --headless --path $proj --export-release "Android" "$out\release\chemical-pre1002-release.apk"
 
 # 导出 Windows（预设名是 "Chemical Collision"）
 & $godot --headless --path $proj --export-release "Chemical Collision" "D:\out\game.exe"
 
-# 查看 APK 信息 / 校验签名
-& "$sdk\build-tools\36.0.0\aapt2.exe" dump badging "D:\out\game-debug.apk"
-& "$sdk\build-tools\36.0.0\apksigner.bat" verify --verbose "D:\out\game-debug.apk"
+# 验签 + 看包信息（四个关键值：v2/v3、包名、versionCode、VIBRATE）
+& "$sdk\build-tools\36.0.0\apksigner.bat" verify --verbose "$out\release\chemical-pre1002-release.apk"
+& "$sdk\build-tools\36.0.0\aapt2.exe" dump badging "$out\release\chemical-pre1002-release.apk"
 
-# 装到手机
-& "$sdk\platform-tools\adb.exe" install -r "D:\out\game-debug.apk"
+# 装到手机（debug 与 release 签名不同，跨类型要先 uninstall）
+& "$sdk\platform-tools\adb.exe" install -r "$out\debug\chemical-pre1002-debug.apk"
+```
+
+`apksigner.bat` 需要 `java` 在 PATH 上，否则报 `java` 找不到：
+```powershell
+$env:PATH = "C:\Program Files\Eclipse Adoptium\jdk-17.0.19.10-hotspot\bin;$env:PATH"
 ```
 
 无头导出时**不要用管道提前掐断输出**（例如 `| Select-Object -First 10`），PowerShell 会关掉管道把 Godot 进程杀掉，导出会半途失败（这次踩过，现象是 APK 没生成但没有任何 ERROR）。
@@ -201,6 +250,44 @@ io.open(p, 'w', encoding='utf-8', newline='').write(s)
 一旦改成 `true`（要改 AndroidManifest、加安卓插件、改应用名图标运行时），必须先在编辑器「项目 → 安装 Android 构建模板」，生成 `res://android/build`。
 注意工程 `.gitignore` 里有 `/android/`，**构建模板不会被提交**，换机器要重新装一次。
 
+### 7.8 「[代码签名] 找不到发布密钥库，无法导出」
+
+**含义**：内容已经打进 APK，走到最后一步签名时找不到**发布**密钥库，导出中止。
+
+**根因排查顺序**（本机 2026-11-02 实测）：
+
+1. `.godot/export_credentials.cfg` 里 `keystore/release=""`（预设「高级选项 → 密钥库 → 发布」没填）→ **这就是本次的原因**；
+2. 调试导出走的是编辑器设置 `export/android/debug_keystore`，**不是**预设里的 `keystore/debug`，两处都空也不影响 debug 包；
+3. release 导出**不会**退回用 debug 密钥库，必须显式提供发布密钥库。
+
+**修**：按 §6.2 的 `--export-release`（已配好 `D:\keys\chemical-release.keystore`），
+或者只想快速出可安装的包 → 改用 `--export-debug` / 在导出面板勾「调试导出」。
+
+顺带一条：`D:\Export_Godot_Pack\android_export\_obsolete\chemical-pre1002-unsigned-20261102-1929.apk`
+（26,920,798 B）是这次签名失败留下的**未签名半成品**，装不上 —— 已从根目录挪进 `_obsolete\` 分类，确认无用即可删。
+
+### 7.9 导出预设被编辑器写回默认值（包名 / 图标 / 震动权限全丢）
+
+**症状**：`git status` 里 `export_presets.cfg` 突然有改动，内容是新建预设的默认值：
+
+| 键 | 正常值 | 被写回 |
+|---|---|---|
+| `package/unique_name` | `com.clearrain.chemicalcollision` | `com.example.$genname` |
+| `package/name` | `化学碰撞` | 空 |
+| `version/name` | `1.0.0` | 空 |
+| `launcher_icons/*` | `res://export_icons/*.png` | 全空 |
+| `permissions/vibrate` | `true` | `false` |
+| `export_path`（Windows） | `…pre1002.exe` | `…pre1002_test.exe` |
+
+**影响**：不改回来直接导出，会得到「随机包名 + 无图标 + 没有振动权限」的包，触屏适配里的选牌震动会静默失效。
+
+**处理**：**先关掉 Godot 编辑器**（开着时它内存里还是那份默认值，你一保存导出就再覆盖一遍），然后
+```
+git checkout -- chemical-1/export_presets.cfg
+```
+再核对下面四项是否回来了：`package/unique_name` / `package/name` / `version/name` / `permissions/vibrate`。
+改完导出的包用 `aapt2 dump badging` 复核（`application-label` 应为「化学碰撞」，权限里应有 `VIBRATE`）。
+
 ---
 
 ## 8. 备份与回滚
@@ -230,8 +317,11 @@ Copy-Item "...\work-backup\project.godot.bak"      "D:\Github_Library\Chemical\C
 | 问题 | 答案 |
 |---|---|
 | 手机要传几个文件？ | **1 个** APK。`.idsig` 只在 `adb install --incremental` 时用 |
-| APK 在哪？ | 导出面板输出，或预设里 `…Export_Godot_Pack\Chemical Collision——pre1002.apk` |
+| APK 在哪？ | 见 §6.1 分类目录：`D:\Export_Godot_Pack\android_export\debug\` 与 `…\release\` |
+| 走哪种签名？ | 自测/测试机 → `debug\`；分发/上架 → `release\`。**两者签名不同，不能互相覆盖安装** |
 | 为什么有两条渲染路径？ | 桌面 Forward+，移动端 GL 兼容（`rendering_method.mobile`） |
-| 上架还缺什么？ | release keystore + 512×512 高清图标 + 定稿包名/应用名 |
-| 现在能装吗？ | 能，debug 签名，需允许「未知来源」 |
-| 换机器要重装什么？ | 4.7.2 导出模板 + Android SDK + JDK 17，然后在编辑器设置里指路径 |
+| 上架还缺什么？ | 512×512 高清图标 + 定稿包名/应用名（release keystore ✅ 已就绪） |
+| 现在能装吗？ | 能，两个包都通过 v2+v3 验签；debug 包需允许「未知来源」 |
+| 导出报「找不到发布密钥库」？ | 见 §7.8：用 `--export-release` 前必须配 `keystore/release`；只想快出包就 `--export-debug` |
+| 包名突然变 `com.example.*`、图标没了？ | 见 §7.9：预设被编辑器写回默认值，关编辑器后 `git checkout -- export_presets.cfg` |
+| 换机器要重装什么？ | 4.7.2 导出模板 + Android SDK + JDK 17，然后在编辑器设置里指路径；`D:\keys\` 里的发布密钥库要单独拷过去 |
