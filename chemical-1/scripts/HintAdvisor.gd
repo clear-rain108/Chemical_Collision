@@ -89,43 +89,10 @@ static func is_playable(gm, indices: Array) -> bool:
 
 
 # UI 面板需要的化合价字典：{} 表示这组牌给不出可被面板接受的化合价
-# （2 元素给一正一负；3+ 元素每种取一个价使总电荷为 0）
+# 统一由 CompoundSolver.get_valence_pairs 裁决（默认配平优先，失败再按张数搜索），
+# 保证「面板给得出的价」和「play_cards 能接受」是同一套规则。
 static func compound_valence_for(cards: Array) -> Dictionary:
-	var syms_order: Array = []
-	var by_sym: Dictionary = {}
-	for c in cards:
-		if not by_sym.has(c.symbol):
-			by_sym[c.symbol] = c
-			syms_order.append(c.symbol)
-	if syms_order.size() < 2:
-		return {}
-	if syms_order.size() == 2:
-		var a = by_sym[syms_order[0]]
-		var b = by_sym[syms_order[1]]
-		for va in a.common_valence:
-			for vb in b.common_valence:
-				if (va > 0 and vb < 0) or (va < 0 and vb > 0):
-					return {a.symbol: va, b.symbol: vb}
-		return {}
-	var combos: Array = [[]]
-	for sym in syms_order:
-		var next: Array = []
-		for prefix in combos:
-			for v in by_sym[sym].common_valence:
-				var p2: Array = prefix.duplicate()
-				p2.append(v)
-				next.append(p2)
-		combos = next
-	for combo in combos:
-		var total := 0
-		for v in combo:
-			total += int(v)
-		if total == 0:
-			var cv: Dictionary = {}
-			for i in range(syms_order.size()):
-				cv[syms_order[i]] = combo[i]
-			return cv
-	return {}
+	return CompoundSolverScript.get_valence_pairs(cards)
 
 
 # ============================================================
@@ -246,6 +213,7 @@ static func _organic_candidates(by_sym: Dictionary, cp) -> Array:
 static func _compound_candidates(gm, by_sym: Dictionary, cp) -> Array:
 	var out: Array = []
 	var syms: Array = by_sym.keys()
+	var seen: Dictionary = {}
 	# ---- 2 元素：a×na + b×nb，na/nb 由 gcd 给出（与 _on_confirm_compound 完全一致）----
 	for x in range(syms.size()):
 		for y in range(x + 1, syms.size()):
@@ -271,8 +239,15 @@ static func _compound_candidates(gm, by_sym: Dictionary, cp) -> Array:
 						idxs.append(pool_a[k])
 					for k in range(nb):
 						idxs.append(pool_b[k])
-					out.append(_mk(idxs, P_COMPOUND, {sa: va, sb: vb}, false))
-	# ---- 3 元素：每种 1 张 + 总电荷 = 0 ----
+					var key := str(idxs)
+					if seen.has(key):
+						continue
+					seen[key] = true
+					# 实际化合价交给 CompoundSolver 统一裁决（假化合物如 NCl 直接无解 → 不进候选）
+					var cv: Dictionary = CompoundSolverScript.get_valence_pairs(_cards_of(cp, idxs))
+					if not cv.is_empty():
+						out.append(_mk(idxs, P_COMPOUND, cv, false))
+	# ---- 3 元素：每种 1 张 + 电荷平衡（同样交给 CompoundSolver 裁决）----
 	for x in range(syms.size()):
 		for y in range(x + 1, syms.size()):
 			for z in range(y + 1, syms.size()):
@@ -287,16 +262,11 @@ static func _compound_candidates(gm, by_sym: Dictionary, cp) -> Array:
 							hal_count += 1
 					if hal_count >= 2:
 						continue
-				var c1 = cp.hand[by_sym[s1][0]]
-				var c2 = cp.hand[by_sym[s2][0]]
-				var c3 = cp.hand[by_sym[s3][0]]
 				var idxs3: Array = [by_sym[s1][0], by_sym[s2][0], by_sym[s3][0]]
-				for v1 in c1.common_valence:
-					for v2 in c2.common_valence:
-						for v3 in c3.common_valence:
-							if int(v1) + int(v2) + int(v3) != 0:
-								continue
-							out.append(_mk(idxs3, P_COMPOUND, {s1: v1, s2: v2, s3: v3}, false))
+				var cv3: Dictionary = CompoundSolverScript.get_valence_pairs(_cards_of(cp, idxs3))
+				if cv3.is_empty():
+					continue
+				out.append(_mk(idxs3, P_COMPOUND, cv3, false))
 	return out
 
 
@@ -337,9 +307,9 @@ static func _check(gm, cards: Array, cv: Dictionary, intended: int) -> bool:
 	if gm.tutorial_level == 0 and gm.tutorial_level0_phase >= 1 and cp.is_ai and pattern == P_CLAN:
 		return false
 
-	# --- play_cards: 顺序指定牌型的约束 ---
-	if gm.sequence_constraint_active and not gm.is_round_starter \
-			and gm.get_current_player_index() != gm.table_player_index:
+	# --- play_cards: 顺序指定牌型的约束（只作用于被指定的那名玩家） ---
+	if gm.sequence_constraint_active \
+			and gm.get_current_player_index() == gm.sequence_constraint_target:
 		if gm.sequence_constraint >= 0 and pattern != gm.sequence_constraint:
 			var constraint_match: bool = gm.sequence_constraint == P_COMPOUND and pattern == P_ORGANIC
 			if not constraint_match:
@@ -369,10 +339,10 @@ static func _check(gm, cards: Array, cv: Dictionary, intended: int) -> bool:
 				if CardPatternsScript.compare_cards(cards, gm.table_cards) <= 0:
 					return false
 
-	# --- play_cards: 化合物比例必须配平 ---
+	# --- play_cards: 化合物必须给出化学式且比例配平 ---
 	if pattern == P_COMPOUND:
 		var fi: Dictionary = CompoundSolverScript.get_compound_formula(cards, cv)
-		if not fi.is_empty() and not fi.get("ratio_ok", false):
+		if fi.is_empty() or not fi.get("ratio_ok", false):
 			return false
 	return true
 

@@ -183,8 +183,11 @@ CardPatterns.detect_pattern(cards, skip_clan_bomb=false):
 | 模块 | 说明 |
 |------|------|
 | 命名常量表 | OXYANION_MAP / OXYACID_FORMULAS / ACID_SALT_ANIONS / VARIABLE_METAL_CN_NAMES / NONMETAL_CN_NAMES（数据表驱动）|
-| is_compound / _can_balance_valence | 化合物合法性检测 |
-| get_compound_formula | 配平 + 化学式生成（含非金属正价兜底：无金属时提升 H 及酸中心原子为正价）|
+| is_compound | 化合物合法性检测 =「默认配平成功 或 价态搜索可配平」，二者都要求电负性有序 |
+| _assign_valences | **唯一价态分配入口**：默认配平（金属取最高正价 / 非金属取最低负价 / 无金属时提升 H 与酸中心原子）；显式化合价走同一函数校验 |
+| _search_valences / _valence_domains / _dfs_valences / _valence_assignment_ok | 默认配平失败时的价态搜索：2~3 种元素、按实际张数电荷平衡、正价元素电负性 ≤ 负价元素（NCl₃/BCl₃/ClF 由此识别，NCl/BrN/IN 被排除）|
+| get_valence_pairs | AI / 提示 / 化合价面板共用的唯一价态出口（默认配平优先，失败再搜索）|
+| get_compound_formula | 配平 + 化学式生成（`ratio_ok=false` 即视为打不出）|
 | get_compound_name / _try_get_oxy_name | IUPAC 命名（含氧酸/含氧酸盐/酸式盐）|
 | is_organic / get_organic_name | 有机物识别与命名（CH4/C2H6/C3H8 及单一卤代物）|
 | _to_subscript / _gcd | 化学式下标渲染 / 配平辅助 |

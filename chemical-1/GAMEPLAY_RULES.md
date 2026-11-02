@@ -180,6 +180,24 @@ detect_pattern(cards, skip_clan_bomb=false) 判定优先级:
 - **可由补充规则放行**：开始页勾选「允许卤族互化」（`HalogenCheckBox`）后，
   卤素之间可以组成化合物（如 ClF），见 §16.3
 
+### 化合物成立条件（硬规则，不可关闭）
+
+一组牌能当**化合物**打出，必须存在一套价态分配同时满足：
+
+1. 至少有一个正价元素和一个负价元素；
+2. 按**实际张数**加权后总电荷 = 0（例：N 1 张 + Cl 3 张 → N(+3) / Cl(-1)）；
+3. 正价元素的电负性 ≤ 负价元素的电负性（正价者必须更"金属"）。
+
+由此：`N+Cl` / `Br+N` / `I+N` **不成化合物**（非金属无正价，或电负性倒置），
+而 `NCl₃`（N +3 / Cl -1）、`NI₃`（N -3 / I +1）、`BCl₃`、`ClF` 成立。
+
+- **唯一裁决入口**：`CompoundSolver.get_valence_pairs()`（默认配平优先，失败再做价态搜索）。
+  化合价面板给出的价、`play_cards()` 接受的价、提示 / AI 的建议全部来自它，
+  保证「面板能选 = 引擎接受 = 提示建议」三处一致。
+- **空式子不再放行**：`play_cards()` 化合物分支若 `get_compound_formula()` 为空或 `ratio_ok=false`，
+  一律返回 `-1`（旧实现"给不出化学式就放行"会让 `ClN` 这类假化合物混进桌面）。
+- 回归用例：`tests/verify_compound_chemistry.gd`（solver / 引擎 / 提示 / AI 四层）。
+
 ---
 
 ## 10. 手牌上限与弃牌规则
@@ -446,9 +464,15 @@ GameManager.init_game / init_tutorial
 
 二、打出时，**出牌的顺序变更**：顺时针变为逆时针，逆时针变为顺时针
 
-三、打出"顺序"的玩家选择让下一名玩家打出**一种特定牌型的牌**（单质/化合物/族炸/有机物），否则该玩家**罚抽两张牌**
+三、打出"顺序"的玩家选择让下一名玩家打出**一种特定牌型的牌**（单质/化合物/族炸），否则该玩家**罚抽两张牌**
 
 四、无论被指定的下一名玩家出什么，他的下一名玩家都**自由出牌**（约束仅作用于紧邻的下一名玩家）
+
+五、约束**只认被指定的那名玩家**：别人出牌、打族炸、接炸链结束、跳过都**不会**替它解除约束；
+被指定玩家自己打出合规牌型 → 约束完成；自己跳过（含手牌上限弃牌跳过）→ 罚抽 2 张后约束结束。
+打出新的顺序牌会作废旧约束（等新的指定）。
+
+> 方向已在 `play_cards()` 里先反转，所以"下一名"= **反转方向上的下一名**（4 人局 P0 出顺序 → 约束 P3）。
 
 #### 打出方式
 
@@ -458,19 +482,21 @@ GameManager.init_game / init_tutorial
 
 打出顺序后，会弹出对话框让玩家选择下一名玩家必须打出的牌型：
 - **单质**：下一名玩家必须打出单质
-- **化合物**：下一名玩家必须打出化合物
+- **化合物**：下一名玩家必须打出化合物（开启有机物规则时，有机物也算满足）
 - **族炸**：下一名玩家必须打出族炸
-- **有机物**（仅在补充规则启用时可选）：下一名玩家必须打出有机物
 - **跳过指定**：放弃约束权利，下一名玩家自由出牌
 
 #### 实现
 
 - 检测函数：`CardPatterns.gd` 中的 `_is_sequence()` 按原子序数排序后检查是否严格连续
 - 方向反转：`GameManager.gd` 中的 `direction_clockwise` 在打出 SEQUENCE 时翻转
-- 牌型约束：`GameManager.gd` 中的 `set_sequence_constraint()` 和 `sequence_constraint_active` 控制
-- 罚抽：`GameManager.gd` 中的 `player_fail_sequence_constraint()` 在玩家不满足约束时罚抽2张
+- 牌型约束：`GameManager.gd` 中的 `set_sequence_constraint()` 写入 `sequence_constraint` +
+  `sequence_constraint_active` + `sequence_constraint_target`（目标座位，跳过空手牌玩家），
+  `play_cards()` 只在 `player_index == sequence_constraint_target` 时校验
+- 罚抽：`GameManager.gd` 中的 `player_fail_sequence_constraint()` 在**被指定玩家**不满足约束时罚抽2张
 - UI 弹窗：`GameUI.gd` 中的 `_show_sequence_constraint_dialog()` 提供选择界面
 - 牌权轮转：`next_turn()` 和 `_get_next_index_in_direction()` 已支持方向切换
+- 回归测试：`tests/verify_sequence_lock.gd`（方向/target、别人不解除、族炸不解除、罚抽、快照字段）
 
 ### 16.3 允许卤族互化
 

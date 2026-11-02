@@ -69,6 +69,10 @@ var allowed_extra_elements: Array = []
 var direction_clockwise: bool = true           # 出牌方向（true=顺时针, false=逆时针）
 var sequence_constraint: int = -1              # 顺序指定牌型约束（-1=无约束）
 var sequence_constraint_active: bool = false   # 顺序约束是否激活
+# 被指定的玩家索引（-1=无）。顺序牌会让方向先反转，再指定「反转后的下一名」，
+# 只有这一名玩家受约束：必须打出指定牌型，否则罚抽 2 张。
+# 别人出族炸、别人出牌、接炸链结束都不会解除该约束。
+var sequence_constraint_target: int = -1
 
 # ============================================================
 # 三之三、联机地基状态（P11-B）
@@ -124,6 +128,7 @@ func init_game(player_count: int = 4, ai_count: int = 3, rng_seed: int = -1) -> 
 	direction_clockwise = true
 	sequence_constraint = -1
 	sequence_constraint_active = false
+	sequence_constraint_target = -1
 	tutorial_level = 0
 	tutorial_step = 0
 	tutorial_guidance = ""
@@ -233,7 +238,8 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 		return -3
 
 	# -------- 顺序约束检查 --------
-	if sequence_constraint_active and not is_round_starter and player_index != table_player_index:
+	# 只有「被指定的那名玩家」受约束：其他人出什么牌都不受限，也不会替它解约束。
+	if sequence_constraint_active and sequence_constraint_target == player_index:
 		if sequence_constraint >= 0 and pattern != sequence_constraint:
 			# 指定"化合物"时，有机物（化合物子类）同样满足约束
 			var constraint_match = (sequence_constraint == CardPatternsScript.CardPattern.COMPOUND \
@@ -267,22 +273,19 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 			if table_pattern == CardPatternsScript.CardPattern.COMPOUND and pattern != CardPatternsScript.CardPattern.COMPOUND:
 				return -4  # 化合物后只能接化合物或族炸
 			if table_cards.size() > 0:
-				# 桌面是顺序牌：无大小比较（顺序打出后复位桌面），下家仅受指定牌型约束
-				if table_pattern == CardPatternsScript.CardPattern.SEQUENCE:
-					pass
-				# 顺序接顺序：无大小比较，直接通过
-				elif table_pattern == CardPatternsScript.CardPattern.SEQUENCE and pattern == CardPatternsScript.CardPattern.SEQUENCE:
-					pass
-				else:
+				# 桌面是顺序牌：无大小比较（下家只受指定牌型约束）
+				if table_pattern != CardPatternsScript.CardPattern.SEQUENCE:
 					var cmp = CardPatternsScript.compare_cards(cards, table_cards)
 					if cmp <= 0:
 						return -2
 
 	# -------- 化合物比例校验（必须在移除卡牌之前） --------
+	# 给不出化学式（无法配平 / 电负性倒置 / 含稀有气体）一律拒绝。
+	# 旧实现「空式子就放行」会让 NCl / BrN / IN 这类假化合物混进桌面。
 	if pattern == CardPatternsScript.CardPattern.COMPOUND:
 		var fi = CompoundSolverScript.get_compound_formula(cards, custom_valences)
-		if not fi.is_empty() and not fi.get("ratio_ok", false):
-			return -1  # 比例不匹配
+		if fi.is_empty() or not fi.get("ratio_ok", false):
+			return -1  # 无法配平 / 比例不匹配
 
 	# -------- 从手牌移除，更新桌面 --------
 	player.remove_cards(cards)
@@ -332,6 +335,8 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 		logger.add_log("===== 🎉 %s 打出有机物，立即获胜！=====" % player.player_name)
 		clan_bomb_chain_active = false
 		sequence_constraint_active = false
+		sequence_constraint = -1
+		sequence_constraint_target = -1
 		return 0
 
 	# -------- 族炸：启动接炸链 + 牌权移交 --------
@@ -339,7 +344,13 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 		player.clan_bomb_cooling = true
 		clan_bomb_chain_active = true
 		clan_bomb_owner = player_index
-		sequence_constraint_active = false  # 族炸打断顺序约束
+		# 族炸不解除顺序约束（约束只由被指定的玩家自己出牌 / 跳过才结束）——
+		# 但若「被指定的玩家」自己打出族炸，且约束正是「族炸」，则约束完成。
+		if sequence_constraint_active and sequence_constraint_target == player_index \
+				and sequence_constraint == CardPatternsScript.CardPattern.CLAN_BOMB:
+			sequence_constraint_active = false
+			sequence_constraint = -1
+			sequence_constraint_target = -1
 		_check_tutorial_progress(pattern, not player.is_ai)
 		for i in range(players.size()):
 			if i != player_index:
@@ -361,6 +372,10 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 		# 返回特殊码 1 表示需要UI层弹出选择界面
 		clan_bomb_chain_active = false
 		clan_bomb_owner = -1
+		# 新的顺序牌覆盖旧约束（旧约束作废，等 UI 重新指定）
+		sequence_constraint_active = false
+		sequence_constraint = -1
+		sequence_constraint_target = -1
 		_reset_all_passes()
 		is_round_starter = false
 		if player.get_hand_count() == 0:
@@ -380,8 +395,11 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 	# -------- 非族炸/非顺序出牌完成：重置状态 --------
 	clan_bomb_chain_active = false
 	clan_bomb_owner = -1
-	sequence_constraint_active = false  # 正常出牌后清除约束
-	sequence_constraint = -1
+	# 顺序约束只由「被指定的玩家」打出合规牌型来完成；别人出牌不影响它
+	if sequence_constraint_active and sequence_constraint_target == player_index:
+		sequence_constraint_active = false
+		sequence_constraint = -1
+		sequence_constraint_target = -1
 	_reset_all_passes()
 	is_round_starter = false
 
@@ -403,8 +421,20 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 func set_sequence_constraint(constraint_pattern: int) -> void:
 	sequence_constraint = constraint_pattern
 	sequence_constraint_active = true
+	# 顺序牌在 play_cards 里已经把方向反转了，所以「下一名玩家」= 反转方向上的下一名，
+	# 也就是出顺序牌那名玩家的原上家（4 人局：P0 出顺序 → 约束 P3）。
+	# 直接跳过手牌已空的玩家，保证约束落在真正会行动的人身上。
+	var from_idx = table_player_index if table_player_index >= 0 else current_player_index
+	var target_idx = from_idx
+	for _i in range(players.size()):
+		target_idx = _get_next_index_in_direction(target_idx)
+		if target_idx != from_idx and players[target_idx].get_hand_count() > 0:
+			break
+	sequence_constraint_target = target_idx
 	var pname = CardPatternsScript.get_pattern_name(constraint_pattern)
-	log_messages.append("指定下一名玩家必须打出：%s，否则罚抽2张" % pname)
+	var target_name = players[target_idx].player_name \
+			if target_idx >= 0 and target_idx < players.size() else "下一名玩家"
+	log_messages.append("指定 %s 必须打出：%s，否则罚抽2张" % [target_name, pname])
 	next_turn()
 
 
@@ -424,6 +454,7 @@ func player_fail_sequence_constraint(player_index: int) -> void:
 	log_messages.append("%s 未打出指定牌型，罚抽2张并跳过" % player.player_name)
 	sequence_constraint_active = false  # 约束结束
 	sequence_constraint = -1
+	sequence_constraint_target = -1
 	next_turn()
 
 
@@ -437,8 +468,8 @@ func player_pass(player_index: int) -> void:
 	var hand_limit = _get_hand_limit()
 	player.has_passed = true
 
-	# 顺序约束激活：被指定的下一名玩家跳过 → 罚抽2张并结束约束（下下名自由出牌）
-	if sequence_constraint_active and not is_round_starter and player_index != table_player_index:
+	# 顺序约束激活：被指定的玩家跳过 → 罚抽2张并结束约束（下下名自由出牌）
+	if sequence_constraint_active and sequence_constraint_target == player_index:
 		# 手牌达上限时先弃1张（AI自动弃，人类由UI层处理）
 		if player.get_hand_count() >= hand_limit and player.is_ai:
 			var discard = _ai_pick_discard(player)
@@ -483,9 +514,7 @@ func player_pass(player_index: int) -> void:
 			else:
 				log_messages.append("%s 跳过回合" % player.player_name)
 
-	# 跳过时清除顺序约束（下一名玩家自由出牌）
-	sequence_constraint_active = false
-	sequence_constraint = -1
+	# 普通玩家跳过不解除别人的顺序约束（约束只由被指定者自己结算）
 	next_turn()
 
 
@@ -521,8 +550,10 @@ func player_discard_and_pass(player_index: int, card_to_discard) -> void:
 	player.remove_cards([card_to_discard])
 	player.has_passed = true
 	log_messages.append("%s 手牌达上限，弃置 %s 并跳过" % [player.player_name, card_to_discard.symbol])
-	sequence_constraint_active = false
-	sequence_constraint = -1
+	# 手牌达上限又背着顺序约束：弃 1 张（上面已弃）+ 罚抽 2 张，约束随即结束
+	if sequence_constraint_active and sequence_constraint_target == player_index:
+		player_fail_sequence_constraint(player_index)
+		return
 	next_turn()
 
 
@@ -603,6 +634,7 @@ func _start_new_round() -> void:
 	compound_immune = false
 	sequence_constraint_active = false
 	sequence_constraint = -1
+	sequence_constraint_target = -1
 
 	turn_count += 1
 	current_player_index = _get_next_index_in_direction(current_player_index)
@@ -667,6 +699,7 @@ func init_tutorial(level: int) -> bool:
 	direction_clockwise = true
 	sequence_constraint = -1
 	sequence_constraint_active = false
+	sequence_constraint_target = -1
 	halogen_exchange_allowed = false   # 教程局同样默认禁止卤族互化
 	element_limit_enabled = false      # 教程局永远 29 种元素全量（预设手牌含 Fe 等副族）
 	allowed_extra_elements.clear()
@@ -771,15 +804,17 @@ func get_available_patterns(player_idx: int) -> String:
 	if player_idx < 0 or player_idx >= players.size():
 		return ""
 	var p = players[player_idx]
+	# 顺序约束优先于接炸链：受约束的玩家要看到「必须打出什么」，
+	# 而不是被接炸链的文案误导（play_cards 里也是先查约束、再查接炸链）。
+	if sequence_constraint_active and sequence_constraint_target == player_idx:
+		var cn = CardPatternsScript.get_pattern_name(sequence_constraint)
+		return "顺序约束：必须打出 %s / 跳过(罚抽2张)" % cn
 	if clan_bomb_chain_active:
 		if player_idx == clan_bomb_owner:
 			return "等待他人接炸..."
 		if p.clan_bomb_cooling:
 			return "❄ 族炸冷却中，不能接炸 / 跳过(抽1张)"
 		return "仅可出: 更大的族炸 / 跳过(抽1张)"
-	if sequence_constraint_active and player_idx != table_player_index:
-		var cn = CardPatternsScript.get_pattern_name(sequence_constraint)
-		return "顺序约束：必须打出 %s / 跳过(罚抽2张)" % cn
 	if is_round_starter or table_cards.is_empty():
 		var s = "自由出牌: 单质+化合物"
 		if organic_rules_enabled or sequence_rules_enabled:
@@ -984,6 +1019,7 @@ func to_snapshot() -> Dictionary:
 		"clan_bomb_disabled": clan_bomb_disabled,
 		"sequence_constraint": sequence_constraint,
 		"sequence_constraint_active": sequence_constraint_active,
+		"sequence_constraint_target": sequence_constraint_target,
 		"table": {
 			"uids": _uids_of(table_cards),
 			"pattern": table_pattern,
@@ -1038,7 +1074,7 @@ func _canonical_string() -> String:
 	parts.append("immune=%s" % str(compound_immune))
 	parts.append("chain=%s:%d" % [str(clan_bomb_chain_active), clan_bomb_owner])
 	parts.append("no_bomb=%s" % str(clan_bomb_disabled))
-	parts.append("cons=%d:%s" % [sequence_constraint, str(sequence_constraint_active)])
+	parts.append("cons=%d:%s:%d" % [sequence_constraint, str(sequence_constraint_active), sequence_constraint_target])
 	parts.append("table=%s/%d/%d/%s" % [
 		str(_uids_of(table_cards)),
 		table_pattern,
@@ -1113,6 +1149,7 @@ func apply_event(ev: Dictionary) -> int:
 			# 与 UI「跳过指定」按钮完全等价（清约束 + 轮转）
 			sequence_constraint_active = false
 			sequence_constraint = -1
+			sequence_constraint_target = -1
 			next_turn()
 			result = 0
 		_:

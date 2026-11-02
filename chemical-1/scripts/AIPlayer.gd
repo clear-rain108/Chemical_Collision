@@ -95,6 +95,7 @@ static func _try_play(game_manager, p, gm_idx: int) -> void:
 					# AI 自动放弃指定牌型权利：清除约束并轮到下一家
 					game_manager.sequence_constraint = -1
 					game_manager.sequence_constraint_active = false
+					game_manager.sequence_constraint_target = -1
 					game_manager.next_turn()
 				return
 
@@ -171,28 +172,11 @@ static func _group_by_group(hand: Array) -> Dictionary:
 	return r
 
 
-# 两元素化合物的化合价：优先用默认配平（金属/非金属自动分正负价）；
-# 默认配平失败时遍历常见价找一正一负，再用 get_compound_formula 复核比例。
-# 例：F(只有 -1) + Cl(可 +1) —— 卤族互化开关打开后才有机会走到这里。
+# 两元素化合物的化合价：统一交给 CompoundSolver.get_valence_pairs 裁决
+# （默认配平优先；失败再按实际张数搜索「电荷平衡 + 电负性有序」的价态）。
+# 假化合物（NCl / BrN / IN）在这里直接得到 {}，AI 不会再尝试打出。
 static func _pair_valences(pair: Array) -> Dictionary:
-	var fi = CompoundSolverScript.get_compound_formula(pair)
-	if not fi.is_empty() and fi.get("ratio_ok", false):
-		var cv: Dictionary = {}
-		for e in fi.get("pos_list", []):
-			cv[e.symbol] = e.ox_state
-		for e in fi.get("neg_list", []):
-			cv[e.symbol] = e.ox_state
-		return cv
-	var a = pair[0]
-	var b = pair[1]
-	for va in a.common_valence:
-		for vb in b.common_valence:
-			if (va > 0 and vb < 0) or (va < 0 and vb > 0):
-				var cv2: Dictionary = {a.symbol: va, b.symbol: vb}
-				var fi2 = CompoundSolverScript.get_compound_formula(pair, cv2)
-				if not fi2.is_empty() and fi2.get("ratio_ok", false):
-					return cv2
-	return {}
+	return CompoundSolverScript.get_valence_pairs(pair)
 
 
 # 纯卤族对（F+Cl / F+Br / Cl+Br …）——只用于「化合物」尝试路径。

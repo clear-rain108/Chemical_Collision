@@ -5035,7 +5035,7 @@ func _show_sequence_constraint_dialog() -> void:
 	overlay.add_child(title)
 
 	var desc = Label.new()
-	desc.text = "打出「顺序」后，出牌方向已反转。\n请选择让下一名玩家打出哪种牌型，\n否则该玩家将被罚抽2张牌。"
+	desc.text = "打出「顺序」后，出牌方向已反转。\n请选择让下一名玩家打出哪种牌型（只约束这一名玩家，\n其他人出牌 / 族炸 / 跳过都不会替它解除），\n否则该玩家将被罚抽2张牌。"
 	desc.add_theme_font_size_override("font_size", 13)
 	desc.add_theme_color_override("font_color", Color(0.2, 0.2, 0.2, 1))
 	desc.position = Vector2(320, 295)
@@ -5067,6 +5067,7 @@ func _show_sequence_constraint_dialog() -> void:
 	var cancel_cb := func():
 		game_manager.sequence_constraint_active = false
 		game_manager.sequence_constraint = -1
+		game_manager.sequence_constraint_target = -1
 		game_manager.next_turn()
 		overlay.queue_free()
 		_refresh_ui()

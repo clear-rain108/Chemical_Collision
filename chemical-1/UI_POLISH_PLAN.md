@@ -545,8 +545,8 @@ meta 不存在时会刷 `ERROR`；改为 `has_meta()` 判定，并给 `StartRule
 | 有机物打出即胜 | `GameManager.play_cards()` 有机物分支 | ✅ |
 | 顺序 → 方向反转 | `direction_clockwise = not direction_clockwise` | ✅ 顺/逆时针提示同步 |
 | 顺序 → 指定牌型 | `play_cards()` 返回 `1` → `GameUI` 弹「单质 / 化合物 / 族炸」三选框 | ✅ |
-| 未按指定牌型出 | `player_fail_sequence_constraint()`：罚抽 2 张 + `has_passed` + 约束解除 | ✅ |
-| 族炸打断 | 族炸分支 `sequence_constraint_active = false`，接炸链照常 | ✅ |
+| 未按指定牌型出 | `player_fail_sequence_constraint()`：罚抽 2 张 + `has_passed` + 约束解除 | ✅ 只对被指定的那名玩家生效 |
+| 族炸打断 | ❌ 已修正：族炸**不再**解除顺序约束（`sequence_constraint_target` 只由该玩家自己出牌 / 跳过结算） | ✅ |
 | 游戏页规则提示 | `get_organic_rules_enabled()` / `get_sequence_rules_enabled()` 拼信息栏 | ✅ |
 
 唯一残留的是**文案**（和第 1 个问题同类型：写的东西界面上不存在）：

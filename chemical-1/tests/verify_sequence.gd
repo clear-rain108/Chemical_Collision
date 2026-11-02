@@ -11,6 +11,7 @@ func _init():
 	# 手动激活顺序约束（模拟玩家0打出顺序后指定"化合物"）
 	gm.sequence_constraint_active = true
 	gm.sequence_constraint = 1  # COMPOUND
+	gm.sequence_constraint_target = 1  # 被指定的玩家（顺序反转后的下一名）
 	gm.table_player_index = 0   # 玩家0是出顺序者
 	gm.is_round_starter = false
 

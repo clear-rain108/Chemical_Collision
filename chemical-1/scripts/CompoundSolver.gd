@@ -172,34 +172,37 @@ static func get_organic_name(cards: Array) -> String:
 # ============================================================
 # 三、化合物检测与配平
 # ============================================================
+# 是否可构成化合物（牌型识别用）。
+# 判定 = 「默认配平（金属 / 含氧酸根 / H 化物）能成立」或「存在按张数电荷平衡的价态分配」。
+# 这样 NCl / BrN / IN（非金属之间 1:1、电荷对不上或电负性倒置）不再被判成化合物，
+# 而 NCl₃ / NI₃ / BCl₃ / ClF 这类真实化合物仍然成立。
 static func is_compound(cards: Array) -> bool:
 	if cards.size() < 2:
 		return false
 	for c in cards:
 		if c.element_type == CardDataScript.TYPE_NOBLE_GAS:
 			return false
-	if _can_balance_valence(cards):
+	if not _assign_valences(cards, {}).is_empty():
 		return true
-	return false
-
-
-static func _can_balance_valence(cards: Array) -> bool:
-	var has_positive = false
-	var has_negative = false
-	for c in cards:
-		for v in c.common_valence:
-			if v > 0:
-				has_positive = true
-			elif v < 0:
-				has_negative = true
-	return has_positive and has_negative
+	return not _search_valences(cards).is_empty()
 
 
 # 获取化合价配平比例与化学式
 # custom_valences: {symbol: valence} 当用户指定化合价时使用
 static func get_compound_formula(cards: Array, custom_valences: Dictionary = {}) -> Dictionary:
-	if not is_compound(cards):
+	return _assign_valences(cards, custom_valences)
+
+
+# 统一化合价分配（唯一入口）。返回 {} = 这组牌构不成合法化合物：
+#   1) 稀有气体 / 不足 2 张
+#   2) 没有正价或没有负价（如 NCl 无氧时两个非金属都只能作负价）
+#   3) 电负性倒置（正价元素电负性 > 负价元素，如 Cl 作 +3 与 N 作 -3 的「ClN」）
+static func _assign_valences(cards: Array, custom_valences: Dictionary = {}) -> Dictionary:
+	if cards.size() < 2:
 		return {}
+	for c in cards:
+		if c.element_type == CardDataScript.TYPE_NOBLE_GAS:
+			return {}
 
 	# 统计每种元素并收集完整 card 数据
 	var elem_counts: Dictionary = {}
@@ -302,6 +305,14 @@ static func get_compound_formula(cards: Array, custom_valences: Dictionary = {})
 
 	if pos_list.is_empty() or neg_list.is_empty(): return {}
 
+	# 电负性校验（化学合理性）：正价元素的电负性必须不大于负价元素。
+	# 违反者即「假化合物」——例如 N 作 -3、Cl 作 +3 得到的「ClN」，化学上并不存在；
+	# 而 NCl₃（N 为 +3、Cl 为 -1）、ClF（Cl +1、F -1）等真实化合物都能通过。
+	for pe in pos_list:
+		for ne in neg_list:
+			if pe.electronegativity > ne.electronegativity + 0.001:
+				return {}
+
 	# 按电负性排序（规范要求：正价元素按电负性递增，负价元素按电负性递增）
 	pos_list.sort_custom(func(a, b): return a.electronegativity < b.electronegativity)
 	neg_list.sort_custom(func(a, b): return a.electronegativity < b.electronegativity)
@@ -326,6 +337,99 @@ static func get_compound_formula(cards: Array, custom_valences: Dictionary = {})
 		"pos_list": pos_list,
 		"neg_list": neg_list,
 	}
+
+
+# ------------------------------------------------------------
+# 三之二、默认配平失败时的「价态搜索」
+# ------------------------------------------------------------
+# 默认配平只给「金属取最高价 / 非金属取最低价 / 含氧酸根提升中心原子」这一套主流解，
+# 像 NCl₃（N 为 +3）、BCl₃（B 为 +3）、ClF（Cl 为 +1）这类需要"非金属作正价"的组合
+# 只能靠搜索找到。搜索同时要求：
+#   a) 至少一正一负；b) 按实际张数加权后总电荷 = 0；c) 正价元素电负性 ≤ 负价元素。
+# 金属 / 准金属只取最高正价（与默认配平口径一致，不额外引入多价规则）；
+# 非金属取 common_valence 中的任意价。只枚举 2~3 种元素（与化合价面板能力对齐）。
+static func _search_valences(cards: Array) -> Dictionary:
+	var elems = _valence_domains(cards)
+	if elems.size() < 2 or elems.size() > 3:
+		return {}
+	return _dfs_valences(elems, 0, {})
+
+
+# 每元素的候选价域：[{symbol, count, card, values}]
+static func _valence_domains(cards: Array) -> Array:
+	var elems: Array = []
+	var index: Dictionary = {}
+	for c in cards:
+		if index.has(c.symbol):
+			elems[index[c.symbol]]["count"] += 1
+			continue
+		var vals: Array = []
+		var metal_like: bool = (c.element_type == CardDataScript.TYPE_METAL \
+				or c.element_type == CardDataScript.TYPE_METALLOID)
+		if metal_like:
+			var hi = 0
+			for v in c.common_valence:
+				if v > hi:
+					hi = v
+			if hi > 0:
+				vals.append(hi)
+		else:
+			for v in c.common_valence:
+				if v != 0:
+					vals.append(v)
+		if vals.is_empty():
+			return []
+		index[c.symbol] = elems.size()
+		elems.append({"symbol": c.symbol, "count": 1, "card": c, "values": vals})
+	return elems
+
+
+static func _dfs_valences(elems: Array, idx: int, chosen: Dictionary) -> Dictionary:
+	if idx >= elems.size():
+		return chosen.duplicate() if _valence_assignment_ok(elems, chosen) else {}
+	for v in elems[idx]["values"]:
+		chosen[elems[idx]["symbol"]] = int(v)
+		var found = _dfs_valences(elems, idx + 1, chosen)
+		if not found.is_empty():
+			return found
+	chosen.erase(elems[idx]["symbol"])
+	return {}
+
+
+# 电荷平衡（按实际张数加权）+ 正负价齐全 + 电负性有序
+static func _valence_assignment_ok(elems: Array, chosen: Dictionary) -> bool:
+	var total := 0
+	var pos_elec := -1.0
+	var neg_elec := 999.0
+	var has_pos := false
+	var has_neg := false
+	for e in elems:
+		var v: int = int(chosen.get(e["symbol"], 0))
+		if v > 0:
+			has_pos = true
+			pos_elec = maxf(pos_elec, e["card"].electronegativity)
+		elif v < 0:
+			has_neg = true
+			neg_elec = minf(neg_elec, e["card"].electronegativity)
+		total += int(e["count"]) * v
+	if not (has_pos and has_neg):
+		return false
+	if total != 0:
+		return false
+	return pos_elec <= neg_elec + 0.001
+
+
+# 供 AI / 提示 / 化合价面板使用：返回按实际张数可行的 {symbol: valence}，无解返回 {}
+static func get_valence_pairs(cards: Array) -> Dictionary:
+	var fi = _assign_valences(cards, {})
+	if not fi.is_empty() and fi.get("ratio_ok", false):
+		var cv: Dictionary = {}
+		for e in fi.get("pos_list", []):
+			cv[e.symbol] = e.ox_state
+		for e in fi.get("neg_list", []):
+			cv[e.symbol] = e.ox_state
+		return cv
+	return _search_valences(cards)
 
 
 # ============================================================
