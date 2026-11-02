@@ -215,6 +215,38 @@ func _run() -> void:
 		"开关打开+冷却：F+Cl 才建议化合物（实际牌型 %d）" % int(adv_h2.get("pattern", -1)))
 	_check_suggestion(gm_h2, adv_h2, "允许卤族互化 ClF")
 
+	# ---------- 第零关：提示不推荐族炸（族炸是第二关内容），但仍可手动打出 ----------
+	var gm_l0 = GameManagerScript.new()
+	gm_l0.init_tutorial(0)
+	gm_l0.set_tutorial_level0_phase(3)
+	var p_l0 = gm_l0.get_current_player()
+	p_l0.hand.clear()
+	p_l0.hand.append(_card("Na"))
+	p_l0.hand.append(_card("K"))    # 同属 IA 族 → 天然可组族炸
+	var adv_l0: Dictionary = HintScript.suggest(gm_l0)
+	_check(not adv_l0.is_empty(), "第零关：同族手牌仍有提示")
+	_check(int(adv_l0.get("pattern", -1)) != CardPatternsScript.CardPattern.CLAN_BOMB,
+		"第零关：提示不推荐族炸（实际牌型 %d）" % int(adv_l0.get("pattern", -1)))
+	_check(HintScript.is_playable(gm_l0, [0, 1]),
+		"第零关：Na+K 仍可手动作为族炸打出（提示过滤不碰规则层）")
+
+	# 自由模式（tutorial_level==0 但 tutorial_level0_phase==0）不能被上面的过滤误伤
+	var gm_free = _gm_with_hand(["Na", "K"])
+	var adv_free: Dictionary = HintScript.suggest(gm_free)
+	_check(int(adv_free.get("pattern", -1)) == CardPatternsScript.CardPattern.CLAN_BOMB,
+		"自由模式：Na+K 仍照常推荐族炸（实际牌型 %d）" % int(adv_free.get("pattern", -1)))
+
+	# 第二关（正式教族炸）：提示必须继续推荐族炸
+	var gm_l2 = GameManagerScript.new()
+	gm_l2.init_tutorial(2)
+	var p_l2 = gm_l2.get_current_player()
+	p_l2.hand.clear()
+	p_l2.hand.append(_card("H"))
+	p_l2.hand.append(_card("Li"))   # 同属 IA 族
+	var adv_l2: Dictionary = HintScript.suggest(gm_l2)
+	_check(int(adv_l2.get("pattern", -1)) == CardPatternsScript.CardPattern.CLAN_BOMB,
+		"第二关：提示照常推荐族炸（实际牌型 %d）" % int(adv_l2.get("pattern", -1)))
+
 	await _run_ui()
 	_finish()
 

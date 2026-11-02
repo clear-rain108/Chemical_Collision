@@ -33,7 +33,7 @@ static func get_level0_guidance_text(tutorial_level: int, tutorial_level0_phase:
 	match tutorial_level0_phase:
 		1: return ""
 		2: return ""
-		3: return "【牌局中】尝试出牌！你可以打出单质、化合物或族炸。AI默认只出单质和化合物。"
+		3: return "【牌局中】先练单质和化合物：选牌 →「出牌(选牌型)」→ 选类型。\n族炸留到第二关再学（这里不提示，需要时也能打）。AI默认只出单质和化合物。"
 	return ""
 
 

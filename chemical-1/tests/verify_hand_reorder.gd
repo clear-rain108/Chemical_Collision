@@ -192,6 +192,27 @@ func _run():
 	_check(ok_size, "18 张时每张牌尺寸仍为 95x118")
 	_check(ok_bounds, "18 张重排后全部在容器水平范围内")
 
+	# ---------- N. 教程关重排门控（第零关引导/流程阶段禁用，练习阶段与第一/二关放行） ----------
+	# 只改 GM 上的教程字段，避开「AI 回合只读（_hand_read_only）」这个与门控无关的变量
+	scene._hand_read_only = false
+	scene.step_mode = 0
+	var gm_n = scene.game_manager
+	gm_n.tutorial_level = 0
+	gm_n.tutorial_level0_phase = 1
+	_check(not scene.call("_can_reorder_hand"), "第零关 UI 标注阶段(phase 1)：禁用重排（引导框按固定坐标绘制）")
+	gm_n.tutorial_level0_phase = 2
+	_check(not scene.call("_can_reorder_hand"), "第零关流程介绍阶段(phase 2)：禁用重排")
+	gm_n.tutorial_level0_phase = 3
+	_check(scene.call("_can_reorder_hand"), "第零关牌局练习阶段(phase 3)：允许重排（实机反馈的手牌不可拖）")
+	gm_n.tutorial_level = 1
+	gm_n.tutorial_level0_phase = 0
+	_check(scene.call("_can_reorder_hand"), "第一关：允许重排")
+	gm_n.tutorial_level = 2
+	_check(scene.call("_can_reorder_hand"), "第二关：允许重排")
+	gm_n.tutorial_level = 0
+	gm_n.tutorial_level0_phase = 0
+	_check(scene.call("_can_reorder_hand"), "自由模式（tutorial_level=0 且 phase=0）：允许重排")
+
 	print("")
 	if fails == 0:
 		print("ALL HAND REORDER TESTS PASSED")

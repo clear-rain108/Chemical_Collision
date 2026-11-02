@@ -12,10 +12,13 @@
 
 ```
 D:\Export_Godot_Pack\android_export\
-├── debug\    chemical-pre1002-debug.apk      28,602,366 B   调试签名（自测 / 测试机）
-├── release\  chemical-pre1002-release.apk    26,787,359 B   发布签名（分发 / 上架）
+├── debug\    chemical-pre1002-debug.apk      28,614,829 B   调试签名（自测 / 测试机）
+├── release\  chemical-pre1002-release.apk    26,799,822 B   发布签名（分发 / 上架）
 └── _obsolete\chemical-pre1002-unsigned-20261102-1929.apk     签名失败留下的未签名半成品（装不上）
 ```
+
+> 2026-11-02 20:58 重新导出：两个包都含第零关触屏 4 项修复（提示不再推荐族炸 / 教程手牌可拖 /
+> 提示框文字不出框 / 规则提醒与日志不再叠字）与「退出教程后规则提醒残留」修复，详见 `ARCHITECTURE.md` §12.6。
 
 **尚未在真机上跑过**，GL 兼容渲染与触屏适配（`ARCHITECTURE.md` §12 的 A1/B/C）的实际表现未验证。
 
@@ -95,7 +98,7 @@ textures/vram_compression/import_etc2_astc=true
 | 项 | debug 包 | release 包 |
 |---|---|---|
 | 路径 | `D:\Export_Godot_Pack\android_export\debug\chemical-pre1002-debug.apk` | `D:\Export_Godot_Pack\android_export\release\chemical-pre1002-release.apk` |
-| 大小 | 28,602,366 B（27.3 MB） | 26,787,359 B（25.5 MB） |
+| 大小 | 28,614,829 B（27.3 MB） | 26,799,822 B（25.6 MB） |
 | 签名 | v2 ✅ v3 ✅（`CN=Godot, OU=Godot Engine, O=Stichting Godot, C=NL`） | v2 ✅ v3 ✅（`CN=Chemical Collision, O=ClearRain, C=CN`） |
 | 包名 / 版本 | `com.clearrain.chemicalcollision` / `versionCode 1` / `1.0.0` | 同左 |
 | 应用名 | `化学碰撞` | 同左 |

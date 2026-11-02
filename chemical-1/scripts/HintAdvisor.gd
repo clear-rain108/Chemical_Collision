@@ -151,28 +151,33 @@ static func _candidates(gm, cp) -> Array:
 			out.append(_mk([idxs[0], idxs[1]], P_ELEMENT, {}, false))
 
 	# 3) 族炸：同族、每种元素各 1 张（整族 + 每种少一张的变体，方便压过桌面）
-	var by_group: Dictionary = {}
-	for i in range(n):
-		if not by_group.has(cp.hand[i].group):
-			by_group[cp.hand[i].group] = []
-		by_group[cp.hand[i].group].append(i)
-	for g in by_group:
-		var seen: Dictionary = {}
-		var pick: Array = []
-		for i in by_group[g]:
-			var s = cp.hand[i].symbol
-			if seen.has(s):
+	#    第零关只演示单质/化合物（族炸是第二关的内容）：规则层仍允许玩家手动打出，
+	#    但「提示」不替新手选族炸，避免第一次练习就被带偏节奏
+	#    注意 tutorial_level==0 同时也是「自由模式」的默认值，必须靠 phase 区分
+	var in_level0_tutorial: bool = gm.tutorial_level == 0 and gm.tutorial_level0_phase >= 1
+	if not in_level0_tutorial:
+		var by_group: Dictionary = {}
+		for i in range(n):
+			if not by_group.has(cp.hand[i].group):
+				by_group[cp.hand[i].group] = []
+			by_group[cp.hand[i].group].append(i)
+		for g in by_group:
+			var seen: Dictionary = {}
+			var pick: Array = []
+			for i in by_group[g]:
+				var s = cp.hand[i].symbol
+				if seen.has(s):
+					continue
+				seen[s] = true
+				pick.append(i)
+			if pick.size() < 2:
 				continue
-			seen[s] = true
-			pick.append(i)
-		if pick.size() < 2:
-			continue
-		out.append(_mk(pick, P_CLAN, {}, false))
-		if pick.size() >= 3:
-			for k in range(pick.size()):
-				var sub: Array = pick.duplicate()
-				sub.remove_at(k)
-				out.append(_mk(sub, P_CLAN, {}, false))
+			out.append(_mk(pick, P_CLAN, {}, false))
+			if pick.size() >= 3:
+				for k in range(pick.size()):
+					var sub: Array = pick.duplicate()
+					sub.remove_at(k)
+					out.append(_mk(sub, P_CLAN, {}, false))
 
 	# 4) 顺序：原子序数连续段（仅顺序规则开启时 UI 才给「作为顺序」按钮）
 	if gm.get_sequence_rules_enabled():

@@ -1,7 +1,7 @@
 # 化学碰撞 — 程序架构与实现文档
 
-> **版本**: 14.3  
-> **日期**: 2026-11-01  
+> **版本**: 14.5  
+> **日期**: 2026-11-02  
 > **引擎**: Godot 4.x / GDScript
 
 ---
@@ -642,6 +642,37 @@ Godot 的 `CanvasItem` 排序是 **`z_index` 优先于树顺序**。`GamePage` �
 - 回归测试：`verify_hand_layout.gd → _test_tutorial_layout()` 断言教程文本与桌面小卡槽 /
   日志区 / InfoLabel / HandLabel / HandContainer / CardInfoLabel 均不相交，宽高足够 4 行。
 
+### 动态 Label 的 autowrap 顺序（踩过两次）
+
+`Label.size` 会被 `get_combined_minimum_size()` 抬到「不换行时整行宽」。所以
+**必须先把 `autowrap_mode` 打开，再设 `text` / `size`**：
+
+```gdscript
+lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART   # 先
+lbl.text = desc
+lbl.size = Vector2(w, h)                             # 后
+```
+
+反过来写（`size` 在前）时，`size` 会被 clamp 到那一步的最小宽度（中文长句 ≈ 640px），
+之后即使再打开 autowrap 也不会缩回去 —— 文字直接画到黄色提示框外面（触屏实机截图 bug）。
+第零关的 `tip_desc` / `tip_title` / 流程介绍 `content` / `_level0_make_tip_box` 的 `lbl`
+四处已按此顺序修好，并由 `tests/verify_tutorial_layout.gd` 断言宽度恰好等于设定值（472 / 840 / 660）。
+
+### 第零关「规则提醒」槽位（方案 B：与日志同格互斥）
+
+| 节点 | rect | 说明 |
+|---|---|---|
+| `LogLabel` | (824, 300) 312×300 | 常态：右下日志 |
+| `Level0RuleTipsBg` | (824, 300) 312×300 | 第零关练习阶段：浅黄面板（`toast_info` 样式） |
+| `Level0RuleTips` | (838, 312) 284×276 | 同上，内缩 14/12 的行文区 |
+
+- 三者**互斥可见**：`_level0_set_rule_tips_visible(on)` 一处控制，练习阶段日志让位，
+  其余局面提醒隐藏 + 日志复位 ⇒ 结构上不可能再出现「日志数字」与「规则提醒」叠字
+- 历史 bug：规则提醒硬编码 `(950,370) 220×220`，右边界 1170 > 画布 1152，且整块躺在
+  `LogLabel` (824..1136 × 300..600) 里 —— 既被屏幕裁掉又和日志叠字
+- 生命周期：`_level0_clear_rule_tips()` 在 `_init_game()` / `_on_start_tutorial()` /
+  `_show_start_page()` 调用（提醒挂在 `ContentLayer`，不随 `GamePage` 隐藏或 `GameManager` 重建而消失）
+
 ### 出牌步骤流
 
 ```
@@ -822,7 +853,23 @@ godot --headless --path . --script tests/verify_touch_ui.gd
 页面按钮 3、退出二次确认 5、**关档归零 2**。最后一组会把 `_touch_ui` 切回 `false`
 并重跑 `_style_game_tool_buttons()`，确认触屏放大值没有漏进桌面路径。
 
+### 12.6 触屏实测反馈修复（v14.5）
+
+| 反馈 | 根因 | 修法 |
+|---|---|---|
+| 第零关提示一上来就推荐**族炸** | `HintAdvisor._score()` 里 `P_CLAN=400` 高于化合物/单质，族炸恒被选中 | `_candidates()` 只在**第零关教学**（`tutorial_level == 0 and tutorial_level0_phase >= 1`）不生成族炸候选；`_check()` / `is_playable()` 不动 → 玩家手动照样能打 |
+| 教程里**手牌拖不动** | `_can_reorder_hand()` 只要 `tutorial_level > 0 or phase > 0` 就 false，把整个教程锁死 | 收紧为 `tutorial_level == 0 and 1 <= phase < 3`：只有「UI 标注 / 流程介绍」禁用，练习阶段与第一 / 二关放开 |
+| 提示框**文字跑到框外** / 框被推出屏幕 | `size` 在 `autowrap_mode` 之前设置（见 §8）；`tbx=620 + tbw=560 = 1180 > 1152` | 四处 Label 改成「先 autowrap 后 size」；`tbw 560→520`，并把 `tbx/tby` 用 `clampi` 夹进画布（留 20px 边距） |
+| 日志数字与规则提醒**叠字**「666」 | 规则提醒 `(950,370) 220×220` 整个躺在 `LogLabel` (824..1136 × 300..600) 里，且右边界 1170 越出画布 | 规则提醒搬到 `LogLabel` 同格（824,300 / 312×300）+ 浅黄背景板，两者互斥可见；文案只讲「越大越小 / 同类同出」，玩家真打出族炸才补「牌权争夺」 |
+| 退出教程后规则提醒**还留在正常对局** | 提醒挂在 `ContentLayer`，`_level0_update_rule_tips()` 在非第零关时只 `return`，既不隐藏也不释放 | 新增 `_level0_clear_rule_tips()`（释放 + 日志复位），在 `_init_game()` / `_on_start_tutorial()` / `_show_start_page()` 调用；`_refresh_ui()` 路径改为「隐藏 + 清文本 + 日志复位」 |
+
+回归：`tests/verify_hint.gd`（L0 不推荐族炸 / 自由模式与第二关照旧推荐）、
+`tests/verify_tutorial.gd`（L0 `clan_bomb_disabled == false`、L1 `== true`、L0 引导文案）、
+`tests/verify_hand_reorder.gd` 最后一组（phase 1/2 禁用、phase 3 与 L1/L2/自由模式放行）、
+`tests/verify_tutorial_layout.gd`（6 个提示框 rect 全在 1152×648 内、Label 宽度不被撑大、
+规则提醒与日志互斥、四类退出路径后提醒被释放）。
+
 ---
 
-**文档版本**: 14.4  
+**文档版本**: 14.5  
 **最后更新**: 2026-11-02

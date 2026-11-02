@@ -503,6 +503,8 @@ func _show_start_page() -> void:
 	log_lines.clear()
 	if log_label:
 		log_label.text = "游戏日志:"
+	# 教学局残留的规则提醒也一并清掉（它挂在 ContentLayer 上，会跟着进下一局）
+	_level0_clear_rule_tips()
 	_fade_in_page(start_page)
 	_animate_start_page()   # 子节点错峰淡入 + 装饰牌浮动（不触碰 start_page.modulate）
 
@@ -2379,6 +2381,7 @@ func _on_start_tutorial(level: int) -> void:
 	_step_reset()
 	_hotseat_ready_seat = -1   # 教程单机：顺手清零，回到主开始页也不会带着旧座位
 	_hide_warning_toast()   # 清掉上一局残留的警告 toast
+	_level0_clear_rule_tips()   # 清掉上一局第零关的规则提醒（否则会盖在教程 1/2 或正常对局的日志上）
 
 	if level == 0:
 		_level0_start_phase1()
@@ -2427,6 +2430,11 @@ func _show_info_simple(text: String) -> void:
 	else: push_warning(text)
 
 func _init_game(total: int = 4, ai: int = 3) -> void:
+	# 新一局：教学局残留的规则提醒 / 日志缓存必须清掉，否则会跟着进正常对局
+	_level0_clear_rule_tips()
+	log_lines.clear()
+	if log_label:
+		log_label.text = "游戏日志:"
 	game_manager = GameManagerScript.new()
 	# 读取开始页的补充规则勾选框状态（三个独立勾选框，嵌在 SettingsCard 内）
 	var organic_cb = _start_child("OrganicCheckBox")
@@ -2555,7 +2563,7 @@ func _level0_show_ui_step(idx: int) -> void:
 
 	var tbx = 20
 	var tby = 350
-	var tbw = 560
+	var tbw = 520          # 620+520=1140 < 1152：手牌区那一步不再把框推出画布
 	var tbh = 270
 	var hl_bottom = step_data.pos.y + step_data.size.y
 	if hl_bottom > tby + 40 or (step_data.pos.x < tbx + tbw and step_data.pos.x + step_data.size.x > tbx):
@@ -2566,6 +2574,10 @@ func _level0_show_ui_step(idx: int) -> void:
 		else:
 			tbx = 620
 			tby = 50
+	# 越界兜底：无论命中哪个分支，都不许把提示框推出 1152×648 画布（留 20px 边距）
+	var canvas: Vector2 = game_page.size if game_page != null else Vector2(1152, 648)
+	tbx = clampi(tbx, 20, maxi(20, int(canvas.x) - tbw - 20))
+	tby = clampi(tby, 20, maxi(20, int(canvas.y) - tbh - 20))
 	var tip_bg = ColorRect.new()
 	tip_bg.color = Color(1, 1, 0.85, 0.95)
 	tip_bg.position = Vector2(tbx, tby)
@@ -2576,6 +2588,9 @@ func _level0_show_ui_step(idx: int) -> void:
 	level0_overlay.add_child(tip_border)
 
 	var tip_title = Label.new()
+	# 顺序很重要：Label 的 size 会被「未换行时的最小宽度」撑大，
+	# 必须先开 autowrap 再定 size，否则文字会画到框外（实机截图 bug）
+	tip_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tip_title.text = step_data.title
 	tip_title.add_theme_font_size_override("font_size", 18)
 	tip_title.add_theme_color_override("font_color", Color(0, 0, 0, 1))
@@ -2584,12 +2599,12 @@ func _level0_show_ui_step(idx: int) -> void:
 	level0_overlay.add_child(tip_title)
 
 	var tip_desc = Label.new()
+	tip_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	tip_desc.text = step_data.desc
 	tip_desc.add_theme_font_size_override("font_size", 14)
 	tip_desc.add_theme_color_override("font_color", Color(0, 0, 0, 1))
 	tip_desc.position = Vector2(tbx + 24, tby + 44)
 	tip_desc.size = Vector2(tbw - 48, 150)
-	tip_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	level0_overlay.add_child(tip_desc)
 
 	var step_indicator = Label.new()
@@ -2715,12 +2730,13 @@ func _level0_show_flow_step(idx: int) -> void:
 	level0_overlay.add_child(title)
 
 	var content = Label.new()
+	# autowrap 必须在 size 之前：否则 size 会被「未换行整行宽」撑大
+	content.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	content.text = level0_flow_steps[idx]
 	content.add_theme_font_size_override("font_size", 16)
 	content.add_theme_color_override("font_color", Color(0, 0, 0, 1))
 	content.position = Vector2(130, 300)
 	content.size = Vector2(840, 80)
-	content.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	level0_overlay.add_child(content)
 
 	var btn_text = "下一步 →" if idx < level0_flow_steps.size() - 1 else "开始对局！"
@@ -2759,14 +2775,24 @@ func _level0_start_phase3() -> void:
 
 
 var level0_rule_tip_label: Label = null
+var level0_rule_tip_bg: Panel = null
 
 func _level0_create_rule_tips() -> void:
-	if level0_rule_tip_label:
-		level0_rule_tip_label.queue_free()
+	_level0_clear_rule_tips()
+	# 与 LogLabel 同格（824..1136 × 300..600）：两者互斥显示，结构上不可能再重叠；
+	# 右边界 1136 < 1152 画布宽，也不会再被屏幕裁掉
+	level0_rule_tip_bg = Panel.new()
+	level0_rule_tip_bg.name = "Level0RuleTipsBg"
+	level0_rule_tip_bg.position = Vector2(824, 300)
+	level0_rule_tip_bg.size = Vector2(312, 300)
+	level0_rule_tip_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	level0_rule_tip_bg.add_theme_stylebox_override("panel", _make_panel_style("toast_info"))
+	_layer(0).add_child(level0_rule_tip_bg)
+
 	level0_rule_tip_label = Label.new()
 	level0_rule_tip_label.name = "Level0RuleTips"
-	level0_rule_tip_label.position = Vector2(950, 370)
-	level0_rule_tip_label.size = Vector2(220, 220)
+	level0_rule_tip_label.position = Vector2(838, 312)
+	level0_rule_tip_label.size = Vector2(284, 276)
 	level0_rule_tip_label.add_theme_font_size_override("font_size", 13)
 	level0_rule_tip_label.add_theme_color_override("font_color", Color(0, 0, 0, 1))
 	level0_rule_tip_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -2775,31 +2801,63 @@ func _level0_create_rule_tips() -> void:
 	_level0_update_rule_tips()
 
 
+# 彻底清掉第零关规则提醒（跨局 / 退出教学时必须调）：
+# 它挂在 ContentLayer 上，不随 GamePage 隐藏或 GameManager 重建而消失
+func _level0_clear_rule_tips() -> void:
+	if level0_rule_tip_label and is_instance_valid(level0_rule_tip_label):
+		level0_rule_tip_label.queue_free()
+	level0_rule_tip_label = null
+	if level0_rule_tip_bg and is_instance_valid(level0_rule_tip_bg):
+		level0_rule_tip_bg.queue_free()
+	level0_rule_tip_bg = null
+	if log_label and is_instance_valid(log_label):
+		log_label.visible = true
+
+
+# 规则提醒 / 日志共用右栏同一格：互斥可见，永远不可能叠在一起
+func _level0_set_rule_tips_visible(on: bool) -> void:
+	if level0_rule_tip_label and is_instance_valid(level0_rule_tip_label):
+		level0_rule_tip_label.visible = on
+	if level0_rule_tip_bg and is_instance_valid(level0_rule_tip_bg):
+		level0_rule_tip_bg.visible = on
+	if log_label and is_instance_valid(log_label):
+		log_label.visible = not on
+
+
 func _level0_update_rule_tips() -> void:
-	if not level0_rule_tip_label or not game_manager or game_manager.tutorial_level0_phase != 3:
+	if game_manager == null:
 		return
+	# 只有「第零关 · 牌局练习」这一段显示规则提醒；其余局面一律隐藏并让日志回到原位
+	var in_level0_play: bool = game_manager.tutorial_level == 0 \
+			and game_manager.tutorial_level0_phase == 3
+	if not in_level0_play:
+		if level0_rule_tip_label and is_instance_valid(level0_rule_tip_label):
+			level0_rule_tip_label.text = ""
+		_level0_set_rule_tips_visible(false)
+		return
+	if level0_rule_tip_label == null or not is_instance_valid(level0_rule_tip_label):
+		return
+	_level0_set_rule_tips_visible(true)
+	level0_rule_tip_label.text = _level0_rule_tips_text()
 
+
+# 第零关只教「越大越小 / 同类同出」：族炸是本关不引导的内容，规则层仍允许手打，
+# 只有玩家自己真的打出族炸时，才补一条「牌权争夺」说明（避免默认就把新手带偏）
+func _level0_rule_tips_text() -> String:
+	var tip: String = game_manager.level0_rule_tip
 	var rules_info = "── 规则提醒 ──\n\n"
-	var tip = game_manager.level0_rule_tip
-
 	if tip == "越大越小":
 		rules_info += "● 越大越小\n原子序数和越小牌越大\n同牌型必须出更大的牌才能接上\n\n"
-		rules_info += "  同类同出\n桌面单质→只能接单质\n桌面化合物→只能接化合物\n\n"
-		rules_info += "  牌权争夺\n打出族炸可抢牌权\n超越牌型限制"
+		rules_info += "  同类同出\n桌面单质→只能接单质\n桌面化合物→只能接化合物\n"
 	elif tip == "同类同出":
 		rules_info += "  越大越小\n原子序数和越小牌越大\n\n"
-		rules_info += "● 同类同出\n桌面单质→只能接单质\n桌面化合物→只能接化合物\n牌型必须匹配\n\n"
-		rules_info += "  牌权争夺\n打出族炸可抢牌权\n超越牌型限制"
-	elif tip == "牌权争夺":
-		rules_info += "  越大越小\n原子序数和越小牌越大\n\n"
-		rules_info += "  同类同出\n桌面单质→只能接单质\n桌面化合物→只能接化合物\n\n"
-		rules_info += "● 牌权争夺\n你打出了族炸！\n族炸可超越牌型限制\n但要注意冷却❄"
+		rules_info += "● 同类同出\n桌面单质→只能接单质\n桌面化合物→只能接化合物\n牌型必须匹配\n"
 	else:
 		rules_info += "  越大越小\n原子序数和越小牌越大\n\n"
-		rules_info += "  同类同出\n同类牌型才能接牌\n\n"
-		rules_info += "  牌权争夺\n族炸可超越牌型限制"
-
-	level0_rule_tip_label.text = rules_info
+		rules_info += "  同类同出\n同类牌型才能接牌\n"
+	if tip == "牌权争夺":
+		rules_info += "\n● 牌权争夺\n你打出了族炸！\n族炸可超越牌型限制\n但要注意冷却❄"
+	return rules_info
 
 
 func _level0_make_tip_box(text: String, duration: float = 2.5) -> Control:
@@ -2814,12 +2872,13 @@ func _level0_make_tip_box(text: String, duration: float = 2.5) -> Control:
 	box.add_child(bg)
 
 	var lbl = Label.new()
+	# autowrap 必须在 size 之前，否则中文字符串会把 Label 撑出背景板
+	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl.text = text
 	lbl.add_theme_font_size_override("font_size", 16)
 	lbl.add_theme_color_override("font_color", Color(0, 0, 0, 1))
 	lbl.position = Vector2(220, 355)
 	lbl.size = Vector2(660, 60)
-	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	box.add_child(lbl)
 
@@ -4010,8 +4069,11 @@ func _can_reorder_hand() -> bool:
 	# 热座交接未认领：手牌还盖着，重排按钮 / 拖拽都该消失
 	if _hotseat_handoff_pending():
 		return false
-	# 教程关（含第 0 关引导阶段）禁用：引导高亮框按固定坐标绘制，拖牌会让提示错位
-	if game_manager.tutorial_level > 0 or game_manager.tutorial_level0_phase > 0:
+	# 教程关：只有第零关「UI 标注 / 流程介绍」阶段禁用（高亮框按固定坐标绘制，拖牌会让提示错位）；
+	# 第零关练习阶段（phase 3）与第一 / 二关都允许重排 —— 实测反馈「教程里手牌不能拖」
+	# 注意 tutorial_level==0 也是「自由模式」的默认值，必须看 tutorial_level0_phase 才能区分
+	if game_manager.tutorial_level == 0 and game_manager.tutorial_level0_phase >= 1 \
+			and game_manager.tutorial_level0_phase < 3:
 		return false
 	# 只在「选牌 / 弃牌」阶段允许，选牌型 / 选化合价时手牌是只读参照
 	if step_mode != 0 and step_mode != 3:
