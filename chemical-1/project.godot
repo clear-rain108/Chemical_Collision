@@ -18,7 +18,10 @@ config/icon="res://icon.svg"
 [display]
 
 window/stretch/mode="canvas_items"
-window/stretch/aspect="expand"
+; 手机适配（A1）：设计画布固定 1152×648，用 keep 等比缩放 + 居中，
+; 左右留出的边框由 default_clear_color 涂成页面底色（#E6F0FA），
+; 不再是 expand 的「右侧缺一块」。桌面 16:9 全屏不受影响（比例吻合 → 无边）。
+window/stretch/aspect="keep"
 
 [input]
 
@@ -39,5 +42,9 @@ ui_select={
 
 [rendering]
 
+renderer/rendering_method.mobile="gl_compatibility"
 rendering_device/driver.windows="d3d12"
 textures/vram_compression/import_etc2_astc=true
+; 留边色 = 页面底色 #E6F0FA（与 GameUI.PAGE_BG_COLOR 同值）：
+; 手机宽高比与 16:9 不符时，keep 留出的两条边和页面底色连成一片，看不出"黑框"
+environment/defaults/default_clear_color=Color(0.902, 0.941, 0.98, 1)

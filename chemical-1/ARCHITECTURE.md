@@ -19,6 +19,7 @@
 9. [场景结构 - Main.tscn](#9-场景结构---maintscn)
 10. [数据流](#10-数据流)
 11. [关键算法](#11-关键算法)
+12. [触屏档案（A1/B/C）](#12-触屏档案a1bc)
 
 ---
 
@@ -742,5 +743,86 @@ GameManager.init_game / init_tutorial
 
 ---
 
-**文档版本**: 14.3  
-**最后更新**: 2026-11-01
+## 12. 触屏档案（A1 / B / C）
+
+> 目标：桌面（1152×648 鼠标）与 Android 手机（touch）共用同一份场景与脚本，
+> **不新增第二套 UI、不复制场景**。
+
+### 12.1 铁律：`const` 是桌面基准，放大只走运行时取值函数
+
+`GameUI.gd` 里所有几何 `const`（`TOOL_BTN_H=32` / `TOOL_BTN_TOP=558` / `DRAG_THRESHOLD=6` …）
+都被 `tests/verify_*.gd` 逐值断言。手机适配因此分两层：
+
+| 层 | 谁读 | 桌面 | 触屏 |
+|----|------|------|------|
+| `const TOOL_BTN_H` 等 | 测试 / 默认值 | 32 | 32（永不改） |
+| `_tool_btn_h()` 等取值函数 | 运行期调用点 | 32 | 48 |
+
+```gdscript
+var _touch_ui: bool = false            # _ready(): _touch_ui = OS.has_feature("mobile")
+
+func _tool_btn_h() -> float:           # 桌面回常量，触屏回放大值
+	return float(TOUCH_TOOL_BTN_H) if _touch_ui else float(TOOL_BTN_H)
+```
+
+桌面路径**逐像素不变**，23 套老测试零改动；触屏路径由 `tests/verify_touch_ui.gd`（53 断言）覆盖。
+`headless` 下 `OS.has_feature("mobile")` 为 false，所以自动化测试永远走桌面层。
+
+### 12.2 A1 屏幕适配（`project.godot`）
+
+| 项 | 值 | 原因 |
+|----|----|------|
+| `display/window/stretch/aspect` | `keep` | `expand` 只在画布比例变大时才扩展，手机横屏（20:9 ≈ 2.22）比设计画布（16:9 ≈ 1.78）**更宽** → 右边留一条空白，UI 全挤在左半边 |
+| `rendering/environment/defaults/default_clear_color` | `#E6F0FA` | `keep` 留出的边框色，与页面底色（`PAGE_BG_COLOR`）同值 → 看不出「黑框」 |
+| `renderer/rendering_method.mobile` | `gl_compatibility` | 老机型兼容，避免 Vulkan 崩溃 |
+
+### 12.3 B 触控尺寸
+
+| 项 | 桌面 | 触屏 | 备注 |
+|----|------|------|------|
+| 工具行（提示 / 帮助 / 退出） | 32 高，gap 10，top 558 | **48 / 20 / 542** | 右界固定 820，左界 460 → 440；48 高仍夹在信息栏(底 526)与出牌区(顶 599)之间 |
+| 「按序 ⇅」 | 与工具行同行，左界 338 | 左界 308 | 跟着工具行左移 |
+| 出牌区按钮 `_mkb` | 45 高 / 字号 16 | **58 / 18** | 58 ≈ 39dp |
+| 卡牌字号（序/族/符号/名/价/质量） | 12 / 11 / 28 / 14 / 13 / 9 | **+2 / +2 / +4 / +3 / +2 / +3** | 统一走 `_touch_fs(base, bonus)` |
+| 开始页 / 帮助页 / 结算页 / 教学页按钮 | 各调用点手写 | 高度补到 ≥48，字号 +2 | `_apply_touch_sizing()` 构建后统一兜底 |
+
+两个容易踩的坑：
+
+1. **`_apply_touch_sizing()` 必须幂等**：开始页与「补充规则」小页是父子关系，递归会扫两次，
+   用 `set_meta("touch_sized")` 挡住第二次，否则字号变成 +4。
+2. **`_style_game_tool_buttons()` 必须先刷样式再定 `size`**：字号会抬高 Button 的最小尺寸，
+   先设 `size` 会被 clamp 到「旧字号」的 min —— 触屏 48 切回桌面时高度会僵在 ~40 而不是 32。
+
+### 12.4 C 触控交互（`_touch_ui` 生效时）
+
+| 痛点 | 桌面行为 | 触屏行为 |
+|------|---------|---------|
+| 悬停粘住 | 轮询鼠标位置 → 抬起牌 + 信息栏显示详情 | **只在按住时**抬起，松手立即落下并还原信息栏（Android 没有 `mouse_exited`，抬起状态会永远粘在最后点过的那张牌上） |
+| 点选时手抖被判成拖拽 | 位移 ≥ `DRAG_THRESHOLD`(6px) 即重排 | 阈值 24px **且**按住 ≥300ms 才重排；否则照常点选（否则那次 `pressed` 会被吞掉，表现为「点了没反应」） |
+| 手指压在牌缝 / 边缘外 | 严格矩形，未命中即忽略 | 严格命中优先；全落空时才用外扩 `TOUCH_HIT_PAD`(8px) 兜底，不会抢走正常判定 |
+| 看不出选中了哪张 | 悬停抬起 20px + 黄色描边 | 选中的牌**常驻上浮 10px**（悬停后落下也保留），且 `z_index=Z_HAND_SELECTED` |
+| 误点「退出游戏」 | 立刻进结算页 | 二次确认：按钮变「确认退出?」，3 秒内再点才执行，超时自动回滚文字 |
+| 没有触摸反馈 | — | 选牌时 `Input.vibrate_handheld(30)`（需 `permissions/vibrate=true`，已开） |
+
+实现要点：
+
+- `_layout_hand_cards()` 里 `base_pos` 存的是**未上浮**的静止位置，`position` 才减去选中上浮。
+  所有命中判定（`_card_hover_rect` / `_card_core_rect` / `_hit_card_at`）都基于 `base_pos`，
+  所以上浮只影响画面，不影响判定；`_apply_hover(btn,false)` 落回时也要减 `_selected_lift()`，
+  否则刚选中的牌被悬停一次、松手就归位，选中提示消失。
+- 触屏档不接 `mouse_entered/exited` 缩放（会永远停在 1.05），改「按下 0.96 / 松手回 1.0」。
+
+### 12.5 测试与回归
+
+```bash
+godot --headless --path . --script tests/verify_touch_ui.gd
+```
+
+53 项断言分 8 组：桌面基准 10、工具行几何 15、字号 8、命中缓冲 4、选中上浮 6、
+页面按钮 3、退出二次确认 5、**关档归零 2**。最后一组会把 `_touch_ui` 切回 `false`
+并重跑 `_style_game_tool_buttons()`，确认触屏放大值没有漏进桌面路径。
+
+---
+
+**文档版本**: 14.4  
+**最后更新**: 2026-11-02

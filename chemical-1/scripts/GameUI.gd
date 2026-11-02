@@ -64,6 +64,7 @@ var selected_indices: Array = []        # 选中的手牌索引
 # ------------------------------------------------------------
 var _drag_press_idx: int = -1           # 左键按下时命中的手牌索引（-1 = 未按下）
 var _drag_press_pos: Vector2 = Vector2.ZERO   # 按下时的全局鼠标坐标（算阈值用）
+var _drag_press_at: int = 0             # 按下时刻（触屏长按判定用）
 var _drag_active: bool = false          # 是否已越过阈值、进入拖拽
 var _drag_from: int = -1                # 拖拽源下标（进入拖拽时快照）
 var _drag_slot: int = -1                # 当前插入槽位（0..n，表示插到第 slot 张之前）
@@ -113,6 +114,28 @@ const DRAG_THRESHOLD := 6.0             # 移动超过该距离才算拖拽（�
 const DRAG_GHOST_ALPHA := 0.85          # 幽灵牌不透明度
 const DRAG_SOURCE_ALPHA := 0.28         # 原位牌淡出程度（表示"这张被拿起来了"）
 const DRAG_LINE_W := 3.0                # 插入指示线宽度
+
+# ------------------------------------------------------------
+# 触屏档案（Android / 移动端，A1+B+C）
+# ------------------------------------------------------------
+# 铁律：本节以上的所有 const 都是「桌面基准值」，24 套 headless 测试直接读它们做断言；
+# 移动端的放大值一律走 *_touch() 取值函数，**const 一个都不改** ——
+# 于是 _touch_ui=false（桌面 / 自动化）时行为与 P11 逐像素一致，
+# _touch_ui=true（真机）时按钮/字号/手势切到触控档。
+# 换算基准：1080p 手机横屏 2340×1080 → 缩放 1.667 → 1 逻辑 px ≈ 0.667dp，
+#   32px 的工具行只有 21dp（Android 建议 ≥48dp），必须放大。
+var _touch_ui: bool = false             # 触屏档案开关（_ready 里按 OS.has_feature("mobile") 置位）
+var _quit_confirm_pending: bool = false # 触屏「退出游戏」二次确认（防误触直接跳结算页）
+const TOUCH_BTN_MIN_H := 48             # 触控目标最小高度（≈32dp）
+const TOUCH_FS_BONUS := 2               # 页面按钮 / 标签字号通用加成
+const TOUCH_TOOL_BTN_H := 48            # 工具行：32 → 48（下沿 590，仍让 ActionPanel 9px）
+const TOUCH_TOOL_BTN_TOP := 542         # 工具行顶：558 → 542（上让 CardInfoLabel 16px）
+const TOUCH_TOOL_BTN_GAP := 20          # 工具行间距：10 → 20（"帮助"与"退出游戏"不再贴脸误触）
+const TOUCH_DRAG_THRESHOLD := 24.0      # 拖动阈值：6 → 24（≈16dp，手指抖动不再被判成拖拽）
+const TOUCH_DRAG_LONG_PRESS_MS := 300   # 长按多久才进入重排（未达时长松手 = 纯点选）
+const TOUCH_SELECT_LIFT := 10.0         # 选中牌常驻上浮（与悬停 20 区分，一眼看出选了谁）
+const TOUCH_HIT_PAD := 8.0              # 触屏命中外扩缓冲（≈5dp，手指比鼠标粗）
+
 
 # ---- GamePage 内的 CanvasItem 层级 ----
 # z_index 优先于树顺序：运行时新增的浮层必须挂进对应层容器，
@@ -185,6 +208,8 @@ var level0_flow_index: int = 0
 # 四、初始化
 # ============================================================
 func _ready() -> void:
+	# 触屏档案（Android / iOS）：只影响按钮尺寸、字号与手势，不改任何布局坐标
+	_touch_ui = OS.has_feature("mobile")
 	_ensure_page_backdrop()   # 必须先于任何页面淡入，否则第一帧会闪出窗口清屏色
 	_setup_pages()
 	_show_start_page()
@@ -295,6 +320,16 @@ func _setup_pages() -> void:
 
 	# 帮助中心（P5）：单页 + 3 Tab + 滚动 + 卡片，全部代码生成（不改 Main.tscn）
 	help_page = _build_help_page()
+
+	# 触屏档（B）：页面级按钮统一补到 48px 高 + 字号 +2。
+	# 这些页面的按钮尺寸由各调用点手写（220×56 / 150×38 / 270×32 …），
+	# 逐个改调用点既啰嗦又容易漏；改为构建完成后过一遍
+	# （_touch_ui = false 时函数第一行就 return，桌面与 24 套测试完全不受影响）。
+	_apply_touch_sizing(start_page)
+	_apply_touch_sizing(end_page)
+	_apply_touch_sizing(get_node_or_null("TutorialPage"))
+	_apply_touch_sizing(help_page)
+	_apply_touch_sizing(_supp_rules_page)
 
 
 # ============================================================
@@ -2362,8 +2397,30 @@ func _on_exit_program() -> void:
 	get_tree().quit()
 
 func _on_quit_game() -> void:
+	# 触屏档（C）：工具行三颗按钮本来就挨得近，「帮助」和「退出游戏」很容易点串，
+	# 而退出会直接结束本局（跳结算页）。触屏改成「二次确认」：
+	# 第一次点 → 按钮自己变成「确认退出?」并 3 秒倒计时，再点一次才真的结束。
+	if _touch_ui and not _quit_confirm_pending:
+		_quit_confirm_pending = true
+		if quit_button != null and is_instance_valid(quit_button):
+			quit_button.text = "确认退出?"
+		_show_info_simple("再点一次「确认退出?」结束本局（3 秒内有效）")
+		get_tree().create_timer(3.0).timeout.connect(_reset_quit_confirm)
+		return
+	_quit_confirm_pending = false
+	if quit_button != null and is_instance_valid(quit_button):
+		quit_button.text = "退出游戏"
 	if game_manager: game_manager.phase = 2
 	_show_end_page("游戏已退出")
+
+
+# 二次确认超时回滚：按钮文字复位，下次点击重新从「退出游戏」开始
+func _reset_quit_confirm() -> void:
+	if not _quit_confirm_pending:
+		return
+	_quit_confirm_pending = false
+	if quit_button != null and is_instance_valid(quit_button):
+		quit_button.text = "退出游戏"
 
 func _show_info_simple(text: String) -> void:
 	if info_label: info_label.text = text
@@ -2454,10 +2511,10 @@ func _level0_ui_steps() -> Array:
 			"title": "其他细节（按钮区）",
 			"desc": "这是【其他细节-按钮区】\n包括显示提示按钮、帮助按钮（查看规则）、退出游戏按钮",
 			"target": "quit_button",
-			# 高亮框 = 工具行 bbox 外扩 6px；常量只有一处定义（§八之四 TOOL_ROW_HL_*），
-			# 改工具行几何不会漏改这里
-			"pos": TOOL_ROW_HL_POS,
-			"size": TOOL_ROW_HL_SIZE,
+			# 高亮框 = 工具行 bbox 外扩 6px；几何只有一处定义（§八之四 TOOL_ROW_HL_*），
+			# 触屏档由 _tool_row_hl_rect() 跟随放大的工具行，改几何不会漏改这里
+			"pos": _tool_row_hl_rect().position,
+			"size": _tool_row_hl_rect().size,
 		},
 	]
 	_level0_show_ui_step(0)
@@ -3076,10 +3133,10 @@ func _build_hand_reorder_button() -> void:
 		return
 	var b := _mkb("按序 ⇅", _on_hand_reorder, false)
 	b.name = "HandReorderBtn"
-	b.custom_minimum_size = Vector2(REORDER_BTN_W, TOOL_BTN_H)
-	b.size = Vector2(REORDER_BTN_W, TOOL_BTN_H)
-	b.position = Vector2(REORDER_BTN_LEFT, TOOL_BTN_TOP)
-	b.add_theme_font_size_override("font_size", 14)
+	b.custom_minimum_size = Vector2(REORDER_BTN_W, _tool_btn_h())
+	b.size = Vector2(REORDER_BTN_W, _tool_btn_h())
+	b.position = Vector2(_reorder_btn_left(), _tool_btn_top())
+	b.add_theme_font_size_override("font_size", _touch_fs(14, 4))
 	b.tooltip_text = "按原子序数升序重新排列手牌（恢复自动排序）"
 	b.visible = false
 	_layer(0).add_child(b)
@@ -3236,8 +3293,8 @@ func _update_action_panel() -> void:
 func _mkb(text: String, cb: Callable, dis: bool) -> Button:
 	var b = Button.new()
 	b.text = text
-	b.custom_minimum_size = Vector2(160, 45)
-	b.add_theme_font_size_override("font_size", 16)
+	b.custom_minimum_size = Vector2(160, 58 if _touch_ui else 45)   # 触屏 58 高 ≈ 39dp
+	b.add_theme_font_size_override("font_size", _touch_fs(16, 2))
 	b.add_theme_color_override("font_color", Color(1, 1, 1, 1))
 	b.disabled = dis
 
@@ -3279,10 +3336,20 @@ func _mkb(text: String, cb: Callable, dis: bool) -> Button:
 # 缩放就会绕着左上角甩 → 用 custom_minimum_size 兜底；工具按钮来自 Main.tscn，
 # 进树前已有 size，直接用 size。两者随后都由 resized 校正到 size*0.5。
 func _attach_btn_motion(b: Button) -> void:
+	# 幂等：_mkb / _style_game_tool_buttons / _style_tool_btn 都可能被重复调用
+	# （重排、切档、测试），重复 connect 会刷一串 "already connected" ERROR，
+	# 并在 resized 上挂多个相同 lambda
+	if b.has_meta("btn_motion_attached"):
+		return
+	b.set_meta("btn_motion_attached", true)
 	b.pivot_offset = (b.size if b.size != Vector2.ZERO else b.custom_minimum_size) * 0.5
 	b.resized.connect(func() -> void: b.pivot_offset = b.size * 0.5)
-	b.mouse_entered.connect(_on_button_hover_scale.bind(b, true))
-	b.mouse_exited.connect(_on_button_hover_scale.bind(b, false))
+	# 触屏档不接 hover：Android 把「最后一次触摸位置」当成鼠标位置，
+	# mouse_entered 之后永远等不到 mouse_exited → 按钮会一直停在 1.05 倍。
+	# 触控语义改成「按下 0.96、松手回 1.0」，见 _on_button_press_scale。
+	if not _touch_ui:
+		b.mouse_entered.connect(_on_button_hover_scale.bind(b, true))
+		b.mouse_exited.connect(_on_button_hover_scale.bind(b, false))
 	b.button_down.connect(_on_button_press_scale.bind(b, true))
 	b.button_up.connect(_on_button_press_scale.bind(b, false))
 
@@ -3312,8 +3379,103 @@ func _on_button_press_scale(btn: Button, down: bool) -> void:
 	if down:
 		_tween_button_scale(btn, BUTTON_PRESS_SCALE)
 	else:
-		# 松开后指针通常仍在按钮内（说明还悬停着），回到悬停尺寸
-		_tween_button_scale(btn, BUTTON_HOVER_SCALE if btn.is_hovered() else 1.0)
+		# 松开后指针通常仍在按钮内（说明还悬停着），回到悬停尺寸；
+		# 触屏档没有悬停语义，一律回 1.0，否则 is_hovered() 恒真 → 按钮永远放大
+		_tween_button_scale(btn, 1.0 if _touch_ui or not btn.is_hovered() else BUTTON_HOVER_SCALE)
+
+
+# ============================================================
+# 九之一、触屏档取值函数（A1+B+C）
+# ============================================================
+# 为什么是函数而不是常量：本文件所有几何 const 都带自动化断言（tests/verify_*.gd），
+# 直接改常量会把 24 套测试的期望值全部打翻。这里把「桌面值」和「触屏值」分成两层：
+#   const ...         桌面基准（测试读它）
+#   _xxx() -> float   运行时取值（触屏档换成放大后的值）
+# 调用点因此全部改用函数，桌面下返回值与常量逐值相等。
+func _touch_fs(base: int, bonus: int = TOUCH_FS_BONUS) -> int:
+	return base + bonus if _touch_ui else base
+
+
+func _touch_btn_h(base_h: int) -> int:
+	return maxi(base_h, TOUCH_BTN_MIN_H) if _touch_ui else base_h
+
+
+func _tool_btn_h() -> float:
+	return float(TOUCH_TOOL_BTN_H) if _touch_ui else float(TOOL_BTN_H)
+
+
+func _tool_btn_top() -> float:
+	return float(TOUCH_TOOL_BTN_TOP) if _touch_ui else float(TOOL_BTN_TOP)
+
+
+func _tool_btn_gap() -> float:
+	return float(TOUCH_TOOL_BTN_GAP) if _touch_ui else float(TOOL_BTN_GAP)
+
+
+# 工具行左边界：右边界固定 820，间距变宽 → 左边界自动左移（教程高亮框跟着走）
+func _tool_row_left() -> float:
+	return TOOL_BTN_RIGHT - (TOOL_BTN_W_HINT + TOOL_BTN_W_HELP + TOOL_BTN_W_QUIT) - _tool_btn_gap() * 2.0
+
+
+func _reorder_btn_left() -> float:
+	return _tool_row_left() - _tool_btn_gap() - REORDER_BTN_W
+
+
+# 教程第零关「按钮区」高亮框：工具行 bbox 外扩 TOOL_ROW_HL_PAD
+# （DESKTOP 时与 TOOL_ROW_HL_POS / TOOL_ROW_HL_SIZE 逐值相等，见 verify_touch_ui）
+func _tool_row_hl_rect() -> Rect2:
+	var pad := float(TOOL_ROW_HL_PAD)
+	var left := _tool_row_left()
+	return Rect2(
+			Vector2(left - pad, _tool_btn_top() - pad),
+			Vector2(TOOL_BTN_RIGHT - left + pad * 2.0, _tool_btn_h() + pad * 2.0))
+
+
+# 拖拽阈值：鼠标 6px 就够，手指轻微抖动就有 12~20px
+func _drag_threshold() -> float:
+	return TOUCH_DRAG_THRESHOLD if _touch_ui else DRAG_THRESHOLD
+
+
+# 选中牌静止时相对 base_pos 的上浮量：触屏常驻上浮，桌面 0（悬停已足够表达）
+func _selected_lift() -> float:
+	return TOUCH_SELECT_LIFT if _touch_ui else 0.0
+
+
+# -------- 页面级触控放大：开始页 / 帮助页 / 结算页 / 教学页的按钮统一过一遍 --------
+# 这些页面的按钮是代码生成的、尺寸由各调用点手写（220×56 / 150×38 / 270×32 ...），
+# 逐个改调用点既啰嗦又容易漏；改为构建完成后统一兜底：
+#   · 渲染高度 < TOUCH_BTN_MIN_H 的，拉到 48（位置按中心不变微调，不跳行）
+#   · 字号 +TOUCH_FS_BONUS
+# 容器内的按钮（PanelContainer / VBox）position 会被容器覆盖，改为靠 custom_minimum_size 生效。
+func _apply_touch_sizing(root: Node) -> void:
+	if not _touch_ui or root == null:
+		return
+	for b in _collect_buttons(root):
+		# 幂等：start_page 与补充规则小页是父子关系，会被递归扫两次；
+		# 不打标记的话字号会 +2 +2 叠成 +4
+		if b.has_meta("touch_sized"):
+			continue
+		b.set_meta("touch_sized", true)
+		var old_h: float = b.size.y if b.size.y > 0.0 else b.custom_minimum_size.y
+		if old_h > 0.0 and old_h < float(TOUCH_BTN_MIN_H):
+			var new_h: int = TOUCH_BTN_MIN_H
+			b.custom_minimum_size = Vector2(b.custom_minimum_size.x, new_h)
+			b.size = Vector2(b.size.x, new_h)
+			b.position = Vector2(b.position.x, b.position.y - (new_h - old_h) * 0.5)
+			b.pivot_offset = b.size * 0.5
+		var fs: int = b.get_theme_font_size("font_size")
+		if fs > 0:
+			b.add_theme_font_size_override("font_size", fs + TOUCH_FS_BONUS)
+
+
+func _collect_buttons(root: Node) -> Array:
+	var out: Array = []
+	for c in root.get_children():
+		if c is Button:
+			out.append(c)
+		if c.get_child_count() > 0:
+			out.append_array(_collect_buttons(c))
+	return out
 
 
 # ============================================================
@@ -3356,22 +3518,26 @@ func _style_game_tool_buttons() -> void:
 	if hint_button == null or help_btn == null or quit_button == null:
 		return
 	# 几何归一：等高、同基线、等间距，右边界固定 → 三颗按钮不会再「各自为政」
+	# 触屏档：高 48、间距 20、顶边 542（_tool_btn_*() 取运行时值，const 仍是桌面基准）
 	var row: Array = [
-		[hint_button, TOOL_BTN_W_HINT],
-		[help_btn, TOOL_BTN_W_HELP],
-		[quit_button, TOOL_BTN_W_QUIT],
+		[hint_button, TOOL_BTN_W_HINT, true, false],
+		[help_btn, TOOL_BTN_W_HELP, false, false],
+		[quit_button, TOOL_BTN_W_QUIT, false, true],
 	]
-	var x: int = TOOL_ROW_LEFT
+	# 先刷样式（含字号）再定几何：字号会改变按钮的最小尺寸，若先设 size，
+	# 它会被 clamp 到「旧字号」的 min —— 触屏档 48 切回桌面档时高度就僵在 ~40 回不到 32。
+	for entry in row:
+		_style_tool_btn(entry[0], entry[2], entry[3])
+	var x: float = _tool_row_left()
+	var h: float = _tool_btn_h()
+	var top: float = _tool_btn_top()
 	for entry in row:
 		var b: Button = entry[0]
 		var w: int = entry[1]
-		b.custom_minimum_size = Vector2(w, TOOL_BTN_H)
-		b.size = Vector2(w, TOOL_BTN_H)
-		b.position = Vector2(x, TOOL_BTN_TOP)
-		x += w + TOOL_BTN_GAP
-	_style_tool_btn(hint_button, true, false)
-	_style_tool_btn(help_btn, false, false)
-	_style_tool_btn(quit_button, false, true)
+		b.custom_minimum_size = Vector2(w, h)
+		b.size = Vector2(w, h)
+		b.position = Vector2(x, top)
+		x += w + _tool_btn_gap()
 
 
 # 单颗工具按钮的四态样式（normal / hover / pressed / disabled / focus）
@@ -3402,7 +3568,7 @@ func _style_tool_btn(b: Button, is_toggle: bool, danger: bool) -> void:
 	# 焦点框置空：否则键盘/点击后会出现默认主题的蓝框，跳出「白卡 + 深蓝灰按钮」的画风
 	b.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
 
-	b.add_theme_font_size_override("font_size", 14)
+	b.add_theme_font_size_override("font_size", _touch_fs(14, 4))
 	b.add_theme_color_override("font_color", Color(1, 1, 1, 1))
 	b.add_theme_color_override("font_hover_color", Color(1, 1, 1, 1))
 	b.add_theme_color_override("font_pressed_color", Color(1, 1, 1, 1))
@@ -3791,8 +3957,13 @@ func _layout_hand_cards() -> void:
 		btn.size = Vector2(CARD_W, CARD_H)
 		# 重排会覆盖 position：先杀掉进行中的升降补间，否则动画会把牌拉回旧位置
 		_kill_hover_tween(btn)
-		btn.position = Vector2(start_x + i * step, base_y)
-		btn.set_meta("base_pos", btn.position)
+		var at_x: float = start_x + i * step
+		# 触屏档（C）：选中的牌常驻上浮 TOUCH_SELECT_LIFT（≈7dp），与「悬停 20」区分 ——
+		# 触屏没有悬停语义，不加这个就完全看不出选了哪几张，容易重复点/漏点。
+		# base_pos 必须存「未上浮」的静止位置：命中判定 / 拖拽 / 悬停全都基于它。
+		var lift: float = _selected_lift() if i in selected_indices else 0.0
+		btn.position = Vector2(at_x, base_y - lift)
+		btn.set_meta("base_pos", Vector2(at_x, base_y))
 		btn.set_meta("hand_idx", i)
 		btn.z_index = Z_HAND_SELECTED if i in selected_indices else 0
 		_apply_card_compact(btn, compact)
@@ -3805,13 +3976,13 @@ func _apply_card_compact(btn: Button, compact: bool) -> void:
 		sym.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
 		sym.position = Vector2(6, 22) if compact else Vector2(5, 20)
 		sym.size = Vector2(44, 26) if compact else Vector2(85, 26)
-		sym.add_theme_font_size_override("font_size", 21 if compact else 28)
+		sym.add_theme_font_size_override("font_size", _touch_fs(21 if compact else 28, 4))
 	var nm = btn.get_node_or_null("CardName")
 	if nm:
 		nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
 		nm.position = Vector2(6, 49) if compact else Vector2(5, 48)
 		nm.size = Vector2(44, 15) if compact else Vector2(85, 15)
-		nm.add_theme_font_size_override("font_size", 12 if compact else 14)
+		nm.add_theme_font_size_override("font_size", _touch_fs(12 if compact else 14, 2))
 	var vl = btn.get_node_or_null("CardValence")
 	if vl:
 		vl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
@@ -3878,13 +4049,20 @@ func _update_hand_drag() -> void:
 		if hit >= 0:
 			_drag_press_idx = hit
 			_drag_press_pos = get_global_mouse_position()
+			_drag_press_at = Time.get_ticks_msec()
 			_drag_suppress_click = false
 		return
 	if _drag_press_idx >= hand_buttons.size():
 		_drag_press_idx = -1
 		return
 	# 未越过阈值 = 普通点击，交给 Button 自己的 pressed
-	if get_global_mouse_position().distance_to(_drag_press_pos) >= DRAG_THRESHOLD:
+	var moved: float = get_global_mouse_position().distance_to(_drag_press_pos)
+	if moved >= _drag_threshold():
+		# 触屏档（C）：阈值 6→24 之外，还要求按住够长（300ms）才算「有意重排」。
+		# 手指点选时横向滑动普遍 12~20px，只按距离判定会把它当拖拽 →
+		# 牌跟着乱跑，而且那次 pressed 被 _drag_suppress_click 吞掉，表现为「点了没反应」。
+		if _touch_ui and Time.get_ticks_msec() - _drag_press_at < TOUCH_DRAG_LONG_PRESS_MS:
+			return
 		_begin_drag(_drag_press_idx)
 
 
@@ -4101,7 +4279,24 @@ func _hit_card_at(mp: Vector2) -> int:
 		var cur = hand_buttons[_hover_idx]
 		if is_instance_valid(cur) and _card_raised_rect(cur).has_point(mp):
 			return _hover_idx
-	return _hover_hit_index(mp)
+	var hit: int = _hover_hit_index(mp)
+	# 触屏档（C）：手指比鼠标粗，落点常压在牌边缘外 3~6px 或牌缝里，
+	# 严格命中不到就白点一次。这里只做「兜底」——严格命中优先，
+	# 否则才用外扩 TOUCH_HIT_PAD 的矩形找最近的一张，不会改变正常点选的判定。
+	if hit < 0 and _touch_ui:
+		hit = _hover_hit_index_padded(mp, TOUCH_HIT_PAD)
+	return hit
+
+
+# 命中矩形外扩版本（触屏兜底用）：仍按「越靠右的牌画得越上」取最大索引
+func _hover_hit_index_padded(mp: Vector2, pad: float) -> int:
+	var hit := -1
+	for i in range(hand_buttons.size()):
+		var b = hand_buttons[i]
+		if not is_instance_valid(b): continue
+		if _card_hover_rect(b).grow(pad).has_point(mp):
+			hit = i
+	return hit
 
 
 # 真正执行切换：先落下旧牌再抬起新牌，信息栏顺序才不会串
@@ -4121,6 +4316,13 @@ func _update_hand_hover() -> void:
 	if hand_container == null or not is_instance_valid(hand_container): return
 	# headless（自动化测试）没有真实鼠标，跳过轮询，避免 (0,0) 误触发
 	if DisplayServer.get_name() == "headless": return
+	# 触屏档（C）：Android 把「最后一次手指位置」当成鼠标位置，手指抬起后没有
+	# mouse_exited → 抬起状态永远粘在最后点过的那张牌上：牌不落、下方信息栏一直
+	# 显示它的详情，再点别的牌还要先等 60ms 悬停切换，手感就是「慢半拍 / 不知道选没选」。
+	# 所以触控下悬停只在「按住」期间存在：松手立即落下并还原信息栏。
+	if _touch_ui and not Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		if _hover_idx != -1: _set_hover_index(-1)
+		_hover_pending_idx = -1
 	if not hand_container.is_visible_in_tree(): return
 	if hand_buttons.is_empty():
 		_hover_idx = -1
@@ -4212,7 +4414,10 @@ func _apply_hover(btn: Button, hovered: bool) -> void:
 	else:
 		var idx: int = btn.get_meta("hand_idx", -1)
 		btn.z_index = Z_HAND_SELECTED if idx in selected_indices else 0
-		_tween_card_y(btn, base.y)
+		# 落回时把「选中常驻上浮」一起算进去：否则触屏上刚选中的牌被悬停一次、
+		# 松手后又落回原位，选中的视觉提示就消失了
+		var rest_lift: float = _selected_lift() if idx in selected_indices else 0.0
+		_tween_card_y(btn, base.y - rest_lift)
 		_restore_card_info()
 	# 悬停外观由本状态机驱动（引擎自带 hover 态是另一套判定，会独立闪）。
 	# normal/hover/pressed 三者始终指向同一个 StyleBox：引擎无论认为是否悬停，
@@ -4318,15 +4523,16 @@ func _build_card_button(card, idx: int) -> Button:
 	btn.set_meta("sb_hover", style_hover)
 
 	var l_num = Label.new()
+	l_num.name = "CardNumber"          # 具名：触屏档测试按名字取字号（校验 12 → 14）
 	l_num.text = str(card.atomic_number)
-	l_num.add_theme_font_size_override("font_size", 12)
+	l_num.add_theme_font_size_override("font_size", _touch_fs(12, 2))
 	l_num.add_theme_color_override("font_color", Color(0.25, 0.28, 0.32, 1))
 	l_num.position = Vector2(4, 2)
 	btn.add_child(l_num)
 
 	var l_group = Label.new()
 	l_group.text = card.group
-	l_group.add_theme_font_size_override("font_size", 11)
+	l_group.add_theme_font_size_override("font_size", _touch_fs(11, 2))
 	# 固定深灰：不跟随元素类别色（类别色深浅差异大，族名要保持稳定可读）
 	l_group.add_theme_color_override("font_color", Color(0.3, 0.32, 0.36, 1))
 	l_group.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
@@ -4337,7 +4543,7 @@ func _build_card_button(card, idx: int) -> Button:
 	var l_sym = Label.new()
 	l_sym.name = "CardSymbol"
 	l_sym.text = card.symbol
-	l_sym.add_theme_font_size_override("font_size", 28)
+	l_sym.add_theme_font_size_override("font_size", _touch_fs(28, 4))
 	l_sym.add_theme_color_override("font_color", _get_card_color(card))
 	l_sym.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.25))
 	l_sym.add_theme_constant_override("outline_size", 2)
@@ -4349,7 +4555,7 @@ func _build_card_button(card, idx: int) -> Button:
 	var l_name = Label.new()
 	l_name.name = "CardName"
 	l_name.text = card.name_cn
-	l_name.add_theme_font_size_override("font_size", 14)
+	l_name.add_theme_font_size_override("font_size", _touch_fs(14, 3))
 	l_name.add_theme_color_override("font_color", Color(0.1, 0.12, 0.14, 1))
 	l_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l_name.size = Vector2(85, 15)
@@ -4364,7 +4570,7 @@ func _build_card_button(card, idx: int) -> Button:
 	var l_val = Label.new()
 	l_val.name = "CardValence"
 	l_val.text = val_str
-	l_val.add_theme_font_size_override("font_size", 13)
+	l_val.add_theme_font_size_override("font_size", _touch_fs(13, 2))
 	l_val.add_theme_color_override("font_color", Color(0.55, 0.2, 0.2, 1))
 	l_val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l_val.size = Vector2(85, 18)
@@ -4372,8 +4578,9 @@ func _build_card_button(card, idx: int) -> Button:
 	btn.add_child(l_val)
 
 	var l_mass = Label.new()
+	l_mass.name = "CardMass"           # 具名：触屏档测试按名字取字号（校验 9 → 12）
 	l_mass.text = "%.1f" % card.atomic_weight
-	l_mass.add_theme_font_size_override("font_size", 9)
+	l_mass.add_theme_font_size_override("font_size", _touch_fs(9, 3))
 	l_mass.add_theme_color_override("font_color", Color(0.45, 0.47, 0.5, 1))
 	l_mass.position = Vector2(3, 102)
 	btn.add_child(l_mass)
@@ -4462,6 +4669,10 @@ func _on_card_clicked(index: int) -> void:
 		_clear_hint()
 	if index in selected_indices: selected_indices.erase(index)
 	else: selected_indices.append(index)
+	# 触屏档（C）：30ms 轻震，作为「选中 / 取消」的触摸反馈
+	# （Android 需要在 export_presets 打开 permissions/vibrate，已开；桌面 / 无马达设备静默无效）
+	if _touch_ui:
+		Input.vibrate_handheld(30)
 	_update_hand_buttons()
 	_update_action_panel()
 	_update_card_info_label()
