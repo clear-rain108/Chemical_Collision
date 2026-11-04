@@ -658,21 +658,22 @@ func _test_valence_fit(scene) -> void:
 
 	var btn = scene.call("_build_card_button", cl_card, 0)
 	scene.hand_container.add_child(btn)
-	var val: Label = btn.get_node_or_null("CardValence")
-	if val == null:
-		_check(false, "价态自适应：CardValence 节点缺失")
+	var chip = btn.get_node_or_null("CardValenceChip")
+	var val: Label = chip.get_node_or_null("CardValence") if chip else null
+	if chip == null or val == null:
+		_check(false, "价态自适应：CardValenceChip / CardValence 节点缺失")
 		btn.queue_free()
 		return
 
-	# 1) 全宽卡：可用宽 = 85 - CARD_VAL_PAD(6) = 79
+	# 1) 全宽卡：可用宽 = 85 - CARD_VAL_CHIP_PAD*2(10) = 75（文字两侧各留 5px 粉底余量）
 	var w_full: float = _measure_valence(scene, val)
-	_check(w_full <= 79.0, "Cl 全宽卡价态不溢出（实测 %.1f ≤ 79）" % w_full)
+	_check(w_full <= 75.0, "Cl 全宽卡价态不溢出（实测 %.1f ≤ 75）" % w_full)
 	_check(val.clip_text, "价态 Label 打开 clip_text 兜底（任何数据都不画出卡边）")
 
-	# 2) 紧凑档：可用宽 = 44 - 6 = 38，且只留两端价
+	# 2) 紧凑档：可用宽 = 44 - 10 = 34，且只留两端价
 	scene.call("_apply_card_compact", btn, true)
 	var w_compact: float = _measure_valence(scene, val)
-	_check(w_compact <= 38.0, "Cl 紧凑档价态不溢出（实测 %.1f ≤ 38，当前 \"%s\"）" % [w_compact, val.text])
+	_check(w_compact <= 34.0, "Cl 紧凑档价态不溢出（实测 %.1f ≤ 34，当前 \"%s\"）" % [w_compact, val.text])
 	_check(val.text == "-1 +7…", "紧凑档只留两端价（实际 \"%s\"）" % val.text)
 
 	# 3) 双 / 单价元素不降级
@@ -712,27 +713,32 @@ func _test_valence_chip(scene) -> void:
 	var btn = scene.call("_build_card_button", cl_card, 0)
 	scene.hand_container.add_child(btn)
 	var chip = btn.get_node_or_null("CardValenceChip")
-	var val: Label = btn.get_node_or_null("CardValence")
-	_check(chip != null and val != null, "价态圆底节点存在（CardValenceChip + CardValence）")
+	var val: Label = chip.get_node_or_null("CardValence") if chip else null
+	_check(chip != null, "价态圆底节点存在（CardValenceChip）")
+	_check(val != null, "价态文字节点存在（CardValence）")
 	if chip == null or val == null:
 		btn.queue_free()
 		return
-	_check(chip.get_index() < val.get_index(),
-		"价态圆底画在文字之下（同级、树顺序在 label 之前）")
+	_check(val.get_parent() == chip,
+		"粉底是文字父节点（同体，不可能再错位）")
 	var sb = chip.get_theme_stylebox("panel")
 	_check(sb is StyleBoxFlat and sb.corner_radius_top_left == int(scene.CHIP_RADIUS),
 		"价态圆底走工厂（圆角 CHIP_RADIUS=%d）" % int(scene.CHIP_RADIUS))
 	_check(chip.mouse_filter == Control.MOUSE_FILTER_IGNORE, "价态圆底不吃鼠标（不挡牌面点击）")
 	var fit_w: float = float(val.get_meta("fit_w", 0.0))
-	var expect_w: float = minf(fit_w + scene.CARD_VAL_CHIP_PAD * 2.0, val.size.x)
+	var expect_w: float = minf(fit_w + scene.CARD_VAL_CHIP_PAD * 2.0, float(chip.get_meta("row_w", 85.0)))
 	_check(absf(chip.size.x - expect_w) < 0.5,
 		"圆底宽度 = 实测文字宽 + padding（fit=%.1f chip=%.1f expect=%.1f）" % [fit_w, chip.size.x, expect_w])
-	# 紧凑档：chip 必须跟着 38px 可用宽一起收，不能超出 label
+	# 紧凑档：chip 必须跟着 44px 行宽一起收，且文字仍在粉底内居中
 	scene.call("_apply_card_compact", btn, true)
 	var fit_w2: float = float(val.get_meta("fit_w", 0.0))
-	var expect_w2: float = minf(fit_w2 + scene.CARD_VAL_CHIP_PAD * 2.0, val.size.x)
-	_check(chip.size.x <= val.size.x + 0.5 and absf(chip.size.x - expect_w2) < 0.5,
-		"紧凑档圆底不超出 label（chip=%.1f ≤ %.1f）" % [chip.size.x, val.size.x])
+	var expect_w2: float = minf(fit_w2 + scene.CARD_VAL_CHIP_PAD * 2.0, float(chip.get_meta("row_w", 44.0)))
+	_check(absf(chip.size.x - expect_w2) < 0.5
+			and chip.position.x >= float(chip.get_meta("row_x", 6.0)) - 0.5
+			and chip.position.x + chip.size.x <= float(chip.get_meta("row_x", 6.0)) + float(chip.get_meta("row_w", 44.0)) + 0.5,
+		"紧凑档圆底不越出行宽（chip=%.1f x=%.1f w=%.1f）" % [chip.size.x, chip.position.x, expect_w2])
+	_check(val.size.x == chip.size.x and absf(val.position.x) < 0.01,
+		"紧凑档文字仍铺满粉底（label w=%.1f @x=%.1f）" % [val.size.x, val.position.x])
 	btn.queue_free()
 
 

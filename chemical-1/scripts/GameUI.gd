@@ -168,6 +168,7 @@ const PANEL_RADIUS := 10        # 面板 / 提示框
 const CHIP_RADIUS := 5          # 圆底 chip（卡面价态 / 元素 chip）
 const CARD_VAL_CHIP_H := 16     # 卡面价态圆底高度
 const CARD_VAL_CHIP_PAD := 5    # 圆底在文字左右各多出的宽度
+const CARD_VAL_Y := 72.0        # 卡面价态行（圆底 + 文字）的纵向位置
 const LOG_PANEL_PAD := 10       # 日志底板比 LogLabel 四边各大 10px
 const BORDER_W := 1             # 普通元素描边
 const BORDER_W_ACTIVE := 2      # 选中 / 焦点 / 警告描边
@@ -4321,13 +4322,19 @@ func _apply_card_compact(btn: Button, compact: bool) -> void:
 		nm.position = Vector2(6, 49) if compact else Vector2(5, 48)
 		nm.size = Vector2(44, 15) if compact else Vector2(85, 15)
 		nm.add_theme_font_size_override("font_size", _touch_fs(12 if compact else 14, 2))
-	var vl = btn.get_node_or_null("CardValence")
-	if vl:
-		vl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
-		vl.position = Vector2(6, 72) if compact else Vector2(5, 72)
-		vl.size = Vector2(44, 18) if compact else Vector2(85, 18)
-		# 尺寸定下来后才量文字：紧凑档只有 38px 可用，多价元素按需降字号 / 只留两端价
-		_fit_card_valence(vl, btn.get_meta("card", null), vl.size.x - CARD_VAL_PAD, _touch_fs(13, 2))
+	var chip = btn.get_node_or_null("CardValenceChip")
+	var vl = chip.get_node_or_null("CardValence") if chip else null
+	if chip and vl:
+		# 行几何交给 chip 的 meta：紧凑档左对齐（露出左条要读得到），常规档居中。
+		# 文字自身永远在粉底内居中 —— 粉底就是它的父节点，不可能再错位。
+		var row_w: float = 44.0 if compact else 85.0
+		chip.set_meta("row_x", 6.0 if compact else 5.0)
+		chip.set_meta("row_w", row_w)
+		chip.set_meta("row_align", HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER)
+		vl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		# 行宽先扣掉两侧 padding，保证 fit 出来的文字两侧恒有 CHIP_PAD 的粉底余量
+		var card = btn.get_meta("card") if btn.has_meta("card") else null
+		_fit_card_valence(vl, card, row_w - CARD_VAL_CHIP_PAD * 2.0, _touch_fs(13, 2))
 
 
 # ============================================================
@@ -4917,6 +4924,7 @@ func _fit_card_valence(lbl: Label, card, max_w: float, base_fs: int) -> void:
 		lbl.text = "N/A"
 		lbl.add_theme_font_size_override("font_size", base_fs)
 		lbl.set_meta("fit_w", 0.0)
+		_sync_valence_chip(lbl)
 		return
 	var font: Font = lbl.get_theme_font("font")
 	var min_fs: int = mini(CARD_VAL_MIN_FS, base_fs)
@@ -4950,19 +4958,24 @@ func _fit_card_valence(lbl: Label, card, max_w: float, base_fs: int) -> void:
 	_sync_valence_chip(lbl)
 
 
-# 卡面价态圆底：宽 = 实测文字宽 + 左右 padding（不超过 label 宽），水平居中于 label。
-# 找不到 chip 节点就静默跳过 —— 图鉴 / 测试里的裸 Label 也能直接复用 _fit_card_valence()。
+# 卡面价态圆底：chip 是 label 的父节点，因此只需定 chip 的矩形 ——
+#   · 宽 = 实测文字宽 + 左右 padding（不超过整行宽，文字两侧恒留 CHIP_PAD）
+#   · 横坐标 = 行起点（紧凑档左对齐）或 行内居中（常规档）
+# 旧实现把 chip 当 label 的兄弟节点、按「居中于 label」算坐标，而紧凑牌面把 label
+# 改成左对齐 → 粉底整体右偏 9~13px（截图里 +2 / 0 的粉块跑到文字右边）。
 func _sync_valence_chip(lbl: Label) -> void:
-	var parent := lbl.get_parent()
-	if parent == null:
-		return
-	var chip := parent.get_node_or_null("CardValenceChip") as Control
-	if chip == null:
+	var chip := lbl.get_parent() as Control
+	if chip == null or chip.name != "CardValenceChip":
 		return
 	var fit_w: float = float(lbl.get_meta("fit_w", 0.0))
-	var w: float = minf(fit_w + CARD_VAL_CHIP_PAD * 2.0, lbl.size.x)
+	var row_x: float = float(chip.get_meta("row_x", 5.0))
+	var row_w: float = float(chip.get_meta("row_w", 85.0))
+	var align: int = int(chip.get_meta("row_align", HORIZONTAL_ALIGNMENT_CENTER))
+	# 行宽已扣掉两侧 padding（见调用点），这里再加回来就是粉底宽
+	var w: float = minf(fit_w + CARD_VAL_CHIP_PAD * 2.0, row_w)
+	var x: float = row_x if align == HORIZONTAL_ALIGNMENT_LEFT else row_x + (row_w - w) * 0.5
+	chip.position = Vector2(x, CARD_VAL_Y + 1.0)
 	chip.size = Vector2(w, CARD_VAL_CHIP_H)
-	chip.position = Vector2(lbl.position.x + (lbl.size.x - w) * 0.5, lbl.position.y + 1.0)
 	chip.visible = fit_w > 0.0
 
 
@@ -5055,11 +5068,16 @@ func _build_card_button(card, idx: int) -> Button:
 	l_name.position = Vector2(5, 48)
 	btn.add_child(l_name)
 
-	# 价态圆底（A1）：先建、同级且在 label 之前 → 画在文字下层；
-	# 宽度不写死，由 _fit_card_valence() 实测的文字宽决定（见 _sync_valence_chip）
+	# 价态圆底（A1）：Panel 作为 Label 的父节点 —— 粉底与文字物理绑定，
+	# 不会再出现「粉底按居中算、文字按左对齐排」的错位（截图回归：紧凑档粉底整体右偏）。
+	# 行几何（起点 / 宽度 / 对齐）存在 chip 的 meta 上，宽度由 _fit_card_valence()
+	# 实测的文字宽决定（见 _sync_valence_chip）。
 	var l_val_chip := Panel.new()
 	l_val_chip.name = "CardValenceChip"
 	l_val_chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l_val_chip.set_meta("row_x", 5.0)
+	l_val_chip.set_meta("row_w", 85.0)
+	l_val_chip.set_meta("row_align", HORIZONTAL_ALIGNMENT_CENTER)
 	l_val_chip.add_theme_stylebox_override("panel", _make_panel_style("valence_chip"))
 	btn.add_child(l_val_chip)
 
@@ -5068,11 +5086,12 @@ func _build_card_button(card, idx: int) -> Button:
 	l_val.add_theme_font_size_override("font_size", _touch_fs(13, 2))
 	l_val.add_theme_color_override("font_color", Color(0.55, 0.2, 0.2, 1))
 	l_val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	l_val.size = Vector2(85, 18)
-	l_val.position = Vector2(5, 72)
-	btn.add_child(l_val)
+	l_val.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	l_val.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l_val_chip.add_child(l_val)
+	l_val.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	# 全价优先；放不下时自动去空格 / 降字号 / 只留两端价（不会画出卡边）
-	_fit_card_valence(l_val, card, 85.0 - CARD_VAL_PAD, _touch_fs(13, 2))
+	_fit_card_valence(l_val, card, 85.0 - CARD_VAL_CHIP_PAD * 2.0, _touch_fs(13, 2))
 
 	var l_mass = Label.new()
 	l_mass.name = "CardMass"           # 具名：触屏档测试按名字取字号（校验 9 → 12）

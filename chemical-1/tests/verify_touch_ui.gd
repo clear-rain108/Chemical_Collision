@@ -128,7 +128,7 @@ func _test_touch_typography(scene) -> void:
 	var sym = hb.get_node_or_null("CardSymbol")
 	var nm = hb.get_node_or_null("CardName")
 	var num = hb.get_node_or_null("CardNumber")
-	var val = hb.get_node_or_null("CardValence")
+	var val = hb.get_node_or_null("CardValenceChip/CardValence")
 	var mass = hb.get_node_or_null("CardMass")
 	_check(sym != null and sym.get_theme_font_size("font_size") >= 25,
 		"触屏：符号字号放大（%d ≥ 25，桌面为 21 / 28）" % (sym.get_theme_font_size("font_size") if sym else -1))

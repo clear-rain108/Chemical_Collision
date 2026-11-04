@@ -51,10 +51,10 @@ func _run():
 		if not is_instance_valid(b): continue
 		if b.get_node_or_null("CardSymbol") == null: has_sym = false
 		if b.get_node_or_null("CardName") == null: has_nm = false
-		if b.get_node_or_null("CardValence") == null: has_val = false
+		if b.get_node_or_null("CardValenceChip") == null: has_val = false
 	_check(has_sym, "真实卡牌含 CardSymbol 节点（重叠时可切换左对齐）")
 	_check(has_nm, "真实卡牌含 CardName 节点")
-	_check(has_val, "真实卡牌含 CardValence 节点")
+	_check(has_val, "真实卡牌含 CardValenceChip 节点（价态文字挂其下）")
 
 	# 点击首张牌：选中 → 重建 → 数量不变、位置仍合法、无崩溃
 	var n0: int = hb.size()
