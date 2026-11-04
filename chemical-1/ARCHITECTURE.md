@@ -473,6 +473,13 @@ HelpPage (Control, full rect, visible=false)
 - 左上：原子序数 | 右上：族 | 中上：元素符号(着色) | 中：中文名 | 中下：化合价(±标注) | 左下：相对原子质量
 - **字号要在 `_apply_card_compact()` 里再写一遍**：只改 `_build_card_button()` 会在下次重排时被覆盖；
   紧凑牌面用 符号 21 / 中文名 12（左对齐，保证露出的窄条可读）
+- **化合价文本必须按可用宽度收缩**：`card.common_valence` 最多 5 个价（Cl = `-1 +1 +3 +5 +7`），
+  实测 13px 下 85px（正好等于整张卡宽）、触屏 15px 达 98px、紧凑档 label 只有 44 宽 ——
+  而 `Label` 默认**不裁剪**，文字会直接画到卡片右边界之外（多价元素卡面溢出）。
+  `_fit_card_valence()` 分级收缩：**全价 → 去空格 → 逐档降字号（下限 `CARD_VAL_MIN_FS = 10`）
+  → 只留两端价 + 「…」**，末档 `clip_text = true` 兜底；实测文本宽写进 `meta("fit_w")`，
+  圆底价态 chip 与测试直接复用，不再各量一遍。帮助页图鉴（迷你卡 96 宽）走同一套
+  `_format_valence_brief()`，不再各维护一份裁剪规则。
 - `Label.size` 会被字体最小高度撑大，但字形仍自顶部绘制 —— 判断是否压字要按**字号**算，不要按 `size` 算
 
 布局 `_layout_hand_cards()`：一行居中；张数超过"不重叠容量"后按
@@ -486,8 +493,8 @@ HelpPage (Control, full rect, visible=false)
 
 | 环节 | 实现 | 关键点 |
 |------|------|--------|
-| 起手判定 | `_process → _update_hand_drag()` 轮询，位移 `DRAG_THRESHOLD = 6px` 才算拖拽 | 不接 `gui_input`：`accept_event()` 只挡得住「传给别的控件」的事件，挡不住同一个 Button 自己补发的 `pressed`，拖完会顺带把牌选中 |
-| 拖拽视觉 | 原位牌 `modulate.a = 0.28`；半透明幽灵牌（`duplicate()`，`mouse_filter = IGNORE`）+ 3px 主题蓝插入线，均挂 `hand_container`，`z = Z_DRAG(30)` | 与 A1 幽灵牌动画同一约定：独立节点、不改容器布局时序；重建前 `_cancel_drag()` 一律回收 |
+| 起手判定 | `_process → _update_hand_drag()` 轮询。桌面单档：位移 `DRAG_THRESHOLD = 6px` 即拖拽。触屏**两档**：`TOUCH_DRAG_ARM_MOVE = 10px` 起拖跟手、`TOUCH_DRAG_THRESHOLD = 24px` 才算确认重排（松手位移 <24px 回退成点选） | 不接 `gui_input`：`accept_event()` 只挡得住「传给别的控件」的事件，挡不住同一个 Button 自己补发的 `pressed`，拖完会顺带把牌选中 |
+| 拖拽视觉 | 原位牌 `modulate.a = 0.28`；半透明幽灵牌（`duplicate()`，`mouse_filter = IGNORE`）+ 3px 主题蓝插入线，均挂 `hand_container`，`z = Z_DRAG(30)`。触屏软启动用 0.55 / 0.9（差一档就回退成点选，一步淡到底会闪） | 与 A1 幽灵牌动画同一约定：独立节点、不改容器布局时序；重建前 `_cancel_drag()` 一律回收 |
 | 落点 | 鼠标 x 落在某张牌中点左侧 → 插入该牌之前；全在右侧 → 末尾（`_insert_slot_at` / `_slot_x`，用 `base_pos` 静止坐标） | 用静止坐标而不是当前 `position`，否则落下补间未走完时指示线会漂 |
 | 落库 | `PlayerInfo.move_card(from, to)` = `remove_at` + `insert`，成功即 `hand_manual_order = true`；`to = slot - 1 if slot > from` | 越界 / 原地不动返回 false → 不重绘；松手在容器外（`in_zone == false`）丢弃本次拖拽 |
 | 自动排序失效 | `sort_hand_by_atomic_number()` 在 `hand_manual_order` 为 true 时直接返回 | `GameManager`（抽牌后）与 `TutorialController` 的既有调用点无需改动，自动全部跳过 |
@@ -508,7 +515,15 @@ _update_hand_buttons()    → ① _selected_cards(cp)：遍历 selected_indices�
 
 提示文本同理：`_hint_owner` + `_hint_hand_size` 之外再加 `_hint_order_sig`（顺序签名），
 玩家重排后提示立即作废，避免「提示的牌」和「高亮的牌」对不上。
-回归测试：`tests/verify_hand_reorder.gd`（44 项，其中「自动排列回归锁」保证默认行为不变）。
+回归测试：`tests/verify_hand_reorder.gd`（48 项，其中「自动排列回归锁」保证默认行为不变）。
+
+**触屏为什么要两档**：旧实现「长按 300ms + 位移 24px」才起拖，真机上是
+「按住后牌一动不动（最多 300ms 无反馈）→ 松手时若没走满 24px，那次 `pressed` 又被
+`_drag_suppress_click` 吞掉」= 点了没反应。现在把判定拆成两段：10px 立即起拖跟手
+（`_update_hand_drag`），松手时用**本次按下的累计最大位移** `_drag_max_move` 判断 ——
+≥24px 才落库重排，<24px 走 `_apply_card_selection()` 回退成点选（与 Button 的
+`_on_card_clicked` 共用同一条选中路径）。起拖门槛（10）< 回退门槛（24）是必须保持的不等式，
+`verify_touch_ui` 直接断言 `_drag_arm_threshold() < _drag_threshold()`。
 
 ### 悬停交互（防抖动状态机）
 

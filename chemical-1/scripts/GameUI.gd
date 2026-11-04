@@ -63,8 +63,8 @@ var selected_indices: Array = []        # 选中的手牌索引
 #     否则选中的会变成另一张牌（历史隐患，本次一并修掉）。
 # ------------------------------------------------------------
 var _drag_press_idx: int = -1           # 左键按下时命中的手牌索引（-1 = 未按下）
-var _drag_press_pos: Vector2 = Vector2.ZERO   # 按下时的全局鼠标坐标（算阈值用）
-var _drag_press_at: int = 0             # 按下时刻（触屏长按判定用）
+var _drag_press_pos: Vector2 = Vector2.ZERO   # 按下时的全局坐标（算阈值用）
+var _drag_max_move: float = 0.0         # 本次按下到松手的最大位移（触屏「回退成点选」判定用）
 var _drag_active: bool = false          # 是否已越过阈值、进入拖拽
 var _drag_from: int = -1                # 拖拽源下标（进入拖拽时快照）
 var _drag_slot: int = -1                # 当前插入槽位（0..n，表示插到第 slot 张之前）
@@ -109,11 +109,21 @@ const HOVER_LEAVE_DELAY_MS := 140       # 仍在手牌容器内但已不在任�
 const HOVER_ANIM_MS := 80               # 抬起 / 落下补间时长（三次缓出）
 const HOVER_EXIT_GRACE := 14.0          # 手牌上沿容错带：抬起牌顶边与容器顶边重合，贴边滑过不落牌
 
+# 卡面化合价文本（多价元素会顶出卡边，见 _fit_card_valence）
+# 实测：Cl "-1 +1 +3 +5 +7" 在 13px 下 85px（=整张卡宽），触屏 15px 达 98px；
+# 紧凑档 label 只有 44 宽 → 必须按可用宽度收缩，否则文字画到卡片外面。
+const CARD_VAL_PAD := 6                 # 价态文本在 label 内的左右留白（85 → 可用 79，44 → 38）
+const CARD_VAL_MIN_FS := 10             # 自适应收缩的最小字号（紧凑档 Cl 需要落到这一档）
+
 # 拖拽重排（P7）
 const DRAG_THRESHOLD := 6.0             # 移动超过该距离才算拖拽（否则仍按点击处理）
 const DRAG_GHOST_ALPHA := 0.85          # 幽灵牌不透明度
 const DRAG_SOURCE_ALPHA := 0.28         # 原位牌淡出程度（表示"这张被拿起来了"）
 const DRAG_LINE_W := 3.0                # 插入指示线宽度
+# 触屏软启动：起拖门槛只有 10px，绝大多数「点选 + 手抖」都会走到 _finish_drag 的回退分支，
+# 淡出若一步到底（0.28）会闪一下；源牌 0.55 / 幽灵 0.9，回退时几乎看不出变化。
+const TOUCH_DRAG_SOURCE_ALPHA := 0.55
+const TOUCH_DRAG_GHOST_ALPHA := 0.9
 
 # ------------------------------------------------------------
 # 触屏档案（Android / 移动端，A1+B+C）
@@ -131,8 +141,8 @@ const TOUCH_FS_BONUS := 2               # 页面按钮 / 标签字号通用加�
 const TOUCH_TOOL_BTN_H := 48            # 工具行：32 → 48（下沿 590，仍让 ActionPanel 9px）
 const TOUCH_TOOL_BTN_TOP := 542         # 工具行顶：558 → 542（上让 CardInfoLabel 16px）
 const TOUCH_TOOL_BTN_GAP := 20          # 工具行间距：10 → 20（"帮助"与"退出游戏"不再贴脸误触）
-const TOUCH_DRAG_THRESHOLD := 24.0      # 拖动阈值：6 → 24（≈16dp，手指抖动不再被判成拖拽）
-const TOUCH_DRAG_LONG_PRESS_MS := 300   # 长按多久才进入重排（未达时长松手 = 纯点选）
+const TOUCH_DRAG_ARM_MOVE := 10.0       # 按下后位移 ≥10px 立即起拖跟手（≈7dp，不再等 300ms 长按）
+const TOUCH_DRAG_THRESHOLD := 24.0      # 确认阈值（≈16dp）：松手总位移 ≥24px 才算重排，<24px 回退成点选
 const TOUCH_SELECT_LIFT := 10.0         # 选中牌常驻上浮（与悬停 20 区分，一眼看出选了谁）
 const TOUCH_HIT_PAD := 8.0              # 触屏命中外扩缓冲（≈5dp，手指比鼠标粗）
 
@@ -1725,17 +1735,13 @@ func _make_help_mini_card(card, show_valence: bool = false) -> PanelContainer:
 	return panel
 
 
-# 常见化合价文本：正价带 +、负价带 -（与手牌卡面 CardValence 一致）
-# 迷你卡宽度只有 96，多价元素（Cl 有 5 个）只显示前 2 个 + 「…」，避免撑破卡片
+# 常见化合价文本：与手牌卡面同一套裁剪规则（放不下只留两端价 + …，Cl → -1 +7…）
+# 迷你卡只有 96 宽，Cl 的 5 个价全写会撑破卡片；原先是「前 2 个 + …」的独立实现，
+# 与卡面 _fit_card_valence 不一致，现统一走 _format_valence_brief。
 func _help_valence_text(card) -> String:
-	var parts: Array = []
-	var total: int = card.common_valence.size()
-	for i in range(mini(total, 2)):
-		var v: int = card.common_valence[i]
-		parts.append(("+%d" % v) if v > 0 else str(v))
-	if parts.is_empty():
+	if card == null:
 		return "—"
-	return " ".join(parts) + ("…" if total > 2 else "")
+	return _format_valence_brief(card.common_valence)
 
 
 # 图鉴专用符号色：原配色里稀有气体是 (0.95,0.95,0.95)，
@@ -3490,7 +3496,14 @@ func _tool_row_hl_rect() -> Rect2:
 			Vector2(TOOL_BTN_RIGHT - left + pad * 2.0, _tool_btn_h() + pad * 2.0))
 
 
-# 拖拽阈值：鼠标 6px 就够，手指轻微抖动就有 12~20px
+# 起拖阈值：越过它就开始跟手（触屏 10px ≈7dp，桌面 6px）
+# 触屏「起拖」与「确认重排」刻意分成两档：10px 起拖是为了手指一动牌就跟（消除 300ms 死区），
+# 24px（_drag_threshold）才是松手时判定「真的换位」的门槛 —— 中间那 10~24px 松手会回退成点选。
+func _drag_arm_threshold() -> float:
+	return TOUCH_DRAG_ARM_MOVE if _touch_ui else DRAG_THRESHOLD
+
+
+# 确认阈值：鼠标 6px 就够，手指需要 24px 才算有意重排（<24px 视为点选，见 _finish_drag）
 func _drag_threshold() -> float:
 	return TOUCH_DRAG_THRESHOLD if _touch_ui else DRAG_THRESHOLD
 
@@ -4047,6 +4060,8 @@ func _apply_card_compact(btn: Button, compact: bool) -> void:
 		vl.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT if compact else HORIZONTAL_ALIGNMENT_CENTER
 		vl.position = Vector2(6, 72) if compact else Vector2(5, 72)
 		vl.size = Vector2(44, 18) if compact else Vector2(85, 18)
+		# 尺寸定下来后才量文字：紧凑档只有 38px 可用，多价元素按需降字号 / 只留两端价
+		_fit_card_valence(vl, btn.get_meta("card", null), vl.size.x - CARD_VAL_PAD, _touch_fs(13, 2))
 
 
 # ============================================================
@@ -4111,20 +4126,19 @@ func _update_hand_drag() -> void:
 		if hit >= 0:
 			_drag_press_idx = hit
 			_drag_press_pos = get_global_mouse_position()
-			_drag_press_at = Time.get_ticks_msec()
+			_drag_max_move = 0.0
 			_drag_suppress_click = false
 		return
 	if _drag_press_idx >= hand_buttons.size():
 		_drag_press_idx = -1
 		return
-	# 未越过阈值 = 普通点击，交给 Button 自己的 pressed
+	# 未达起拖位移 = 普通点击，交给 Button 自己的 pressed
 	var moved: float = get_global_mouse_position().distance_to(_drag_press_pos)
-	if moved >= _drag_threshold():
-		# 触屏档（C）：阈值 6→24 之外，还要求按住够长（300ms）才算「有意重排」。
-		# 手指点选时横向滑动普遍 12~20px，只按距离判定会把它当拖拽 →
-		# 牌跟着乱跑，而且那次 pressed 被 _drag_suppress_click 吞掉，表现为「点了没反应」。
-		if _touch_ui and Time.get_ticks_msec() - _drag_press_at < TOUCH_DRAG_LONG_PRESS_MS:
-			return
+	_drag_max_move = maxf(_drag_max_move, moved)
+	if moved >= _drag_arm_threshold():
+		# 触屏档（C）：10px 就起拖（手指一动牌就跟），不再等 300ms 长按 ——
+		# 旧实现「长按 300ms + 24px」在真机上是「按住后牌不动、松手还点不中」，
+		# 现在把判定挪到松手时：总位移 <24px 一律按点选处理（见 _finish_drag）。
 		_begin_drag(_drag_press_idx)
 
 
@@ -4144,21 +4158,27 @@ func _begin_drag(idx: int) -> void:
 	_restore_card_info()
 	var base: Vector2 = btn.get_meta("base_pos", btn.position)
 	_drag_grab = hand_container.get_local_mouse_position() - base
-	btn.modulate = Color(1, 1, 1, DRAG_SOURCE_ALPHA)
-	_drag_ghost = _make_drag_ghost(btn)
+	# 触屏档：10px 就起拖（远早于 24px 的确认阈值），此刻可能只是「想点选但手抖」——
+	# 所以软启动：源牌只淡到 0.55、幽灵牌提到 0.9；若最终回退成点选，视觉上不会闪一下深灰。
+	if _touch_ui:
+		btn.modulate = Color(1, 1, 1, TOUCH_DRAG_SOURCE_ALPHA)
+		_drag_ghost = _make_drag_ghost(btn, TOUCH_DRAG_GHOST_ALPHA)
+	else:
+		btn.modulate = Color(1, 1, 1, DRAG_SOURCE_ALPHA)
+		_drag_ghost = _make_drag_ghost(btn)
 	_drag_line = _make_drag_line()
 	_update_drag_follow()
 
 
 # 幽灵牌：复制被拖的牌（复刻牌面），只要不吃鼠标就不会干扰判定
-func _make_drag_ghost(src: Button) -> Control:
+func _make_drag_ghost(src: Button, alpha: float = DRAG_GHOST_ALPHA) -> Control:
 	var ghost := src.duplicate() as Control
 	if ghost == null:
 		return null
 	ghost.name = "DragGhost"
 	ghost.z_index = Z_DRAG
 	ghost.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ghost.modulate = Color(1, 1, 1, DRAG_GHOST_ALPHA)
+	ghost.modulate = Color(1, 1, 1, alpha)
 	hand_container.add_child(ghost)
 	return ghost
 
@@ -4177,6 +4197,8 @@ func _make_drag_line() -> ColorRect:
 
 func _update_drag_follow() -> void:
 	var mp: Vector2 = hand_container.get_local_mouse_position()
+	# 累计最大位移：跟手位置可能来回晃，但「松手时判点选」只看这次按下走过多远
+	_drag_max_move = maxf(_drag_max_move, get_global_mouse_position().distance_to(_drag_press_pos))
 	if is_instance_valid(_drag_ghost):
 		_drag_ghost.position = mp - _drag_grab
 	_drag_slot = _insert_slot_at(mp.x)
@@ -4229,6 +4251,18 @@ func _finish_drag(drop_pos: Vector2 = Vector2.INF) -> void:
 	var slot: int = _drag_slot
 	var gp: Vector2 = get_global_mouse_position() if drop_pos == Vector2.INF else drop_pos
 	var in_zone: bool = hand_container.get_global_rect().has_point(gp)
+	# 触屏档：起拖门槛只有 10px（为了跟手），松手时总位移仍不到 24px → 判为「点选」。
+	# 这样手指小幅抖动既能看到牌跟手，也不会丢掉那次点击（历史 bug：点击被吞 = 点了没反应）。
+	# 这里必须走 _apply_card_selection：pressed 已被 _drag_suppress_click 吞掉，不会重复选中。
+	if _touch_ui and from >= 0 and _drag_max_move < _drag_threshold():
+		_reset_drag_visuals()
+		_drag_active = false
+		_drag_from = -1
+		_drag_slot = -1
+		_drag_press_idx = -1
+		_apply_card_selection(from)
+		call_deferred("_clear_drag_suppress")
+		return
 	_reset_drag_visuals()
 	_drag_active = false
 	_drag_from = -1
@@ -4534,15 +4568,106 @@ func _restore_card_info() -> void:
 # -------- 卡牌详情压成单行，便于在信息栏一次读完 --------
 func _card_summary_text(card) -> String:
 	if card == null: return ""
-	var vs := "N/A"
-	if card.common_valence.size() > 0:
-		var parts: Array = []
-		for v in card.common_valence:
-			parts.append(("+%d" % v) if v > 0 else str(v))
-		vs = " ".join(parts)
+	var vs: String = _format_valence_full(card.common_valence)
+	if vs == "":
+		vs = "N/A"
 	return "%s %s  |  原子序数 %d  |  族 %s  |  %s  |  化合价 %s  |  相对原子质量 %.2f" % [
 		card.symbol, card.name_cn, card.atomic_number, card.group,
 		card.element_type, vs, card.atomic_weight]
+
+
+# ============================================================
+# 化合价文本：格式化 + 按可用宽度自适应
+# ============================================================
+# 为什么需要这一层：card.common_valence 最多 5 个价（Cl = [-1,1,3,5,7]），
+#   "-1 +1 +3 +5 +7" 在 13px 下实测 85px —— 正好等于整张卡宽（85），触屏 15px 达 98px，
+#   Label 默认不裁剪，于是文字直接画到卡片右边界之外（多价元素卡面溢出 bug）。
+# 帮助页图鉴（迷你卡 96 宽）早就有「只留两个价 + …」的裁剪，卡面一直没做；
+# 本次把两处收敛到同一套：全价 → 去空格 → 降字号 → 两端价 + …。
+func _valence_token(v: int) -> String:
+	return ("+%d" % v) if v > 0 else str(v)
+
+
+func _format_valence_full(vals: Array) -> String:
+	var parts: Array = []
+	for v in vals:
+		parts.append(_valence_token(v))
+	return " ".join(parts)
+
+
+func _format_valence_tight(vals: Array) -> String:
+	var s := ""
+	for v in vals:
+		s += _valence_token(v)
+	return s
+
+
+# 放不下时只留「最低价 + 最高价」+「…」：Cl 在化合物里最常用的就是 -1 / +7。
+# 中间的 +1/+3/+5 不丢：悬停信息栏 _card_summary_text 仍显示全价，化合价选择面板是逐价按钮。
+# 两个价以内原样返回（不动数据顺序，H 仍是 "+1 -1"，与历史显示一致）；
+# 3 个以上才排序取首尾（数据顺序不保证升序，H 的数据就是 [1, -1]）。
+func _format_valence_brief(vals: Array) -> String:
+	if vals.is_empty():
+		return "—"
+	if vals.size() <= 2:
+		return _format_valence_full(vals)
+	var sorted_vals: Array = vals.duplicate()
+	sorted_vals.sort()
+	return "%s %s…" % [_valence_token(sorted_vals[0]), _valence_token(sorted_vals[-1])]
+
+
+# 分级收缩：全价 → 去空格 → 逐档降字号（≥CARD_VAL_MIN_FS）→ 两端价 + …
+# 末档落定后 clip_text=true 兜底：任何数据 / 字体下都不会再画出卡片右边界。
+# 实际文本宽写进 meta("fit_w")，圆底价态 chip（A1）与测试直接复用，不再各量一遍。
+func _fit_card_valence(lbl: Label, card, max_w: float, base_fs: int) -> void:
+	if lbl == null:
+		return
+	lbl.clip_text = true
+	var vals: Array = card.common_valence if card != null else []
+	if vals.is_empty():
+		lbl.text = "N/A"
+		lbl.add_theme_font_size_override("font_size", base_fs)
+		lbl.set_meta("fit_w", 0.0)
+		return
+	var font: Font = lbl.get_theme_font("font")
+	var min_fs: int = mini(CARD_VAL_MIN_FS, base_fs)
+	var txt_full: String = _format_valence_full(vals)
+	var txt_tight: String = _format_valence_tight(vals)
+	var best_text := ""
+	var best_fs := 0
+	if _valence_fits(font, txt_full, base_fs, max_w):
+		# 最常见的情况：单 / 双价元素原样显示（+2、-3 +3 +5、+2 +3）
+		best_text = txt_full
+		best_fs = base_fs
+	elif _valence_fits(font, txt_tight, base_fs, max_w):
+		# 5 个价以上：去掉空格就够（Cl 13px 全价 85 → 72）
+		best_text = txt_tight
+		best_fs = base_fs
+	else:
+		var fs: int = base_fs - 1
+		while fs >= min_fs:
+			if _valence_fits(font, txt_tight, fs, max_w):
+				best_text = txt_tight
+				best_fs = fs
+				break
+			fs -= 1
+		if best_text == "":
+			# 紧凑档 / 触屏放大档：连去空格都放不下 → 只留两端价
+			best_text = _format_valence_brief(vals)
+			best_fs = min_fs
+	lbl.text = best_text
+	lbl.add_theme_font_size_override("font_size", best_fs)
+	lbl.set_meta("fit_w", minf(_valence_width(font, best_text, best_fs), max_w))
+
+
+func _valence_fits(font: Font, txt: String, fs: int, max_w: float) -> bool:
+	return _valence_width(font, txt, fs) <= max_w
+
+
+func _valence_width(font: Font, txt: String, fs: int) -> float:
+	if font == null:
+		return 0.0
+	return font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 
 
 # -------- 点击重排后鼠标未移动，需主动恢复悬停状态 --------
@@ -4624,20 +4749,16 @@ func _build_card_button(card, idx: int) -> Button:
 	l_name.position = Vector2(5, 48)
 	btn.add_child(l_name)
 
-	var val_str = ""
-	for v in card.common_valence:
-		if val_str != "": val_str += " "
-		if v > 0: val_str += "+%d" % v
-		else: val_str += "%d" % v
 	var l_val = Label.new()
 	l_val.name = "CardValence"
-	l_val.text = val_str
 	l_val.add_theme_font_size_override("font_size", _touch_fs(13, 2))
 	l_val.add_theme_color_override("font_color", Color(0.55, 0.2, 0.2, 1))
 	l_val.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l_val.size = Vector2(85, 18)
 	l_val.position = Vector2(5, 72)
 	btn.add_child(l_val)
+	# 全价优先；放不下时自动去空格 / 降字号 / 只留两端价（不会画出卡边）
+	_fit_card_valence(l_val, card, 85.0 - CARD_VAL_PAD, _touch_fs(13, 2))
 
 	var l_mass = Label.new()
 	l_mass.name = "CardMass"           # 具名：触屏档测试按名字取字号（校验 9 → 12）
@@ -4722,6 +4843,11 @@ func _on_card_clicked(index: int) -> void:
 	if _drag_suppress_click:
 		_drag_suppress_click = false
 		return
+	_apply_card_selection(index)
+
+
+# 选中 / 取消选中（Button 点击与触屏「起拖后回退成点选」共用同一条路径）
+func _apply_card_selection(index: int) -> void:
 	# 只读视角（AI 回合查看自己的手牌）不接受选牌
 	if _hand_read_only:
 		return

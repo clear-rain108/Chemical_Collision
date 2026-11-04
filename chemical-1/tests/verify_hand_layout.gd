@@ -1,6 +1,9 @@
 # 验证手牌重叠布局：尺寸、居中、重叠步长、悬停上浮
 extends SceneTree
 
+const CardDatabaseScript = preload("res://scripts/CardDatabase.gd")
+const CardDataScript = preload("res://scripts/CardData.gd")
+
 var fails: int = 0
 
 func _init():
@@ -47,6 +50,7 @@ func _run():
 	_test_tutorial_layout(scene)
 	_test_warning_toast(scene)
 	_test_style_factory(scene)
+	_test_valence_fit(scene)
 
 	await _test_case(scene, hc, 16, true)
 	await _test_case(scene, hc, 8, true)
@@ -630,6 +634,59 @@ func _test_style_factory(scene) -> void:
 		var sb = scene.hand_buttons[0].get_theme_stylebox("normal")
 		_check(sb is StyleBoxFlat and sb.corner_radius_top_left == int(scene.CARD_RADIUS),
 			"手牌实际样式来自工厂（圆角 %d）" % int(scene.CARD_RADIUS))
+
+
+# ---------------- 化合价文本：多价元素不画出卡边 ----------------
+# 历史 bug：CardValence 直接拼 card.common_valence。"-1 +1 +3 +5 +7"（Cl）在 13px 下实测 85px，
+# 正好等于整张卡宽；触屏 15px 达 98px；紧凑档 label 只有 44 宽 → 文字画到卡片外面。
+func _test_valence_fit(scene) -> void:
+	var cl_card = null
+	var h_card = null
+	for e in CardDatabaseScript.get_element_data():
+		var card = CardDataScript.new(e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7], e[8], e[9], e[10], e[11], e[12])
+		if card.symbol == "Cl":
+			cl_card = card
+		elif card.symbol == "H":
+			h_card = card
+	_check(cl_card != null and h_card != null, "价态自适应：Cl / H 数据可取")
+	if cl_card == null or h_card == null:
+		return
+
+	var btn = scene.call("_build_card_button", cl_card, 0)
+	scene.hand_container.add_child(btn)
+	var val: Label = btn.get_node_or_null("CardValence")
+	if val == null:
+		_check(false, "价态自适应：CardValence 节点缺失")
+		btn.queue_free()
+		return
+
+	# 1) 全宽卡：可用宽 = 85 - CARD_VAL_PAD(6) = 79
+	var w_full: float = _measure_valence(scene, val)
+	_check(w_full <= 79.0, "Cl 全宽卡价态不溢出（实测 %.1f ≤ 79）" % w_full)
+	_check(val.clip_text, "价态 Label 打开 clip_text 兜底（任何数据都不画出卡边）")
+
+	# 2) 紧凑档：可用宽 = 44 - 6 = 38，且只留两端价
+	scene.call("_apply_card_compact", btn, true)
+	var w_compact: float = _measure_valence(scene, val)
+	_check(w_compact <= 38.0, "Cl 紧凑档价态不溢出（实测 %.1f ≤ 38，当前 \"%s\"）" % [w_compact, val.text])
+	_check(val.text == "-1 +7…", "紧凑档只留两端价（实际 \"%s\"）" % val.text)
+
+	# 3) 双 / 单价元素不降级
+	_check(scene._format_valence_full([2, 3]) == "+2 +3", "双价元素仍显示全价（Fe → +2 +3）")
+	# 4) 两个价以内原样返回（不动数据顺序）；3 个以上才排序取首尾
+	_check(scene._format_valence_brief([1, -1]) == "+1 -1",
+		"brief 两价原样返回（H=[1,-1] → \"+1 -1\"，实际 \"%s\"）" % scene._format_valence_brief([1, -1]))
+	_check(scene._format_valence_brief([-1, 1, 3, 5, 7]) == "-1 +7…",
+		"brief 多价排序取首尾（Cl → \"-1 +7…\"，实际 \"%s\"）" % scene._format_valence_brief([-1, 1, 3, 5, 7]))
+	# 5) 帮助页图鉴与卡面同源（不再各写一套裁剪）
+	_check(scene.call("_help_valence_text", cl_card) == scene._format_valence_brief(cl_card.common_valence),
+		"帮助页图鉴价态与卡面同一套裁剪")
+	btn.queue_free()
+
+
+func _measure_valence(scene, lbl: Label) -> float:
+	var fs: int = lbl.get_theme_font_size("font_size")
+	return scene._valence_width(lbl.get_theme_font("font"), lbl.text, fs)
 
 
 

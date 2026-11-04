@@ -2,7 +2,7 @@
 # 本套把两边一起钉住 —— 只要有人把「放大」写回 const，这里立刻红。
 #   A1 屏幕适配：project.godot 的 aspect=keep + default_clear_color（无代码可测，见文档）
 #   B  触控尺寸：工具行 48 / 间距 20 / 顶 542、出牌按钮 58、卡牌字号、页面按钮 ≥48
-#   C  触控交互：命中 8px 缓冲、选中上浮、退出二次确认
+#   C  触控交互：命中 8px 缓冲、选中上浮、拖拽 10px 跟手 / 24px 确认（F2）、退出二次确认
 extends SceneTree
 
 var fails: int = 0
@@ -47,6 +47,7 @@ func _run():
 	_test_touch_typography(scene)
 	_test_touch_hit_pad(scene)
 	await _test_touch_select_lift(scene)
+	_test_touch_drag_arm(scene)
 	_test_touch_page_sizing(scene)
 	_test_touch_quit_confirm(scene)
 	_test_back_to_desktop(scene)
@@ -135,7 +136,11 @@ func _test_touch_typography(scene) -> void:
 		"触屏：中文名字号放大（%d ≥ 14，桌面为 12 / 14）" % (nm.get_theme_font_size("font_size") if nm else -1))
 	_check(num != null and num.get_theme_font_size("font_size") == 14,
 		"触屏：原子序字号 12 → 14（左上角号码不再糊成一团）")
-	_check(val != null and val.get_theme_font_size("font_size") == 15, "触屏：价态字号 13 → 15")
+	# 价态字号会按卡宽自适应（Cl 的 5 个价在紧凑档放不下 → 降字号 / 只留两端价），
+	# 因此只校验「落在 11~15 的放大区间内」，不再要求恒定 15（否则首张恰好是 Cl 时会误报）。
+	var vfs: int = val.get_theme_font_size("font_size") if val else 0
+	_check(vfs >= 11 and vfs <= 15,
+		"触屏：价态字号落在 11~15 自适应区间（实际 %d，桌面基准 13）" % vfs)
 	_check(mass != null and mass.get_theme_font_size("font_size") == 12,
 		"触屏：原子量字号 9 → 12（桌面 9 在手机上看不清）")
 	b.queue_free()
@@ -191,6 +196,57 @@ func _test_touch_select_lift(scene) -> void:
 	_check(_approx(hb.position.y, base.y), "触屏：取消选中后落回原位（无残留偏移）")
 
 
+# ---------------- 5b. 触控交互：拖拽跟手 + 点选回退（F2） ----------------
+# 旧实现：按住 300ms 且移动 24px 才起拖 —— 按住后牌一直不动（最多 300ms 无反馈），
+# 松手若未达门槛那次 pressed 又被 _drag_suppress_click 吞掉，表现为「点了没反应」。
+# 新实现：10px 立即起拖（跟手），松手总位移 <24px 判为点选。
+func _test_touch_drag_arm(scene) -> void:
+	scene._touch_ui = true
+	_check(_approx(scene._drag_arm_threshold(), 10.0) and _approx(scene._drag_threshold(), 24.0),
+		"触屏：起拖 10px（跟手）/ 确认 24px（重排）两档分离")
+	_check(scene._drag_arm_threshold() < scene._drag_threshold(),
+		"触屏：起拖门槛低于确认门槛（留出「跟手了但松手仍算点选」的区间）")
+	if scene.hand_buttons.size() < 2:
+		_check(false, "触屏拖拽：手牌不足 2 张，无法验证回退")
+		scene._touch_ui = false
+		return
+	var cp = scene.game_manager.get_current_player()
+	var before: Array = cp.hand.duplicate()
+
+	# 1) 只走 12px 就松手 → 回退成点选：牌被选中，手牌顺序不变
+	scene.selected_indices.clear()
+	scene._update_hand_buttons()
+	scene._drag_press_idx = 0
+	scene._drag_press_pos = scene.hand_container.get_global_mouse_position()
+	scene._begin_drag(0)
+	_check(scene._drag_active, "触屏：10px 起拖后立刻进入拖拽态（无长按等待）")
+	_check(scene._drag_ghost != null and scene._drag_ghost.modulate.a > 0.85,
+		"触屏：软启动幽灵牌接近实色（回退成点选时不会闪一下深灰）")
+	scene._drag_max_move = 12.0
+	scene._drag_slot = 1
+	scene._finish_drag(scene.hand_container.get_global_rect().get_center())
+	_check(0 in scene.selected_indices,
+		"触屏：位移 <24px 松手回退成点选（牌被选中，不是「点了没反应」）")
+	_check(cp.hand == before, "触屏：回退成点选时手牌顺序不动（不会误重排）")
+	_check(not scene._drag_active and scene._drag_ghost == null and scene._drag_line == null,
+		"触屏：回退后拖拽视觉已清理（无残留幽灵牌 / 指示线）")
+
+	# 2) 走满 40px → 真正重排（仍不额外选中）
+	scene.selected_indices.clear()
+	scene._update_hand_buttons()
+	scene._drag_press_idx = 0
+	scene._drag_press_pos = scene.hand_container.get_global_mouse_position()
+	scene._begin_drag(0)
+	scene._drag_max_move = 40.0
+	scene._drag_slot = 2
+	scene._finish_drag(scene.hand_container.get_global_rect().get_center())
+	_check(cp.hand != before, "触屏：位移 ≥24px 松手真的重排（数据层顺序已变）")
+	_check(not (0 in scene.selected_indices), "触屏：重排后不会顺带选中（补发的 pressed 被吞）")
+	scene.selected_indices.clear()
+	scene._update_hand_buttons()
+	scene._touch_ui = false
+
+
 # ---------------- 6. 触控尺寸：开始页等页面按钮 ----------------
 func _test_touch_page_sizing(scene) -> void:
 	scene._touch_ui = true
@@ -233,8 +289,9 @@ func _test_touch_quit_confirm(scene) -> void:
 func _test_back_to_desktop(scene) -> void:
 	scene._touch_ui = false
 	_check(_approx(scene._tool_btn_h(), 32.0) and _approx(scene._tool_btn_gap(), 10.0)
-			and _approx(scene._selected_lift(), 0.0) and _approx(scene._drag_threshold(), 6.0),
-		"关掉触屏档后所有取值回到桌面基准（无残留状态）")
+			and _approx(scene._selected_lift(), 0.0) and _approx(scene._drag_threshold(), 6.0)
+			and _approx(scene._drag_arm_threshold(), 6.0),
+		"关掉触屏档后所有取值回到桌面基准（拖拽只剩 6px 一档）")
 	scene._style_game_tool_buttons()
 	_check(_approx(scene.quit_button.size.y, 32.0) and _approx(scene.quit_button.position.x, 708.0),
 		"桌面：重新归一后工具行回到 32 高 / x=708")

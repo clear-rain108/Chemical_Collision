@@ -23,6 +23,7 @@
 | **P10 / P10.1** | 元素限制（前 20 号 + 可勾选扩展）+ 4 条补充规则合成一小页 + chip 紧凑化 | ✅ 完成（见 §8.7） |
 | **P11** | 游戏页工具按钮统一画风（`_style_game_tool_buttons()` 接管样式 + 几何归一） | ✅ 完成（见 §8.8） |
 | **P12** | 化学规则收口：假化合物拦截 + 顺序约束只作用于被指定玩家（非 UI 改动） | ✅ 完成（2026-11-04；见 GAMEPLAY_RULES §9 / §16.2、COMPOUND_MECHANISM_COMPARISON §6） |
+| **批次 A** | P4 批次 A 的纯代码条目：F1 多价元素卡面溢出 / F2 触屏拖拽死区 / A1 按钮·日志·价态 chip / A2 手牌·桌面动效 / A3 出牌·抽牌·弃牌动画 | 🚧 进行中（F1 ✅ / F2 ✅，见 §13） |
 | **P4** | 美术升级方向文档的其余条目（卡牌重绘 / 字体 / 图标 / 音频 / A5 悬停与选中放大） | ⏳ 未展开（§6 核对表 22 项：✅9 / △1 / ❌12；按 §6.2 分批次 A（纯代码）/ 批次 B（需素材）推进） |
 
 ---
@@ -727,4 +728,115 @@ meta 不存在时会刷 `ERROR`；改为 `has_meta()` 判定，并给 `StartRule
 
 **验收**：23 个测试套件全绿（新增 `tests/verify_tool_buttons.gd` **109 条**：绑定 4 / 样式接管 52 /
 悬停光晕 10 / 语义态 12 / 几何 8 / 相邻区块不重叠 5 / 按序按钮 5 / 教程高亮框 7 / 悬停缩放 6）；
+
+---
+
+## 13. 批次 A 实施记录（缺陷修复 + P4 批次 A 打磨）
+
+P4《美术升级方向》核对表里 12 项 ❌ 中有 5 项是纯代码可做的（不需要素材），
+连同两个试玩反馈的缺陷（F1 / F2）一起按「一次一个主题、一次一个提交」推进。
+
+### 13.1 F1：多价元素化合价画出卡边
+
+**现象**：Cl / I / S / Cr 等元素的卡面「常见化合价」一行会画到卡片右边界外面，
+紧凑档（8 张以上重叠）更明显，触屏档 15px 时半个字符串贴在牌外。
+
+**根因**：`CardValence` 是固定 85×18（紧凑 44×18）的 `Label`，文本直接由
+`card.common_valence` 拼成 `" ".join()`，**既没有 `clip_text` 也没有换行**。
+实测（`ThemeDB` 默认字体）：
+
+| 元素 | 价态 | 13px | 15px | 可用宽（85−6） |
+|---|---|---|---|---|
+| Cl | `-1 +1 +3 +5 +7` | **85.0** | **98.0** | 79 |
+| I | `-1 +1 +5 +7` | 67.0 | 77.0 | 79 |
+| N / S / Br | `-3 +3 +5` 等 | 49.0 | 56.0 | 79 |
+| Cr / Mn | `+2 +3 +6` | 52.0 | 60.0 | 79 |
+
+13px 时 Cl 的宽度**正好等于整张卡宽 85**，所以一直是「压线溢出」，触屏放大后就明显了。
+帮助页图鉴（迷你卡 96 宽）早就有「只留前 2 个 + …」的裁剪，卡面却一直没做 —— 两套实现分叉。
+
+**方案：单一 `_fit_card_valence()` 分级收缩链**（`full → tight → 降字号 → brief → clip`）
+
+| 档 | 文本 | 触发条件 | 例（Cl） |
+|---|---|---|---|
+| 1 全价 | `_format_valence_full()`（带空格） | 放得下就用，最易读 | 13px 单卡不触发 |
+| 2 去空格 | `_format_valence_tight()` | 全价超宽但去空格够 | `-1+1+3+5+7` = 72 ≤ 79 |
+| 3 降字号 | tight + 逐档 −1px | 仍超宽，逐档试到 `CARD_VAL_MIN_FS = 10` | 触屏 15 → 14（77 ≤ 79） |
+| 4 两端价 | `_format_valence_brief()` | 降到下限还超宽 | 紧凑档 `-1 +7…` @10 = 32 ≤ 38 |
+| 5 兜底 | `clip_text = true` | 任何数据 / 字体下都不再画出卡边 | 同左 |
+
+- `_format_valence_brief()` 只留「最低价 + 最高价」+「…」：Cl 在化合物里最常用的就是 -1 / +7；
+  中间的 +1/+3/+5 不丢 —— 悬停信息栏（`_card_summary_text`）仍显示全价、化合价面板是逐价按钮。
+- 两个价以内**原样返回**（不动数据顺序，H 仍是 `+1 -1`）；3 个以上才排序取首尾。
+- 实测宽写进 `label.set_meta("fit_w", w)`：A1 的圆底价态 chip 直接用它算底宽，不再重复测量。
+- 帮助页 `_help_valence_text()` 改为委托 `_format_valence_brief()`，两处规则合一。
+
+| 位置 | 改动 |
+|---|---|
+| `GameUI.gd` 常量区 | `CARD_VAL_PAD = 6` / `CARD_VAL_MIN_FS = 10` |
+| `_valence_token` / `_format_valence_full/tight/brief` / `_fit_card_valence` / `_valence_width/fits` | 新增（紧接 `_card_summary_text`，化合价文本的唯一实现） |
+| `_build_card_button()` | 价态 Label 改为「建好 → add_child → `_fit_card_valence`」，不再手拼字符串 |
+| `_apply_card_compact()` | 尺寸定下来后重新 fit（紧凑档可用宽 38），字号/文本随档位重算 |
+| `_help_valence_text()` | 委托 `_format_valence_brief()`（删掉「前 2 个 + …」旧实现） |
+| `_card_summary_text()` | 复用 `_format_valence_full()`（原来内联拼一份） |
+| `tests/verify_hand_layout.gd` | **+6**：Cl 全宽不溢出（72 ≤ 79）/ `clip_text` 兜底 / 紧凑档不溢出（32 ≤ 38 且文本为 `-1 +7…`）/ 双价不降级 / 两价原样 / 多价排序 / 图鉴同源 |
+| `tests/verify_touch_ui.gd` | 价态字号断言由「恒等于 15」放宽为「落在 11~15 自适应区间」—— 首张牌恰好是 Cl 时会合法地降到 14 / 11 |
+
+**为什么不用 `autowrap_mode`**：价态是「一行 + 短串」，折行会把 18px 高的 Label 变两行压到原子量；
+放大卡面 / 缩字号又会破坏与符号、中文名的视觉层级。分级收缩能保住「小价元素保持原样」这个前提 ——
+只有真的放不下（Cl / I 这类 4~5 价格式）才让位。
+
+### 13.2 F2：触屏拖拽「按住后牌不动、松手还点不中」
+
+**现象**（真机）：按住一张牌拖动时，前 300ms 牌完全不动（幽灵牌不出现、插入线不出现），
+像卡了一样；如果手指只挪了十几像素就松手，那次点击还会被吞掉 —— 表现为「点了没反应」。
+
+**根因**：`_update_hand_drag()` 里有两道闸串联：
+
+```gdscript
+if moved >= _drag_threshold():            # 触屏 24px
+    if _touch_ui and Time.get_ticks_msec() - _drag_press_at < TOUCH_DRAG_LONG_PRESS_MS:
+        return                            # 还要再等 300ms
+    _begin_drag(...)
+```
+
+- 第一道 24px 是为了区分「手指抖动」和「有意拖拽」，但**起拖**也被它挡住了；
+- 第二道 300ms 长按是后来补的（因为起拖门槛降到 10 也会误判），两道叠起来最坏 300ms + 24px 才跟手；
+- 起拖前 `_drag_suppress_click` 没置位，但**起拖后**置位了 —— 松手若判定为「已完成拖拽」就会吞掉 pressed，
+  而真正落库又要 `slot != from`，于是 10~24px 这一档变成「既没重排、也没点选」的静默失败。
+
+**方案：把「跟手」与「确认」拆成两档，判定全部挪到松手时**
+
+| 常量 | 值 | 语义 |
+|---|---|---|
+| `TOUCH_DRAG_ARM_MOVE` | 10 | 位移 ≥10px 立即起拖（幽灵牌 + 插入线跟手），不再等长按 |
+| `TOUCH_DRAG_THRESHOLD` | 24 | 松手时**累计最大位移** ≥24px 才落库重排 |
+| （删除）`TOUCH_DRAG_LONG_PRESS_MS` | — | 长按闸整个去掉，`_drag_press_at` 成员一并删除 |
+
+- `_drag_max_move`（新成员）在按下时清零、在 `_update_drag_follow()` 里 `maxf` 单调累计；
+  `_finish_drag()` 用它判定：`_touch_ui && _drag_max_move < 24` → **回退成点选**。
+- 关键不等式：**起拖门槛（10）< 回退门槛（24）**，因此「跟手了」永远不会让一次点选丢失
+  —— 这是旧实现最致命的地方（吞掉 pressed 且不重排）。
+- 回退走 `_apply_card_selection(idx)`（从 `_on_card_clicked` 抽出的共享路径），
+  振动反馈 / 提示作废 / 三个 `_update_*` 全部复用；`_drag_suppress_click` 仍延后一帧清除，
+  挡住 Button 补发的那次 pressed，不会「选中又立刻取消」。
+- 软启动视觉：触屏源牌 0.55（桌面 0.28）、幽灵牌 0.9（桌面 0.85）——
+  10px 就起拖意味着绝大多数点选都会短暂进入拖拽态，一步淡到底会闪一下。
+
+| 位置 | 改动 |
+|---|---|
+| `GameUI.gd` 常量区 | `TOUCH_DRAG_ARM_MOVE` / `TOUCH_DRAG_THRESHOLD` / `TOUCH_DRAG_SOURCE_ALPHA` / `TOUCH_DRAG_GHOST_ALPHA`；删 `TOUCH_DRAG_LONG_PRESS_MS` |
+| 成员变量 | 删 `_drag_press_at`，加 `_drag_max_move` |
+| `_drag_arm_threshold()` | 新增：触屏 10 / 桌面 `DRAG_THRESHOLD(6)`（桌面单档，行为不变） |
+| `_update_hand_drag()` | 用 `_drag_arm_threshold()` 起拖，去掉长按分支，累计 `_drag_max_move` |
+| `_update_drag_follow()` | 累计 `_drag_max_move` |
+| `_begin_drag()` / `_make_drag_ghost()` | 触屏软启动透明度（`_make_drag_ghost` 加 `alpha` 参数） |
+| `_finish_drag()` | 触屏位移 <24px → 回退成点选，`call_deferred("_clear_drag_suppress")` |
+| `_on_card_clicked()` / `_apply_card_selection()` | 抽出共享选中路径 |
+| `tests/verify_touch_ui.gd` | **+2 +1 段**：10/24 两档分离、起拖 < 确认（不等式回归锁）、12px 松手回退成点选（且顺序不变、视觉已清理）、40px 松手真的重排且不额外选中；桌面基准断言追加 `_drag_arm_threshold() == 6` |
+| `tests/verify_hand_reorder.gd` | **+4**：桌面单档（6/6）、`_drag_max_move` 单调不减、桌面位移 0 也照常重排（回退分支只属于触屏）、重排后不选中 |
+
+**验收**：`verify_hand_layout` / `verify_touch_ui` / `verify_hand_reorder` /
+`verify_hand_view` / `verify_hand_runtime` / `verify_help_page` 全绿。
+
 `--headless --quit-after 90` 无 ERROR；真实窗口核对 4 组状态（常态 / 悬停 / 提示开 / 退出悬停）。

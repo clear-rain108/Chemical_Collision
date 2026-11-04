@@ -1,5 +1,6 @@
 # 验证手牌拖拽重排（P7）
 # 覆盖：数据层手动顺序 / 「按序」恢复 / 索引→卡片对象映射 / 拖出区外取消 / 布局回归
+#      + F2 触屏两档（10px 起拖 / 24px 确认）在桌面档不受影响（起拖 = 确认 = 6px，无回退分支）
 # 说明：拖拽本身由 _process 轮询真实鼠标驱动，headless 下鼠标恒为 (0,0)，
 # 因此测试直接调用 _begin_drag() → 注入 _drag_slot → _finish_drag(落点)
 # 复用同一套状态机，验证的是真实落库路径，而不是另写一份逻辑。
@@ -83,6 +84,29 @@ func _run():
 	_check(not is_instance_valid(scene._drag_line), "松手后插入指示线已释放")
 	_check(scene._reorder_tip == "", "重排提示已被信息栏消费")
 	_check(scene._reorder_btn.visible, "手动排列模式下「按序」按钮出现")
+
+	# ---------- C2. 桌面档：起拖 = 确认，没有「回退成点选」分支 ----------
+	_check(absf(scene._drag_arm_threshold() - 6.0) < 0.01
+			and absf(scene._drag_threshold() - 6.0) < 0.01,
+		"桌面：起拖与确认同为 DRAG_THRESHOLD(6)（鼠标没有手指抖动问题，不需要两档）")
+	# _drag_max_move = 本次按下走过多远（单调），触屏回退判定只看它
+	scene._drag_press_pos = Vector2.ZERO
+	scene._drag_max_move = 3.0
+	scene._begin_drag(0)
+	scene._update_drag_follow()
+	_check(scene._drag_max_move >= 3.0, "拖拽跟手时累计位移单调不减（不会被较小的瞬时值覆盖）")
+	scene._cancel_drag()
+
+	# 桌面：位移很小也照常按槽位重排（回退分支只属于触屏档）
+	var before_cards: Array = cp.hand.duplicate()
+	scene._drag_press_idx = 0
+	scene._begin_drag(0)
+	scene._drag_max_move = 0.0
+	scene._drag_slot = 2
+	scene._finish_drag(_drop_inside())
+	await process_frame
+	_check(cp.hand != before_cards, "桌面：位移 0 也按槽位重排（不误判成点选）")
+	_check(not (0 in scene.selected_indices), "桌面：拖拽重排后不会顺带选中")
 
 	# ---------- D. 按钮与数据层一一对应 ----------
 	var ok_meta := true
