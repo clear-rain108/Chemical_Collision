@@ -1,7 +1,7 @@
 # 化学碰撞 — 程序架构与实现文档
 
-> **版本**: 14.5  
-> **日期**: 2026-11-02  
+> **版本**: 14.6  
+> **日期**: 2026-11-04  
 > **引擎**: Godot 4.x / GDScript
 
 ---
@@ -186,7 +186,7 @@ CardPatterns.detect_pattern(cards, skip_clan_bomb=false):
 | is_compound | 化合物合法性检测 =「默认配平成功 或 价态搜索可配平」，二者都要求电负性有序 |
 | _assign_valences | **唯一价态分配入口**：默认配平（金属取最高正价 / 非金属取最低负价 / 无金属时提升 H 与酸中心原子）；显式化合价走同一函数校验 |
 | _search_valences / _valence_domains / _dfs_valences / _valence_assignment_ok | 默认配平失败时的价态搜索：2~3 种元素、按实际张数电荷平衡、正价元素电负性 ≤ 负价元素（NCl₃/BCl₃/ClF 由此识别，NCl/BrN/IN 被排除）|
-| get_valence_pairs | AI / 提示 / 化合价面板共用的唯一价态出口（默认配平优先，失败再搜索）|
+| get_valence_pairs | AI / 提示共用的价态出口（默认配平优先，失败再搜索）；人类面板列 `common_valence` 全价，最终由 `_assign_valences` 裁决 |
 | get_compound_formula | 配平 + 化学式生成（`ratio_ok=false` 即视为打不出）|
 | get_compound_name / _try_get_oxy_name | IUPAC 命名（含氧酸/含氧酸盐/酸式盐）|
 | is_organic / get_organic_name | 有机物识别与命名（CH4/C2H6/C3H8 及单一卤代物）|
@@ -209,7 +209,7 @@ CompoundSolver.is_compound() / is_organic()
 
 ## 6. 逻辑层 - GameManager.gd
 
-**职责**: 回合管理、出牌校验、族炸接炸链、上限弃牌（牌的使用和打出）。玩家信息已拆至 PlayerManager，日志已拆至 GameLogger。
+**职责**: 回合管理、出牌校验、族炸接炸链、顺序牌型约束（`sequence_constraint_target`：只作用于被指定的那名玩家）、上限弃牌（牌的使用和打出）。玩家信息已拆至 PlayerManager，日志已拆至 GameLogger。
 
 ### PlayerInfo 玩家信息类（已拆至 PlayerManager.gd）
 
@@ -244,6 +244,9 @@ PlayerManager.PlayerInfo
 | element_limit_enabled | 补充规则：元素限制（默认 `false`；`true` 时牌库 = 前 20 号 + `allowed_extra_elements`） |
 | allowed_extra_elements | 元素限制额外放行的符号（如 `["Fe","Cu"]`；关闭限制时忽略） |
 | table_custom_valences | 桌面化合物实际化合价（play_cards 出牌时保存，渲染化学式/排序/化合价显示用）|
+| sequence_constraint | 顺序牌指定牌型（`CardPattern.Pattern`；`-1` = 未指定）|
+| sequence_constraint_active | 约束是否生效（`set_sequence_constraint()` 置 true；只有被指定的玩家结算后才置 false）|
+| sequence_constraint_target | 被指定的座位号（`-1` = 无目标）。`set_sequence_constraint()` 取「**反转方向**上的下一名」（顺序牌在 `play_cards()` 里已先反转方向），并跳过手牌为空的玩家；`play_cards()` 只在 `player_index == sequence_constraint_target` 时校验，别人出牌 / 族炸 / 接炸链结束 / 跳过都不解除 |
 | _get_hand_limit() | min(players×4, 18) |
 
 ### 核心函数流程
@@ -254,13 +257,19 @@ play_cards(idx, cards, cv) → int
   ├─ 元素限制：开关开启且含越界元素 → -8（is_element_allowed 兜底）
   ├─ detect_pattern → 族炸/非族炸判定
   ├─ 化合物 + 开关关闭 + 含≥2种卤素 → -7（卤族互化，is_halogen_mix）
+  ├─ 顺序约束：仅 idx == sequence_constraint_target 时校验，牌型不符 → -6
   ├─ 族炸: 冷却/免疫/接炸比较 → next_turn()（牌权移交）
-  ├─ 化合物: 比例校验 → 保存 table_custom_valences → 溢出检查
+  │        └─ 若 idx 正是 target 且约束为「族炸」→ 视为完成，清约束
+  ├─ 化合物: 式子为空 或 ratio_ok=false → -1（假化合物拦截）
+  │        └─ 保存 table_custom_valences → 溢出检查
   └─ 非族炸: 牌型匹配 → 比大小
 player_pass(idx) → 上限检查 → 抽牌 → next_turn()
-player_discard_and_pass(idx, card) → 上限弃牌
+  └─ idx == target 时：罚抽 2 张并结束约束（达上限先弃 1 张）
+player_discard_and_pass(idx, card) → 上限弃牌（target 额外罚抽 2 张并结束约束）
+set_sequence_constraint(p) → target = 反转方向上的下一名（跳过空手牌）+ 日志 + next_turn()
+player_fail_sequence_constraint(idx) → 罚抽 2 张 + has_passed + 清约束 + next_turn()
 next_turn() → 族炸链? _intercept_next() : 找下一位未pass玩家
-_init_tutorial(level) → 预设手牌 + 教程步骤初始化
+_init_tutorial(level) → 预设手牌 + 教程步骤初始化（含顺序约束三字段复位）
 _check_tutorial_progress(pattern, human) → 进度检查
 ```
 
@@ -292,6 +301,11 @@ AIPlayer.auto_play(game_manager, ui_refresh)
   ├─ 族炸链：冷却→跳过 / 否则出更大族炸
   └─ 常规：族炸→化合物 O(n²)（`halogen_exchange_allowed` 关闭时跳过纯卤素对）→双原子→单质→pass
 ```
+
+> 化合物化合价**不再由 AI 自算**（旧实现「正价取 max / 负价取 min」已删），统一调用
+> `CompoundSolver.get_valence_pairs()` —— 与提示按钮同一个取价出口；人类面板仍列
+> `common_valence` 全价，但三条路径最终都由 `play_cards()` 的 `_assign_valences` 裁决，
+> 因此 AI 不会提出引擎拒绝的假化合物（NCl / BrN / IN）。
 
 ### 7.4 TutorialController.gd（教程控制）
 
@@ -768,7 +782,9 @@ GameManager.init_game / init_tutorial
 |------|------|--------|
 | detect_pattern | CardPatterns.gd | O(n) |
 | _is_clan_bomb | CardPatterns.gd | O(n) |
-| get_compound_formula | CompoundSolver.gd（含非金属正价兜底）| O(n) |
+| get_compound_formula | CompoundSolver.gd（配平 + 化学式；空式子 / `ratio_ok=false` 即打不出）| O(n) |
+| `_assign_valences` | CompoundSolver.gd（唯一价态分配入口：默认配平 + 电负性有序校验）| O(n) |
+| `_search_valences` | CompoundSolver.gd（默认配平失败时的价态搜索：2~3 种元素 DFS、按实际张数电荷平衡；>3 种元素不做搜索）| O(价域^元素种数) |
 | compare_cards | CardPatterns.gd | O(n) |
 | generate_deck | CardDatabase.gd | O(28×copies) |
 | shuffle | CardDatabase.gd | O(n) Fisher-Yates |
@@ -874,5 +890,5 @@ godot --headless --path . --script tests/verify_touch_ui.gd
 
 ---
 
-**文档版本**: 14.5  
+**文档版本**: 14.6  
 **最后更新**: 2026-11-02

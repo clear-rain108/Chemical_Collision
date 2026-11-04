@@ -1,7 +1,7 @@
 # 化学碰撞 — 玩法规则与程序实现文档
 
-> **版本**: 16.6  
-> **日期**: 2026-11-01  
+> **版本**: 16.7  
+> **日期**: 2026-11-04  
 > **引擎**: Godot 4.x / GDScript
 
 ---
@@ -188,12 +188,17 @@ detect_pattern(cards, skip_clan_bomb=false) 判定优先级:
 2. 按**实际张数**加权后总电荷 = 0（例：N 1 张 + Cl 3 张 → N(+3) / Cl(-1)）；
 3. 正价元素的电负性 ≤ 负价元素的电负性（正价者必须更"金属"）。
 
-由此：`N+Cl` / `Br+N` / `I+N` **不成化合物**（非金属无正价，或电负性倒置），
+由此：`N+Cl` / `Br+N` / `I+N` **不成化合物**（1:1 凑不出 0 电荷：N 价域只有 -3/+3/+5），
 而 `NCl₃`（N +3 / Cl -1）、`NI₃`（N -3 / I +1）、`BCl₃`、`ClF` 成立。
 
-- **唯一裁决入口**：`CompoundSolver.get_valence_pairs()`（默认配平优先，失败再做价态搜索）。
-  化合价面板给出的价、`play_cards()` 接受的价、提示 / AI 的建议全部来自它，
-  保证「面板能选 = 引擎接受 = 提示建议」三处一致。
+- **唯一裁决点**：`GameManager.play_cards()` 里的 `CompoundSolver.get_compound_formula(cards, cv)`
+  （内部 `_assign_valences`）。面板 / AI / 提示给出的任何价都要过它，空式子或 `ratio_ok == false` 即 `-1`。
+- **AI / 提示的取价出口**：`CompoundSolver.get_valence_pairs()`（默认配平优先，失败再做价态搜索）。
+  两者因此不会提出引擎会拒的组合；代价是也不主动建议「低价金属」
+  （如 Fe 1 张 + Cl 2 张 的 Fe(+2)，只能玩家在面板手选）。
+- **人类面板**：`_update_valence_buttons()` 列出每张牌 `common_valence` 的**全部价**，玩家自选；
+  UI 只预检「一正一负 + 最简比张数 + 手牌够不够」，选出的组合仍由引擎裁决 ——
+  所以面板选项是**超集**（`NCl` / `ClN` 这类组合能选，但确认后会被 `-1` 拒绝）。
 - **空式子不再放行**：`play_cards()` 化合物分支若 `get_compound_formula()` 为空或 `ratio_ok=false`，
   一律返回 `-1`（旧实现"给不出化学式就放行"会让 `ClN` 这类假化合物混进桌面）。
 - 回归用例：`tests/verify_compound_chemistry.gd`（solver / 引擎 / 提示 / AI 四层）。

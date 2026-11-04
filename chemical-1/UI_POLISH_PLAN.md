@@ -1,7 +1,7 @@
 # UI 视觉打磨推进计划
 
-> **最后更新**: 2026-10-31  
-> **当前状态**: P1 / P1.x / P2 / P3 / P5 / P6 / P7 / P8 完成（P7：手牌拖拽重排 + 选中索引修复，见 §9；P8：结束页 / 教学引导页画风统一，见 §10）  
+> **最后更新**: 2026-11-04  
+> **当前状态**: P1 / P1.x / P2 / P3 / P5 / P6 / P7 / P8 / P9 / P10 / P10.1 / P11 完成；移动端触屏 A1/B/C 与 v14.5 第零关反馈修复已落地（见 ARCHITECTURE §12）。**未展开**：P4《美术升级方向》其余条目（核对结果见 §6）  
 > **相关文档**: [ARCHITECTURE.md](./ARCHITECTURE.md) 第 8 节「表现层 - GameUI.gd」
 
 ---
@@ -19,7 +19,11 @@
 | **P6** | 提示按钮「自动选最优组合 + 解释」/ 开始页全部代码生成 / 旧帮助页节点清理 | ✅ 完成（2026-10-31，见 §8；含 §8.5 收尾修复） |
 | **P7** | 手牌拖拽重排（拖动换位 / 一次拖动转手动排列 / 「按序 ⇅」恢复 / 新牌追加末尾 / `selected_indices` 索引→对象修复） | ✅ 完成（2026-10-31，见 §9） |
 | **P8** | 结束页 / 教学引导页与开始页统一画风（共用渐变带 + 水印 + 装饰牌 + 白卡；结算卡加状态条与 3 统计块；关卡卡整卡可点） | ✅ 完成（2026-10-31，见 §10） |
-| P4 / P7 其余 | 美术升级方向文档的其余条目（卡牌重绘 / 字体 / 图标 / 音频 / A5 悬停与选中放大） | ⏳ 未展开（核对结果见 §6） |
+| **P9** | 卤族互化统一到引擎（B 方案：规则只写在 `play_cards()`，F+Cl 作族炸始终合法） | ✅ 完成（见 §8.6；ARCHITECTURE §5.2） |
+| **P10 / P10.1** | 元素限制（前 20 号 + 可勾选扩展）+ 4 条补充规则合成一小页 + chip 紧凑化 | ✅ 完成（见 §8.7） |
+| **P11** | 游戏页工具按钮统一画风（`_style_game_tool_buttons()` 接管样式 + 几何归一） | ✅ 完成（见 §8.8） |
+| **P12** | 化学规则收口：假化合物拦截 + 顺序约束只作用于被指定玩家（非 UI 改动） | ✅ 完成（2026-11-04；见 GAMEPLAY_RULES §9 / §16.2、COMPOUND_MECHANISM_COMPARISON §6） |
+| **P4** | 美术升级方向文档的其余条目（卡牌重绘 / 字体 / 图标 / 音频 / A5 悬停与选中放大） | ⏳ 未展开（§6 核对表 22 项：✅9 / △1 / ❌12；按 §6.2 分批次 A（纯代码）/ 批次 B（需素材）推进） |
 
 ---
 
@@ -277,11 +281,11 @@ R4 容错带内外与横向越界），既有 `_test_case()` / `_test_hover_debo
 
 ## 5. 验证基线
 
-19 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
+27 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
 
 ```bat
 set GD=D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe
-for %f in (hand_layout hand_runtime hand_reorder integration constraint logger organic refactor sequence sequence_table tutorial ai_discard motion help_page hint start_page end_page halogen element_limit) do (
+for %f in (ai_discard clan_bomb_cooling compound_chemistry constraint element_limit end_page halogen hand_layout hand_reorder hand_runtime hand_view help_page hint integration logger motion net_foundation organic refactor sequence sequence_lock sequence_table start_page tool_buttons touch_ui tutorial tutorial_layout) do (
   %GD% --path . --headless --script res://tests/verify_%f.gd
 )
 ```
@@ -305,6 +309,9 @@ for %f in (hand_layout hand_runtime hand_reorder integration constraint logger o
 | `verify_sequence` / `verify_sequence_table` | 顺序牌型与桌面判定 |
 | `verify_tutorial` | 教程关卡状态机 |
 | `verify_ai_discard` | 手牌上限自动弃牌 |
+| `verify_compound_chemistry` | **化学规则 P12**（`get_valence_pairs` 价态裁决 / NCl·BrN·IN 拒绝 / NCl₃·NI₃·BCl₃·ClF 保留 / Fe 1 张 + Cl 2 张只认 Fe(+2) / 引擎空式子与 `ratio_ok=false` 一律 -1 / 提示与 AI 同源）（38 条） |
+| `verify_sequence_lock` | **顺序约束只锁被指定玩家**（set 时按反转方向选 target / 非 target 出牌不受限 / 跳过与弃牌罚抽 2 张 / 族炸与接炸链不解除 / 覆盖与快照 / state_hash 含 target）（52 条） |
+| `verify_hand_view` / `verify_tool_buttons` / `verify_touch_ui` / `verify_tutorial_layout` / `verify_clan_bomb_cooling` / `verify_net_foundation` | 手牌视图 / 工具按钮几何与样式 / 触屏 A1·B·C（53 条，见 ARCHITECTURE §12.5）/ 教程提示框布局 / 族炸冷却 / 联机协议地基（54 条） |
 | `verify_help_page` | **帮助中心 P5**（结构 / Tab 懒加载 / 2 列卡片 + 7 列图鉴 / 字号 ≥11 / 无空格对齐 / 29 种 182 张 / 旧页备份）（57 条） |
 
 > 已知非缺陷：测试进程退出时固定报 `572 ObjectDB instances were leaked at exit`，在 P3 之前的
