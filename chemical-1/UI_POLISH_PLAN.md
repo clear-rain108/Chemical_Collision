@@ -839,4 +839,35 @@ if moved >= _drag_threshold():            # 触屏 24px
 **验收**：`verify_hand_layout` / `verify_touch_ui` / `verify_hand_reorder` /
 `verify_hand_view` / `verify_hand_runtime` / `verify_help_page` 全绿。
 
+### 13.3 A1：按钮圆角 / 日志底板 / 卡面价态圆底
+
+三项都是「同一屏里还差一口气」的细节，不改任何交互行为：
+
+| # | 问题 | 处理 |
+|---|---|---|
+| A1-1 | 按钮与卡牌同为 8px 圆角，但按钮只有 32~58 高，弧长占比过大 → 看起来比卡牌更圆（像药丸） | 新增 `BUTTON_RADIUS = 6`，`_make_panel_style("button")` 改用它；圆角形成「chip 5 / 按钮 6 / 卡牌 8 / 面板 10」的递进 |
+| A1-2 | 6 行日志直接压在浅蓝背景上，右栏里没有任何边界，视线找不到落点 | 新增 `_make_panel_style("log_panel")`（白 62% + 圆角 10 + 1px 中性边 + 软投影）+ `_ensure_log_panel()` 惰性创建 `LogPanel`（插在 `LogLabel` 之前、不吃鼠标）+ `_set_log_visible()` 作为唯一显隐出口 |
+| A1-3 | 价态是 12~15px 的红色小字，孤零零漂在白卡上；标签化后一眼能扫到 | `CardValenceChip`（`valence_chip` 样式，极浅暖底 `#FAEDED`，圆角 5），宽度 = `meta("fit_w") + 2×CARD_VAL_CHIP_PAD`（不超过 label 宽），水平居中于 label；F1 的实测宽直接复用，不再重复测量 |
+
+**为什么 chip 宽度不写死**：紧凑档（8 张以上重叠）label 只有 44 宽、Cl 的文字只有 32 宽，
+写死 85 的底会把相邻牌露出的窄条糊掉；跟着 `fit_w` 走，文字缩档时底也一起缩。
+
+**为什么日志底板要单独一个节点而不是给 Label 加 StyleBox**：`Label` 没有 panel 主题项
+（只有 `normal` 的 `StyleBoxEmpty`），硬塞会把文字挤进内边距；独立 `Panel` 还能保证
+「底板在文字之下、鼠标穿透」，并且显隐不受 `Label.text` 换行高度影响。
+
+| 位置 | 改动 |
+|---|---|
+| `GameUI.gd` 视觉规范区 | `BUTTON_RADIUS = 6` / `CHIP_RADIUS = 5` / `CARD_VAL_CHIP_H = 16` / `CARD_VAL_CHIP_PAD = 5` / `LOG_PANEL_PAD = 10` |
+| `_make_panel_style()` | `button` 改用 `BUTTON_RADIUS`；新增 `log_panel` / `valence_chip` 两种 kind |
+| `_build_card_button()` | 价态 label 前建 `CardValenceChip`（同级、树顺序在前） |
+| `_fit_card_valence()` / `_sync_valence_chip()` | 收缩完文字后同步圆底几何；找不到 chip 就静默跳过（图鉴 / 裸 Label 复用同一条收缩链） |
+| `_ensure_log_panel()` / `_set_log_visible()` | 惰性创建 + 唯一显隐出口；`_level0_clear_rule_tips()` / `_level0_set_rule_tips_visible()` 里的两处直接赋值改为调用它 |
+| `tests/verify_hand_layout.gd` | **+10**：圆底节点存在 / 树顺序在 label 之前 / 走工厂（`CHIP_RADIUS`）/ 不吃鼠标 / 宽度 = fit_w+padding（72+10=82）/ 紧凑档不超出 label；日志底板存在 / 不吃鼠标 / 半透明 / 走面板规范 / 包住 LogLabel / 与规则提醒同步隐藏恢复 / `_ensure_log_panel` 幂等 |
+| `tests/verify_tool_buttons.gd`（2 处）与 `tests/verify_hand_layout.gd`（1 处） | 按钮圆角断言 `CARD_RADIUS → BUTTON_RADIUS`（4 条），另加 `BUTTON_RADIUS < CARD_RADIUS` 回归锁 |
+
+**验收**：`verify_hand_layout` / `verify_tool_buttons` / `verify_hand_view` / `verify_hand_runtime` /
+`verify_touch_ui` / `verify_start_page` / `verify_motion` / `verify_tutorial_layout` /
+`verify_help_page` 全绿。
+
 `--headless --quit-after 90` 无 ERROR；真实窗口核对 4 组状态（常态 / 悬停 / 提示开 / 退出悬停）。

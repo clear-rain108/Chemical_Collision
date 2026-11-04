@@ -560,8 +560,16 @@ _update_hand_buttons()    → ① _selected_cards(cp)：遍历 selected_indices�
 |---|---|---|---|---|
 | `card` / `card_selected` / `card_hover` / `card_hover_selected` | 8 | 1px 中性 / 2px 橙金 / 2px 蓝 / 2px 深橙 | 3px | 手牌四态 |
 | `mini_card` / `mini_card_hover` | 8 | 1px 中性 / 1px 蓝 | 无（密度高） | 桌面小卡 |
-| `button` | 8 | 1px 蓝灰 + 内边距 10/6 | 3px | 操作面板 / 顺序指定弹窗 |
+| `button` | **6** | 1px 蓝灰 + 内边距 10/6 | 3px | 操作面板 / 顺序指定弹窗 / 工具行 |
 | `toast_warning` / `toast_info` | 10 | 2px 警告红 / 2px 橙 | 3px | 右栏警告 toast / 第零关提示框 |
+| `log_panel` | 10 | 1px 中性 | 3px | 右下日志底板（白 62% 半透明） |
+| `valence_chip` | 5 | 无 | 无 | 卡面价态圆底（极浅暖底 `#FAEDED`，宽度随实测文字宽） |
+
+**按钮圆角单独一档（`BUTTON_RADIUS = 6`）**：按钮比卡牌小得多（32~58 高），
+同为 8px 时弧长占比过大、看起来「像药丸」，视觉上反而比卡牌更圆；
+6px 让「卡牌 8 / 按钮 6 / 面板 10 / chip 5」形成一档递进。
+`verify_tool_buttons` 与 `verify_hand_layout` 都断言 `== BUTTON_RADIUS`，
+`verify_hand_layout` 另加一条 `BUTTON_RADIUS < CARD_RADIUS` 的回归锁。
 
 `_build_card_button()` 为每张牌生成样式并**显式覆盖 Button 的全部状态项**：
 
@@ -609,7 +617,7 @@ _update_hand_buttons()    → ① _selected_cards(cp)：遍历 selected_indices�
 
 | 状态 | 取值 |
 |---|---|
-| `normal` | `_make_panel_style("button")`：`#2C3E50` + 1px `#668CB2` + 8 圆角 + 3px 软投影 |
+| `normal` | `_make_panel_style("button")`：`#2C3E50` + 1px `#668CB2` + 6 圆角（`BUTTON_RADIUS`）+ 3px 软投影 |
 | `hover` | `#455F80` + 亮蓝边 + 6px 蓝光晕（与 `_mkb` 同参）；`danger` 档（退出游戏）改 `BORDER_WARN` 暖红 |
 | `pressed` | `#1F2B3B`；`is_toggle` 档（显示提示）改主题蓝 `#2D7AB3` —— 这就是 **toggle 开态** |
 | `hover_pressed` | `is_toggle` 档：主题蓝 `lightened(0.12)` + 8px 蓝光晕 |
@@ -694,12 +702,19 @@ lbl.size = Vector2(w, h)                             # 后
 
 | 节点 | rect | 说明 |
 |---|---|---|
+| `LogPanel` | (814, 290) 332×320 | 常态：日志底板（`log_panel` 样式，白 62% + 圆角 10 + 中性描边） |
 | `LogLabel` | (824, 300) 312×300 | 常态：右下日志 |
 | `Level0RuleTipsBg` | (824, 300) 312×300 | 第零关练习阶段：浅黄面板（`toast_info` 样式） |
 | `Level0RuleTips` | (838, 312) 284×276 | 同上，内缩 14/12 的行文区 |
 
-- 三者**互斥可见**：`_level0_set_rule_tips_visible(on)` 一处控制，练习阶段日志让位，
-  其余局面提醒隐藏 + 日志复位 ⇒ 结构上不可能再出现「日志数字」与「规则提醒」叠字
+- **互斥可见**：`_level0_set_rule_tips_visible(on)` 一处控制 —— 练习阶段日志
+  （文字 + 底板）让位，其余局面提醒隐藏 + 日志复位 ⇒ 结构上不可能再出现
+  「日志数字」与「规则提醒」叠字
+- 日志显隐的唯一出口是 `_set_log_visible(on)`：同时切 `LogLabel` 与 `LogPanel`，
+  任何新代码都不许直接写 `log_label.visible = ...`（否则会留下「底板还在、字没了」的鬼影）
+- `LogPanel` 由 `_ensure_log_panel()` 惰性创建并**插到 `LogLabel` 之前**：
+  同级节点按树顺序绘制，底板必须先画；几何由 `LogLabel.position/size` 外扩
+  `LOG_PANEL_PAD = 10` 推导，以后调日志区位置时底板自动跟上
 - 历史 bug：规则提醒硬编码 `(950,370) 220×220`，右边界 1170 > 画布 1152，且整块躺在
   `LogLabel` (824..1136 × 300..600) 里 —— 既被屏幕裁掉又和日志叠字
 - 生命周期：`_level0_clear_rule_tips()` 在 `_init_game()` / `_on_start_tutorial()` /

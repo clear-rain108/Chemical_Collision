@@ -46,6 +46,7 @@ var deck_count_label: Label = null      # 牌库计数
 var status_bar_label: Label = null      # 顶部状态栏（当前玩家/手牌/牌库/桌面）
 var table_label: Label = null           # 桌面信息
 var log_label: Label = null             # 游戏日志
+var _log_panel: Panel = null            # 日志底板（半透明圆角，与 log_label 同显隐）
 var card_info_label: Label = null       # 可出牌型提示
 var action_panel: Control = null        # 操作按钮区
 var hint_button: Button = null          # 显示提示
@@ -162,7 +163,12 @@ const Z_TOAST := 110            # 提示层：警告框 / 引导提示（压在�
 # 所有 StyleBoxFlat 必须由 _make_panel_style(kind) 产出；
 # 调用点只允许改 bg_color（hover/pressed/disabled），不要再手写 border / radius / shadow。
 const CARD_RADIUS := 8          # 卡牌（含桌面小卡）
+const BUTTON_RADIUS := 6        # 按钮（比卡牌小一档：同一屏里按钮更小，8px 会显得过圆）
 const PANEL_RADIUS := 10        # 面板 / 提示框
+const CHIP_RADIUS := 5          # 圆底 chip（卡面价态 / 元素 chip）
+const CARD_VAL_CHIP_H := 16     # 卡面价态圆底高度
+const CARD_VAL_CHIP_PAD := 5    # 圆底在文字左右各多出的宽度
+const LOG_PANEL_PAD := 10       # 日志底板比 LogLabel 四边各大 10px
 const BORDER_W := 1             # 普通元素描边
 const BORDER_W_ACTIVE := 2      # 选中 / 焦点 / 警告描边
 const BORDER_NEUTRAL := Color(0.63, 0.66, 0.71, 1.0)    # #A1A8B5
@@ -309,6 +315,7 @@ func _setup_pages() -> void:
 		info_label = game_page.get_node_or_null("InfoLabel")
 		table_label = game_page.get_node_or_null("TableLabel")
 		log_label = game_page.get_node_or_null("LogLabel")
+		_ensure_log_panel()
 		card_info_label = game_page.get_node_or_null("CardInfoLabel")
 		action_panel = game_page.get_node_or_null("ActionPanel")
 		hint_button = game_page.get_node_or_null("HintButton")
@@ -406,11 +413,19 @@ func _make_panel_style(kind: String) -> StyleBoxFlat:
 		"mini_card_hover":
 			_style_base(sb, Color(0.9, 0.93, 0.98, 0.95), BORDER_FOCUS, BORDER_W, CARD_RADIUS, false)
 		"button":
-			_style_base(sb, Color(0.173, 0.243, 0.314, 1.0), Color(0.4, 0.55, 0.7, 1.0), BORDER_W, CARD_RADIUS, true)
+			# 按钮圆角比卡牌小一档（BUTTON_RADIUS=6）：按钮尺寸更小，8px 在同一屏会显得过圆
+			_style_base(sb, Color(0.173, 0.243, 0.314, 1.0), Color(0.4, 0.55, 0.7, 1.0), BORDER_W, BUTTON_RADIUS, true)
 			sb.content_margin_left = 10
 			sb.content_margin_right = 10
 			sb.content_margin_top = 6
 			sb.content_margin_bottom = 6
+		"log_panel":
+			# 日志底板：白色半透明 + 中性描边，压在浅蓝背景上把 6 行日志框住。
+			# 半透明是为了不切断右侧留白的整体感（不透明白卡会像多出一块面板）。
+			_style_base(sb, Color(1.0, 1.0, 1.0, 0.62), BORDER_NEUTRAL, BORDER_W, PANEL_RADIUS, true)
+		"valence_chip":
+			# 卡面价态圆底：极浅暖底，把 12~15px 的红色价态文字从白卡面上托起来
+			_style_base(sb, Color(0.98, 0.93, 0.93, 1.0), Color(0, 0, 0, 0), 0, CHIP_RADIUS, false)
 		"tab_on":
 			# 帮助中心 Tab（选中）：白底 + 底部 3px 蓝色下划线
 			_style_base(sb, Color(1.0, 1.0, 1.0, 1.0), Color(0, 0, 0, 0), 0, 0, false)
@@ -2817,7 +2832,7 @@ func _level0_clear_rule_tips() -> void:
 		level0_rule_tip_bg.queue_free()
 	level0_rule_tip_bg = null
 	if log_label and is_instance_valid(log_label):
-		log_label.visible = true
+		_set_log_visible(true)
 
 
 # 规则提醒 / 日志共用右栏同一格：互斥可见，永远不可能叠在一起
@@ -2827,7 +2842,7 @@ func _level0_set_rule_tips_visible(on: bool) -> void:
 	if level0_rule_tip_bg and is_instance_valid(level0_rule_tip_bg):
 		level0_rule_tip_bg.visible = on
 	if log_label and is_instance_valid(log_label):
-		log_label.visible = not on
+		_set_log_visible(not on)
 
 
 func _level0_update_rule_tips() -> void:
@@ -3231,6 +3246,38 @@ func _on_hand_reorder() -> void:
 	_update_hand_buttons()
 	_update_card_info_label()
 	_update_hand_reorder_button()
+
+
+# -------- 日志底板（A1）：6 行日志直接压浅蓝背景，右栏里没有边界 --------
+# 挂 GamePage 直接子节点（跟随页面显隐），插在 LogLabel 之前 —— 同级按树顺序绘制，
+# 底板必须先画；mouse_filter = IGNORE 保证它不吃手牌 / 按钮的点击。
+func _ensure_log_panel() -> void:
+	if _log_panel != null and is_instance_valid(_log_panel):
+		return
+	if log_label == null or not is_instance_valid(log_label):
+		return
+	var page := log_label.get_parent()
+	if page == null:
+		return
+	var panel := Panel.new()
+	panel.name = "LogPanel"
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_theme_stylebox_override("panel", _make_panel_style("log_panel"))
+	# 几何直接由 LogLabel 推导：以后调日志区位置 / 尺寸，底板自动跟上
+	panel.position = log_label.position - Vector2(LOG_PANEL_PAD, LOG_PANEL_PAD)
+	panel.size = log_label.size + Vector2(LOG_PANEL_PAD, LOG_PANEL_PAD) * 2.0
+	page.add_child(panel)
+	page.move_child(panel, log_label.get_index())
+	_log_panel = panel
+
+
+# 日志区显隐的唯一出口：规则提醒占用右栏同一格时，日志与底板一起让位
+func _set_log_visible(on: bool) -> void:
+	_ensure_log_panel()
+	if log_label and is_instance_valid(log_label):
+		log_label.visible = on
+	if _log_panel and is_instance_valid(_log_panel):
+		_log_panel.visible = on
 
 
 func _update_log_label() -> void:
@@ -4658,6 +4705,23 @@ func _fit_card_valence(lbl: Label, card, max_w: float, base_fs: int) -> void:
 	lbl.text = best_text
 	lbl.add_theme_font_size_override("font_size", best_fs)
 	lbl.set_meta("fit_w", minf(_valence_width(font, best_text, best_fs), max_w))
+	_sync_valence_chip(lbl)
+
+
+# 卡面价态圆底：宽 = 实测文字宽 + 左右 padding（不超过 label 宽），水平居中于 label。
+# 找不到 chip 节点就静默跳过 —— 图鉴 / 测试里的裸 Label 也能直接复用 _fit_card_valence()。
+func _sync_valence_chip(lbl: Label) -> void:
+	var parent := lbl.get_parent()
+	if parent == null:
+		return
+	var chip := parent.get_node_or_null("CardValenceChip") as Control
+	if chip == null:
+		return
+	var fit_w: float = float(lbl.get_meta("fit_w", 0.0))
+	var w: float = minf(fit_w + CARD_VAL_CHIP_PAD * 2.0, lbl.size.x)
+	chip.size = Vector2(w, CARD_VAL_CHIP_H)
+	chip.position = Vector2(lbl.position.x + (lbl.size.x - w) * 0.5, lbl.position.y + 1.0)
+	chip.visible = fit_w > 0.0
 
 
 func _valence_fits(font: Font, txt: String, fs: int, max_w: float) -> bool:
@@ -4748,6 +4812,14 @@ func _build_card_button(card, idx: int) -> Button:
 	l_name.size = Vector2(85, 15)
 	l_name.position = Vector2(5, 48)
 	btn.add_child(l_name)
+
+	# 价态圆底（A1）：先建、同级且在 label 之前 → 画在文字下层；
+	# 宽度不写死，由 _fit_card_valence() 实测的文字宽决定（见 _sync_valence_chip）
+	var l_val_chip := Panel.new()
+	l_val_chip.name = "CardValenceChip"
+	l_val_chip.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	l_val_chip.add_theme_stylebox_override("panel", _make_panel_style("valence_chip"))
+	btn.add_child(l_val_chip)
 
 	var l_val = Label.new()
 	l_val.name = "CardValence"

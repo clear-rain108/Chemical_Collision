@@ -86,8 +86,8 @@ func _test_style_override(scene) -> void:
 		_check(n is StyleBoxFlat, "%s：normal 是自定义 StyleBoxFlat（不再是引擎默认主题）" % nm)
 		if n is StyleBoxFlat:
 			_check(n.bg_color.is_equal_approx(base_bg), "%s：底色与出牌按钮同源 %s" % [nm, str(n.bg_color)])
-			_check(n.corner_radius_top_left == scene.CARD_RADIUS,
-				"%s：圆角 = CARD_RADIUS(%d)（默认主题是 4）" % [nm, scene.CARD_RADIUS])
+			_check(n.corner_radius_top_left == scene.BUTTON_RADIUS,
+				"%s：圆角 = BUTTON_RADIUS(%d)（默认主题是 4）" % [nm, scene.BUTTON_RADIUS])
 			_check(n.border_width_left == scene.BORDER_W, "%s：1px 描边（默认主题没有）" % nm)
 			_check(n.shadow_size == scene.SHADOW_SIZE,
 				"%s：软投影与卡片同参(%d)" % [nm, scene.SHADOW_SIZE])
@@ -96,7 +96,7 @@ func _test_style_override(scene) -> void:
 			var sb = b.get_theme_stylebox(st)
 			_check(sb is StyleBoxFlat, "%s：%s 已接管" % [nm, st])
 			if sb is StyleBoxFlat:
-				_check(sb.corner_radius_top_left == scene.CARD_RADIUS,
+				_check(sb.corner_radius_top_left == scene.BUTTON_RADIUS,
 					"%s：%s 圆角与 normal 一致" % [nm, st])
 		_check(b.get_theme_stylebox("focus") is StyleBoxEmpty, "%s：focus 置空（无默认焦点环）" % nm)
 		_check(b.get_theme_font_size("font_size") == 14,

@@ -51,6 +51,8 @@ func _run():
 	_test_warning_toast(scene)
 	_test_style_factory(scene)
 	_test_valence_fit(scene)
+	_test_valence_chip(scene)
+	_test_log_panel(scene)
 
 	await _test_case(scene, hc, 16, true)
 	await _test_case(scene, hc, 8, true)
@@ -615,9 +617,11 @@ func _test_style_factory(scene) -> void:
 		"小卡悬停底色不变")
 
 	var btn = scene.call("_make_panel_style", "button")
-	_check(btn.corner_radius_top_left == int(scene.CARD_RADIUS)
+	_check(btn.corner_radius_top_left == int(scene.BUTTON_RADIUS)
 		and btn.shadow_size == int(scene.SHADOW_SIZE),
-		"按钮与卡牌同一圆角 / 投影规范")
+		"按钮圆角 BUTTON_RADIUS(%d)（比卡牌小一档）/ 投影同卡牌" % int(scene.BUTTON_RADIUS))
+	_check(btn.corner_radius_top_left < int(scene.CARD_RADIUS),
+		"按钮圆角必须小于卡牌圆角（尺寸更小，8px 会显得过圆）")
 	_check(btn.content_margin_left == 10 and btn.content_margin_top == 6, "按钮内边距 10/6")
 
 	var warn = scene.call("_make_panel_style", "toast_warning")
@@ -687,6 +691,75 @@ func _test_valence_fit(scene) -> void:
 func _measure_valence(scene, lbl: Label) -> float:
 	var fs: int = lbl.get_theme_font_size("font_size")
 	return scene._valence_width(lbl.get_theme_font("font"), lbl.text, fs)
+
+
+# 取指定元素的 CardData（29 种数据只读，不碰对局状态）
+func _find_card(symbol: String):
+	for e in CardDatabaseScript.get_element_data():
+		if e[0] == symbol:
+			return CardDataScript.new(e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7], e[8], e[9], e[10], e[11], e[12])
+	return null
+
+
+# ---------------- A1：卡面价态圆底 ----------------
+# 纯文字在白卡上偏「漂」，加一层极浅暖底把价态托起来；宽度必须跟着实测文字宽走 ——
+# 写死 85 的话，紧凑档（文字只有 32px）会盖住相邻牌露出的窄条。
+func _test_valence_chip(scene) -> void:
+	var cl_card = _find_card("Cl")
+	if cl_card == null:
+		_check(false, "价态圆底：Cl 数据可取")
+		return
+	var btn = scene.call("_build_card_button", cl_card, 0)
+	scene.hand_container.add_child(btn)
+	var chip = btn.get_node_or_null("CardValenceChip")
+	var val: Label = btn.get_node_or_null("CardValence")
+	_check(chip != null and val != null, "价态圆底节点存在（CardValenceChip + CardValence）")
+	if chip == null or val == null:
+		btn.queue_free()
+		return
+	_check(chip.get_index() < val.get_index(),
+		"价态圆底画在文字之下（同级、树顺序在 label 之前）")
+	var sb = chip.get_theme_stylebox("panel")
+	_check(sb is StyleBoxFlat and sb.corner_radius_top_left == int(scene.CHIP_RADIUS),
+		"价态圆底走工厂（圆角 CHIP_RADIUS=%d）" % int(scene.CHIP_RADIUS))
+	_check(chip.mouse_filter == Control.MOUSE_FILTER_IGNORE, "价态圆底不吃鼠标（不挡牌面点击）")
+	var fit_w: float = float(val.get_meta("fit_w", 0.0))
+	var expect_w: float = minf(fit_w + scene.CARD_VAL_CHIP_PAD * 2.0, val.size.x)
+	_check(absf(chip.size.x - expect_w) < 0.5,
+		"圆底宽度 = 实测文字宽 + padding（fit=%.1f chip=%.1f expect=%.1f）" % [fit_w, chip.size.x, expect_w])
+	# 紧凑档：chip 必须跟着 38px 可用宽一起收，不能超出 label
+	scene.call("_apply_card_compact", btn, true)
+	var fit_w2: float = float(val.get_meta("fit_w", 0.0))
+	var expect_w2: float = minf(fit_w2 + scene.CARD_VAL_CHIP_PAD * 2.0, val.size.x)
+	_check(chip.size.x <= val.size.x + 0.5 and absf(chip.size.x - expect_w2) < 0.5,
+		"紧凑档圆底不超出 label（chip=%.1f ≤ %.1f）" % [chip.size.x, val.size.x])
+	btn.queue_free()
+
+
+# ---------------- A1：日志底板（半透明圆角 + 与日志同显隐） ----------------
+func _test_log_panel(scene) -> void:
+	var page = scene.game_page
+	var panel = page.get_node_or_null("LogPanel") if page else null
+	_check(panel is Panel, "日志底板节点存在（LogPanel）")
+	if panel == null or scene.log_label == null:
+		return
+	_check(panel.mouse_filter == Control.MOUSE_FILTER_IGNORE, "日志底板不吃鼠标（不挡手牌 / 按钮）")
+	var sb = panel.get_theme_stylebox("panel")
+	_check(sb is StyleBoxFlat and sb.bg_color.a > 0.3 and sb.bg_color.a < 1.0,
+		"日志底板半透明（alpha=%.2f）" % (sb.bg_color.a if sb is StyleBoxFlat else -1.0))
+	_check(sb is StyleBoxFlat and sb.corner_radius_top_left == int(scene.PANEL_RADIUS),
+		"日志底板走面板规范（圆角 %d）" % int(scene.PANEL_RADIUS))
+	_check(panel.get_index() < scene.log_label.get_index(), "日志底板画在文字之下")
+	var r_label: Rect2 = Rect2(scene.log_label.position, scene.log_label.size)
+	var r_panel: Rect2 = Rect2(panel.position, panel.size)
+	_check(r_panel.encloses(r_label), "日志底板完整包住 LogLabel（%s ⊇ %s）" % [str(r_panel), str(r_label)])
+	# 右栏同一格互斥：规则提醒占位时，日志与底板必须一起让位
+	scene._level0_set_rule_tips_visible(true)
+	_check(not panel.visible and not scene.log_label.visible, "规则提醒占位时底板与日志一起隐藏")
+	scene._level0_set_rule_tips_visible(false)
+	_check(panel.visible and scene.log_label.visible, "规则提醒退场后底板与日志一起恢复")
+	scene._ensure_log_panel()
+	_check(page.get_node_or_null("LogPanel") == panel, "重复 _ensure_log_panel 幂等（不叠第二块）")
 
 
 
