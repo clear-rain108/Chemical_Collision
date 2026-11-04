@@ -939,3 +939,42 @@ if moved >= _drag_threshold():            # 触屏 24px
 **验收**：27 套测试全绿；`verify_hand_runtime` / `verify_ai_discard` / `verify_integration` /
 `verify_sequence`（真实出牌、弃牌路径）未受影响 —— 动画只读 `hand_buttons`，不改任何数据。
 
+### 13.6 A4：右栏「日志 / 规则提醒」可折叠标题条
+
+**问题**：右栏 312×300 的日志底板高度是写死的 —— 只有 2~6 行字，底下空出一大片浅蓝，
+右栏看着比左半屏「稀」；第零关的规则提醒同样是固定 300 高，内容 3~5 行时更空。
+而且这块区域没有任何「可收起来」的出口，玩家想多看点桌面时没法让位。
+
+| 项 | 改动 |
+|---|---|
+| 标题条 | 新增 `LogTitleBar`（Button，26 高，`log_title` 样式：半透明白 + 底部 1px 分隔线），文字 `游戏日志 · N 条 ▾`，点一下折叠 |
+| 折叠 | `_log_collapsed` 取反 → `_layout_log_panel()`：正文 `visible=false`，底板高度 46（10+26+10），标题条留着可再点开；箭头 `▾ / ▸` 同步 |
+| 高度自适应 | 正文高 = `clamp(行数×行高, 40, 280)`，并跟 autowrap 实测最小高度取 `max`（长行折行也不裁字） |
+| 左边缘 | `LOG_PANEL_PAD` 只作用在上 / 下 / 右，左边缘 = `LogLabel` 设计位置 824（原 814 的底板压到「退出」按钮右边缘 820） |
+| 规则提醒同款 | `Level0RuleTipsTitle`（底板的子节点，随底板显隐）+ `_layout_rule_tips()`，正文高度用 `label.get_minimum_size().y` |
+| 互斥不变 | 显隐仍由 `_set_log_visible()` / `_level0_set_rule_tips_visible()` 一处控制，折叠只改高度不改显隐规则 |
+
+**为什么标题条挂在 GamePage 而不是底板的子节点**：日志底板 `mouse_filter = IGNORE`，
+但点是点得到的（父节点 IGNORE 不影响子节点收事件）；把它做成底板的兄弟、紧跟在底板
+之后，是为了让「底板 → 标题条 → 正文」严格按树顺序绘制，同时底板本身继续整体不吃鼠标
+（测试里 `get_index() == panel.get_index() + 1` 就是这条约束的锁）。
+
+**为什么高度不写死 300**：`MAX_LOG_LINES = 6`，13px 字号行高约 20 → 内容最多 120；
+写死 300 等于 60% 的面板是空的。按内容推之后，2 行日志是 92 高、6 行是 152 高，
+折叠只有 46 —— 三种状态都贴合内容。
+
+| 位置 | 改动 |
+|---|---|
+| `GameUI.gd` 视觉规范区 | `LOG_TITLE_H = 26` / `LOG_TEXT_PAD = 12` / `LOG_BODY_GAP = 6` / `LOG_CONTENT_MIN_H = 40` / `LOG_CONTENT_MAX_H = 280` / `LOG_W = 312` |
+| `_make_panel_style()` | 新增 `log_title` / `log_title_hover` 两种 kind（半透明白 + 底边 1px） |
+| `_make_right_column_title()` | 新增：日志 / 规则提醒共用的标题条构造（外观、字号、样式、focus 一次写清） |
+| `_ensure_log_panel()` | 建完底板顺手建标题条（紧跟其后）并调 `_layout_log_panel()`；`LogLabel.position` 记进 `meta("home")` |
+| `_layout_log_panel()` / `_log_title_text()` / `_log_line_h()` | 新增：几何唯一出口 / 标题文案（含箭头与条数）/ 行高实测 |
+| `_on_log_title_pressed()` / `_on_rule_tip_title_pressed()` | 新增：折叠开关 |
+| `_level0_create_rule_tips()` / `_layout_rule_tips()` | 规则提醒加标题条并改为按内容收高；正文去掉重复的「── 规则提醒 ──」表头 |
+| `Main.tscn` | `LogLabel` 的固定 312×300 改为 312×40（高度由 `_layout_log_panel()` 接管） |
+| `tests/verify_log_panel.gd` | **新增 46 条**：标题条存在 / 紧随底板 / 可点 / 文字含「游戏日志」与箭头 / 高度 26；展开高度 < 260 且 > 90、包住正文、标题条在底板内；折叠 46 / 正文隐藏 / 底板与标题条仍在 / 箭头翻转 / 再点恢复 / 刷新不回弹；左边缘不压「退出」；整体隐藏三者同步；规则提醒同款（包住文字、不出画布、< 260、折叠 46、与日志互斥）；`_ensure_log_panel` 与 `_level0_create_rule_tips` 幂等 |
+
+**验收**：28 套测试全绿（`verify_log_panel` 46 条断言，`verify_hand_layout` /
+`verify_tutorial_layout` / `verify_touch_ui` 的右栏断言未受影响）。
+

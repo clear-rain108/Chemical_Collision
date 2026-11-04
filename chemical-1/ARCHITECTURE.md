@@ -739,25 +739,38 @@ lbl.size = Vector2(w, h)                             # 后
 
 ### 第零关「规则提醒」槽位（方案 B：与日志同格互斥）
 
-| 节点 | rect | 说明 |
+右栏一格 = 一块可折叠面板：上方 26px 标题条（点一下折叠、再点展开）+ 下方正文。
+高度不再写死 300px（6 行日志撑不满会让右栏空一大片），而是
+`H = 10 + 26 + 10 + (+ 6 + 正文高)`，正文高 = `clamp(行数×行高 / 实测换行高, 40, 280)`。
+
+| 节点 | rect（展开） | 说明 |
 |---|---|---|
-| `LogPanel` | (814, 290) 332×320 | 常态：日志底板（`log_panel` 样式，白 62% + 圆角 10 + 中性描边） |
-| `LogLabel` | (824, 300) 312×300 | 常态：右下日志 |
-| `Level0RuleTipsBg` | (824, 300) 312×300 | 第零关练习阶段：浅黄面板（`toast_info` 样式） |
-| `Level0RuleTips` | (838, 312) 284×276 | 同上，内缩 14/12 的行文区 |
+| `LogPanel` | (824, 290) 322×H | 日志底板（`log_panel` 样式，白 62% + 圆角 10 + 中性描边），不吃鼠标 |
+| `LogTitleBar` | (824, 300) 322×26 | **GamePage 子节点**，紧跟底板之后（同级按树顺序画在上面） |
+| `LogLabel` | (836, 332) 300×正文高 | 常态日志正文（左缩进 12、右侧留 10） |
+| `Level0RuleTipsBg` | (824, 300) 322×H | 第零关练习阶段：浅黄面板（`toast_info` 样式） |
+| `Level0RuleTipsTitle` | (0, 10) 322×26 | 底板的**子节点**（随底板显隐） |
+| `Level0RuleTips` | (836, 332) 300×正文高 | 同上，行文区 |
+
+折叠态：`H = 46`（10 + 26 + 10），正文 `visible = false`，标题条留着可再点开；
+两块面板折叠后左边缘 824 ≥ 「退出」按钮右边缘 820，不会盖住按钮。
 
 - **互斥可见**：`_level0_set_rule_tips_visible(on)` 一处控制 —— 练习阶段日志
-  （文字 + 底板）让位，其余局面提醒隐藏 + 日志复位 ⇒ 结构上不可能再出现
+  （文字 + 底板 + 标题条）一起让位，其余局面提醒隐藏 + 日志复位 ⇒ 结构上不可能再出现
   「日志数字」与「规则提醒」叠字
-- 日志显隐的唯一出口是 `_set_log_visible(on)`：同时切 `LogLabel` 与 `LogPanel`，
+- 日志显隐的唯一出口是 `_set_log_visible(on)`：同时切 `LogLabel` / `LogPanel` / `LogTitleBar`，
   任何新代码都不许直接写 `log_label.visible = ...`（否则会留下「底板还在、字没了」的鬼影）
-- `LogPanel` 由 `_ensure_log_panel()` 惰性创建并**插到 `LogLabel` 之前**：
-  同级节点按树顺序绘制，底板必须先画；几何由 `LogLabel.position/size` 外扩
-  `LOG_PANEL_PAD = 10` 推导，以后调日志区位置时底板自动跟上
+- 几何的唯一出口是 `_layout_log_panel()` / `_layout_rule_tips()`：折叠开关、日志条数变化、
+  `_refresh_ui()` 都调它，别在别处手写 rect（三块节点必须同步位移，算两次就会错位）
+- `LogPanel` 由 `_ensure_log_panel()` 惰性创建并**插到 `LogLabel` 之前**（幂等：已有就 return）；
+  `LogLabel` 的设计位置记在 `meta("home")` 里，折叠只改 y / 高度，基准不会被自己挪走
+- 折叠状态 `_log_collapsed` / `_rule_tip_collapsed` 挂在 GameUI 实例上：跨回合、跨刷新保留，
+  但不写存档（重开应用回到展开态）
 - 历史 bug：规则提醒硬编码 `(950,370) 220×220`，右边界 1170 > 画布 1152，且整块躺在
   `LogLabel` (824..1136 × 300..600) 里 —— 既被屏幕裁掉又和日志叠字
 - 生命周期：`_level0_clear_rule_tips()` 在 `_init_game()` / `_on_start_tutorial()` /
-  `_show_start_page()` 调用（提醒挂在 `ContentLayer`，不随 `GamePage` 隐藏或 `GameManager` 重建而消失）
+  `_show_start_page()` 调用（提醒挂在 `ContentLayer`，不随 `GamePage` 隐藏或 `GameManager`
+  重建而消失）
 
 ### 出牌步骤流
 

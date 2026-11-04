@@ -47,6 +47,11 @@ var status_bar_label: Label = null      # 顶部状态栏（当前玩家/手牌/
 var table_label: Label = null           # 桌面信息
 var log_label: Label = null             # 游戏日志
 var _log_panel: Panel = null            # 日志底板（半透明圆角，与 log_label 同显隐）
+var _log_title: Button = null           # 日志标题条（点一下折叠 / 展开）
+var _log_visible: bool = true           # 整体显隐（规则提醒占用右栏时为 false）
+var _log_collapsed: bool = false        # 折叠态：只留 26px 标题条
+var _rule_tip_title: Button = null      # 规则提醒标题条
+var _rule_tip_collapsed: bool = false   # 规则提醒折叠态
 var card_info_label: Label = null       # 可出牌型提示
 var action_panel: Control = null        # 操作按钮区
 var hint_button: Button = null          # 显示提示
@@ -169,7 +174,13 @@ const CHIP_RADIUS := 5          # 圆底 chip（卡面价态 / 元素 chip）
 const CARD_VAL_CHIP_H := 16     # 卡面价态圆底高度
 const CARD_VAL_CHIP_PAD := 5    # 圆底在文字左右各多出的宽度
 const CARD_VAL_Y := 72.0        # 卡面价态行（圆底 + 文字）的纵向位置
-const LOG_PANEL_PAD := 10       # 日志底板比 LogLabel 四边各大 10px
+const LOG_PANEL_PAD := 10       # 右栏面板的上 / 下 / 右留白（左侧贴齐正文，别再压到退出按钮）
+const LOG_TITLE_H := 26         # 右栏可折叠标题条高度（折叠后整体只剩 10+26+10 = 46）
+const LOG_TEXT_PAD := 12        # 标题 / 正文相对面板左边缘的缩进
+const LOG_BODY_GAP := 6         # 标题条与正文之间的间距
+const LOG_CONTENT_MIN_H := 40   # 正文最小高度（只有 1 行时也不塌成一条缝）
+const LOG_CONTENT_MAX_H := 280  # 正文最大高度（日志 6 行 / 规则提醒 10 行都够）
+const LOG_W := 312              # 右栏面板宽度（面板 = LOG_W + LOG_PANEL_PAD = 322）
 const BORDER_W := 1             # 普通元素描边
 const BORDER_W_ACTIVE := 2      # 选中 / 焦点 / 警告描边
 const BORDER_NEUTRAL := Color(0.63, 0.66, 0.71, 1.0)    # #A1A8B5
@@ -440,9 +451,21 @@ func _make_panel_style(kind: String) -> StyleBoxFlat:
 			sb.content_margin_top = 6
 			sb.content_margin_bottom = 6
 		"log_panel":
-			# 日志底板：白色半透明 + 中性描边，压在浅蓝背景上把 6 行日志框住。
+			# 日志底板：白色半透明 + 中性描边，压在浅蓝背景上把日志框住。
 			# 半透明是为了不切断右侧留白的整体感（不透明白卡会像多出一块面板）。
 			_style_base(sb, Color(1.0, 1.0, 1.0, 0.62), BORDER_NEUTRAL, BORDER_W, PANEL_RADIUS, true)
+		"log_title":
+			# 右栏折叠标题条：半透明白底 + 底部 1px 分隔线（叠在同色底板上要能看出是「一条」）
+			_style_base(sb, Color(1.0, 1.0, 1.0, 0.42), Color(0.83, 0.87, 0.92, 1.0), 0, BUTTON_RADIUS, false)
+			sb.border_width_bottom = 1
+			sb.content_margin_left = LOG_TEXT_PAD
+			sb.content_margin_right = 8
+		"log_title_hover":
+			# 悬停只把底色提亮一档，不换描边（避免标题条跳动）
+			_style_base(sb, Color(1.0, 1.0, 1.0, 0.72), Color(0.83, 0.87, 0.92, 1.0), 0, BUTTON_RADIUS, false)
+			sb.border_width_bottom = 1
+			sb.content_margin_left = LOG_TEXT_PAD
+			sb.content_margin_right = 8
 		"valence_chip":
 			# 卡面价态圆底：极浅暖底，把 12~15px 的红色价态文字从白卡面上托起来
 			_style_base(sb, Color(0.98, 0.93, 0.93, 1.0), Color(0, 0, 0, 0), 0, CHIP_RADIUS, false)
@@ -2820,26 +2843,82 @@ var level0_rule_tip_bg: Panel = null
 
 func _level0_create_rule_tips() -> void:
 	_level0_clear_rule_tips()
-	# 与 LogLabel 同格（824..1136 × 300..600）：两者互斥显示，结构上不可能再重叠；
-	# 右边界 1136 < 1152 画布宽，也不会再被屏幕裁掉
+	# 与 LogLabel 同格：两者互斥显示，结构上不可能再重叠；几何统一交给 _layout_rule_tips()
+	var home: Vector2 = Vector2(824, 300)
+	if log_label and is_instance_valid(log_label):
+		home = log_label.get_meta("home", log_label.position)
 	level0_rule_tip_bg = Panel.new()
 	level0_rule_tip_bg.name = "Level0RuleTipsBg"
-	level0_rule_tip_bg.position = Vector2(824, 300)
-	level0_rule_tip_bg.size = Vector2(312, 300)
+	level0_rule_tip_bg.set_meta("home", home)
 	level0_rule_tip_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	level0_rule_tip_bg.add_theme_stylebox_override("panel", _make_panel_style("toast_info"))
 	_layer(0).add_child(level0_rule_tip_bg)
 
+	# 标题条：和日志同一套可折叠交互（默认展开，点一下收成 26px 一行）
+	_rule_tip_title = _make_right_column_title("Level0RuleTipsTitle", "规则提醒")
+	_rule_tip_title.pressed.connect(_on_rule_tip_title_pressed)
+	level0_rule_tip_bg.add_child(_rule_tip_title)
+
 	level0_rule_tip_label = Label.new()
 	level0_rule_tip_label.name = "Level0RuleTips"
-	level0_rule_tip_label.position = Vector2(838, 312)
-	level0_rule_tip_label.size = Vector2(284, 276)
 	level0_rule_tip_label.add_theme_font_size_override("font_size", 13)
 	level0_rule_tip_label.add_theme_color_override("font_color", Color(0, 0, 0, 1))
 	level0_rule_tip_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	level0_rule_tip_label.text = ""
 	_layer(0).add_child(level0_rule_tip_label)
 	_level0_update_rule_tips()
+	_layout_rule_tips()
+
+
+# 右栏可折叠标题条的共用构造（日志 / 规则提醒同一套外观与交互，避免两处各写一遍样式）
+func _make_right_column_title(node_name: String, text: String) -> Button:
+	var title := Button.new()
+	title.name = node_name
+	title.text = "%s ▾" % text
+	title.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	title.focus_mode = Control.FOCUS_NONE
+	title.add_theme_font_size_override("font_size", 12)
+	title.add_theme_color_override("font_color", Color(0.22, 0.26, 0.32, 1))
+	title.add_theme_color_override("font_hover_color", Color(0.12, 0.16, 0.22, 1))
+	title.add_theme_color_override("font_pressed_color", Color(0.12, 0.16, 0.22, 1))
+	title.add_theme_stylebox_override("normal", _make_panel_style("log_title"))
+	title.add_theme_stylebox_override("hover", _make_panel_style("log_title_hover"))
+	title.add_theme_stylebox_override("pressed", _make_panel_style("log_title"))
+	title.add_theme_stylebox_override("focus", StyleBoxEmpty.new())
+	return title
+
+
+func _on_rule_tip_title_pressed() -> void:
+	_rule_tip_collapsed = not _rule_tip_collapsed
+	_layout_rule_tips()
+
+
+# 规则提醒几何：与日志同一条公式（标题 26 + 间距 6 + 正文），正文高度用 Label 实测最小高度
+func _layout_rule_tips() -> void:
+	if level0_rule_tip_bg == null or not is_instance_valid(level0_rule_tip_bg):
+		return
+	if level0_rule_tip_label == null or not is_instance_valid(level0_rule_tip_label):
+		return
+	var home: Vector2 = level0_rule_tip_bg.get_meta("home", Vector2(824, 300))
+	var panel_w: float = LOG_W + LOG_PANEL_PAD
+	var body_w: float = panel_w - LOG_TEXT_PAD - LOG_PANEL_PAD
+	# 先定宽再量高：autowrap 的 Label 只有在宽度确定后才能算出换行后的真实高度
+	level0_rule_tip_label.size = Vector2(body_w, LOG_CONTENT_MAX_H)
+	var body_h: float = LOG_CONTENT_MIN_H
+	if not _rule_tip_collapsed:
+		body_h = clampf(level0_rule_tip_label.get_minimum_size().y, LOG_CONTENT_MIN_H, LOG_CONTENT_MAX_H)
+	var panel_h: float = LOG_PANEL_PAD + LOG_TITLE_H + LOG_PANEL_PAD
+	if not _rule_tip_collapsed:
+		panel_h += LOG_BODY_GAP + body_h
+	level0_rule_tip_bg.position = home
+	level0_rule_tip_bg.size = Vector2(panel_w, panel_h)
+	if _rule_tip_title and is_instance_valid(_rule_tip_title):
+		_rule_tip_title.position = Vector2(0, LOG_PANEL_PAD)
+		_rule_tip_title.size = Vector2(panel_w, LOG_TITLE_H)
+		_rule_tip_title.text = "规则提醒 %s" % ("▸" if _rule_tip_collapsed else "▾")
+	level0_rule_tip_label.position = Vector2(home.x + LOG_TEXT_PAD, home.y + LOG_TITLE_H + LOG_BODY_GAP)
+	level0_rule_tip_label.size = Vector2(body_w, body_h)
+	level0_rule_tip_label.visible = not _rule_tip_collapsed and level0_rule_tip_bg.visible
 
 
 # 彻底清掉第零关规则提醒（跨局 / 退出教学时必须调）：
@@ -2848,6 +2927,9 @@ func _level0_clear_rule_tips() -> void:
 	if level0_rule_tip_label and is_instance_valid(level0_rule_tip_label):
 		level0_rule_tip_label.queue_free()
 	level0_rule_tip_label = null
+	if _rule_tip_title and is_instance_valid(_rule_tip_title):
+		_rule_tip_title.queue_free()
+	_rule_tip_title = null
 	if level0_rule_tip_bg and is_instance_valid(level0_rule_tip_bg):
 		level0_rule_tip_bg.queue_free()
 	level0_rule_tip_bg = null
@@ -2857,10 +2939,10 @@ func _level0_clear_rule_tips() -> void:
 
 # 规则提醒 / 日志共用右栏同一格：互斥可见，永远不可能叠在一起
 func _level0_set_rule_tips_visible(on: bool) -> void:
-	if level0_rule_tip_label and is_instance_valid(level0_rule_tip_label):
-		level0_rule_tip_label.visible = on
 	if level0_rule_tip_bg and is_instance_valid(level0_rule_tip_bg):
 		level0_rule_tip_bg.visible = on
+	if level0_rule_tip_label and is_instance_valid(level0_rule_tip_label):
+		level0_rule_tip_label.visible = on and not _rule_tip_collapsed
 	if log_label and is_instance_valid(log_label):
 		_set_log_visible(not on)
 
@@ -2880,13 +2962,15 @@ func _level0_update_rule_tips() -> void:
 		return
 	_level0_set_rule_tips_visible(true)
 	level0_rule_tip_label.text = _level0_rule_tips_text()
+	_layout_rule_tips()
 
 
 # 第零关只教「越大越小 / 同类同出」：族炸是本关不引导的内容，规则层仍允许手打，
 # 只有玩家自己真的打出族炸时，才补一条「牌权争夺」说明（避免默认就把新手带偏）
 func _level0_rule_tips_text() -> String:
 	var tip: String = game_manager.level0_rule_tip
-	var rules_info = "── 规则提醒 ──\n\n"
+	# 面板已经有「规则提醒」标题条，正文直接进规则条目，不再重复一行标题
+	var rules_info = ""
 	if tip == "越大越小":
 		rules_info += "● 越大越小\n原子序数和越小牌越大\n同牌型必须出更大的牌才能接上\n\n"
 		rules_info += "  同类同出\n桌面单质→只能接单质\n桌面化合物→只能接化合物\n"
@@ -3460,9 +3544,10 @@ func _on_hand_reorder() -> void:
 	_update_hand_reorder_button()
 
 
-# -------- 日志底板（A1）：6 行日志直接压浅蓝背景，右栏里没有边界 --------
+# -------- 右栏日志（A1 底板 + F4 可折叠标题条） --------
 # 挂 GamePage 直接子节点（跟随页面显隐），插在 LogLabel 之前 —— 同级按树顺序绘制，
 # 底板必须先画；mouse_filter = IGNORE 保证它不吃手牌 / 按钮的点击。
+# 标题条是唯一新增的可点元素（折叠开关），也挂在 GamePage 上、紧跟底板。
 func _ensure_log_panel() -> void:
 	if _log_panel != null and is_instance_valid(_log_panel):
 		return
@@ -3471,25 +3556,91 @@ func _ensure_log_panel() -> void:
 	var page := log_label.get_parent()
 	if page == null:
 		return
+	# 记下 LogLabel 在 Main.tscn 里的设计位置：之后所有几何都从它推导，
+	# 折叠只改 LogLabel 的 y / 高度，不会把自己的基准挪掉
+	if not log_label.has_meta("home"):
+		log_label.set_meta("home", log_label.position)
 	var panel := Panel.new()
 	panel.name = "LogPanel"
 	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel.add_theme_stylebox_override("panel", _make_panel_style("log_panel"))
-	# 几何直接由 LogLabel 推导：以后调日志区位置 / 尺寸，底板自动跟上
-	panel.position = log_label.position - Vector2(LOG_PANEL_PAD, LOG_PANEL_PAD)
-	panel.size = log_label.size + Vector2(LOG_PANEL_PAD, LOG_PANEL_PAD) * 2.0
 	page.add_child(panel)
 	page.move_child(panel, log_label.get_index())
 	_log_panel = panel
 
+	var title := _make_right_column_title("LogTitleBar", "游戏日志")
+	title.pressed.connect(_on_log_title_pressed)
+	page.add_child(title)
+	page.move_child(title, panel.get_index() + 1)
+	_log_title = title
+	_layout_log_panel()
 
-# 日志区显隐的唯一出口：规则提醒占用右栏同一格时，日志与底板一起让位
+
+# 点标题条：折叠 / 展开。折叠状态跟着这个 GameUI 实例走（跨回合保留，不写存档）
+func _on_log_title_pressed() -> void:
+	_log_collapsed = not _log_collapsed
+	_layout_log_panel()
+
+
+# 右栏日志几何的唯一出口：底板 / 标题条 / 正文一起算，「折叠」与「展开」只差正文高度。
+# 高度按「行数 × 行高」推（日志最多 MAX_LOG_LINES 行），不再写死 300px 让右栏空一大片。
+func _layout_log_panel() -> void:
+	if log_label == null or not is_instance_valid(log_label):
+		return
+	if _log_panel == null or not is_instance_valid(_log_panel):
+		return
+	if _log_title == null or not is_instance_valid(_log_title):
+		return
+	var home: Vector2 = log_label.get_meta("home", log_label.position)
+	var panel_w: float = LOG_W + LOG_PANEL_PAD
+	var body_w: float = panel_w - LOG_TEXT_PAD - LOG_PANEL_PAD
+	var body_h: float = LOG_CONTENT_MIN_H
+	if not _log_collapsed:
+		# 先把宽度定下来，autowrap 的 Label 才能量出真实换行高度（长行折行时不会被裁）
+		log_label.size = Vector2(body_w, LOG_CONTENT_MAX_H)
+		var rows: int = maxi(log_lines.size(), 1)
+		var need: float = maxf(float(rows) * _log_line_h(), log_label.get_minimum_size().y)
+		body_h = clampf(need, LOG_CONTENT_MIN_H, LOG_CONTENT_MAX_H)
+	var panel_h: float = LOG_PANEL_PAD + LOG_TITLE_H + LOG_PANEL_PAD
+	if not _log_collapsed:
+		panel_h += LOG_BODY_GAP + body_h
+	# 左边缘 = 正文设计位置（原 814 的底板会压到退出按钮右边缘 820）
+	_log_panel.position = Vector2(home.x, home.y - LOG_PANEL_PAD)
+	_log_panel.size = Vector2(panel_w, panel_h)
+	# 标题条是 GamePage 的子节点（紧跟底板以便画在上面），所以位置要加回底板原点
+	_log_title.position = Vector2(home.x, home.y)
+	_log_title.size = Vector2(panel_w, LOG_TITLE_H)
+	_log_title.text = _log_title_text()
+	log_label.position = Vector2(home.x + LOG_TEXT_PAD, home.y + LOG_TITLE_H + LOG_BODY_GAP)
+	log_label.size = Vector2(body_w, body_h)
+	log_label.visible = _log_visible and not _log_collapsed
+
+
+func _log_title_text() -> String:
+	var arrow: String = "▸" if _log_collapsed else "▾"
+	var n: int = log_lines.size()
+	if n <= 0:
+		return "游戏日志 %s" % arrow
+	return "游戏日志 · %d 条 %s" % [n, arrow]
+
+
+# 单行日志的行高：中文字体 ascent+descent 再加 2px 呼吸，宁可多给 1~2px 也不裁字
+func _log_line_h() -> float:
+	var fs: int = log_label.get_theme_font_size("font_size")
+	var font: Font = log_label.get_theme_font("font")
+	return maxf(font.get_height(fs) + 2.0, float(fs) + 4.0)
+
+
+# 日志区显隐的唯一出口：规则提醒占用右栏同一格时，日志 / 底板 / 标题条一起让位
 func _set_log_visible(on: bool) -> void:
 	_ensure_log_panel()
+	_log_visible = on
 	if log_label and is_instance_valid(log_label):
-		log_label.visible = on
+		log_label.visible = on and not _log_collapsed
 	if _log_panel and is_instance_valid(_log_panel):
 		_log_panel.visible = on
+	if _log_title and is_instance_valid(_log_title):
+		_log_title.visible = on
 
 
 func _update_log_label() -> void:
@@ -3501,6 +3652,7 @@ func _update_log_label() -> void:
 		while log_lines.size() > MAX_LOG_LINES:
 			log_lines.pop_front()
 	log_label.text = "\n".join(log_lines)
+	_layout_log_panel()
 
 
 func _update_card_info_label() -> void:
