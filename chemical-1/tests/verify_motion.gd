@@ -45,6 +45,7 @@ func _run():
 	await _test_end_page_motion(scene)
 	await _test_card_fonts(scene)
 	await _test_hand_and_table_motion(scene)
+	await _test_play_and_discard_motion(scene)
 
 	if fails == 0:
 		print("ALL MOTION TESTS PASSED")
@@ -325,4 +326,70 @@ func _test_hand_and_table_motion(scene) -> void:
 		"小卡入场收敛到 1.0 / 不透明")
 	_check(mini.position.is_equal_approx(pos0), "小卡入场不动 position（%s）" % str(pos0))
 	mini.queue_free()
+	await process_frame
+
+
+# ---------------- 6. 出牌 / 弃牌 / 抽牌（A3） ----------------
+# 三处都依赖「幽灵牌」：原按钮会被 _refresh_ui 整块重建，只有 duplicate 的副本能跨过重建飞行。
+func _test_play_and_discard_motion(scene) -> void:
+	if scene.hand_buttons.size() < 2:
+		_check(false, "A3：手牌不足 2 张，无法验证出牌 / 弃牌动画")
+		return
+	# 1) 发牌 / 抽牌淡入：清空「已见卡片」后重建 → 新牌从透明开始
+	scene._hand_seen_cards = []
+	scene._update_hand_buttons()
+	await process_frame
+	var nb: Button = scene.hand_buttons[0]
+	_check(nb.modulate.a < 0.5, "新抽 / 新发的牌从透明开始淡入（a=%.2f）" % nb.modulate.a)
+	await _wait_meta_tween(nb, "deal_in_tween")
+	_check(abs(nb.modulate.a - 1.0) < 0.01, "发牌淡入收敛到不透明")
+	# 同一批牌再重建不重播（否则每次刷新都闪）
+	scene._update_hand_buttons()
+	await process_frame
+	_check(abs(scene.hand_buttons[0].modulate.a - 1.0) < 0.01, "同一批牌重建不重播发牌淡入")
+
+	# 2) 出牌飞入：选中 2 张 → 每张拍一个幽灵牌，原位让位
+	scene.selected_indices.clear()
+	scene.selected_indices.append(0)
+	scene.selected_indices.append(1)
+	var snaps: Array = scene._capture_play_fly_in()
+	_check(snaps.size() == 2, "出牌：每张被选中的牌都拍到幽灵牌（%d 张）" % snaps.size())
+	if snaps.size() < 2:
+		scene.selected_indices.clear()
+		return
+	_check(not scene.hand_buttons[0].visible, "出牌：原位牌立即让位（视觉上牌被拿走）")
+	var g0 = snaps[0].get("ghost", null)
+	_check(g0 != null and is_instance_valid(g0), "出牌：生成幽灵牌")
+	if g0 != null:
+		_check(g0.get_parent() == scene._layer(0), "幽灵牌挂在 ContentLayer（不随手牌重建销毁）")
+		_check(g0.mouse_filter == Control.MOUSE_FILTER_IGNORE, "幽灵牌不吃鼠标")
+		_check(g0.z_index == scene.Z_DRAG, "幽灵牌层级 Z_DRAG（压在手牌之上、模态之下）")
+		scene._replay_play_fly_in(snaps)
+		_check(g0.get_meta("fly_tween", false) is Tween, "出牌幽灵牌已开始飞行")
+		await _wait_meta_tween(g0, "fly_tween")
+		await process_frame
+		_check(not is_instance_valid(g0), "出牌幽灵牌播完自动释放（不残留节点）")
+
+	# 3) 弃牌抬起：向上飞 DISCARD_FLY_LIFT 后消失
+	scene.selected_indices.clear()
+	scene._update_hand_buttons()
+	await process_frame
+	scene.selected_indices.append(0)
+	var before_y: float = scene.hand_buttons[0].global_position.y
+	scene._fly_discarded_card()
+	var disc: Control = null
+	for ch in scene._layer(0).get_children():
+		if ch is Control and ch.name == "FlyGhost":
+			disc = ch
+			break
+	_check(disc != null, "弃牌：生成幽灵牌")
+	if disc != null:
+		_check(not scene.hand_buttons[0].visible, "弃牌：原位牌立即让位")
+		await _wait_meta_tween(disc, "fly_tween")
+		_check(disc.global_position.y < before_y - 10.0,
+			"弃牌向上抬起（%.1f < %.1f）" % [disc.global_position.y, before_y])
+		await process_frame
+		_check(not is_instance_valid(disc), "弃牌幽灵牌播完自动释放")
+	scene.selected_indices.clear()
+	scene._update_hand_buttons()
 	await process_frame

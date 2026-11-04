@@ -23,7 +23,7 @@
 | **P10 / P10.1** | 元素限制（前 20 号 + 可勾选扩展）+ 4 条补充规则合成一小页 + chip 紧凑化 | ✅ 完成（见 §8.7） |
 | **P11** | 游戏页工具按钮统一画风（`_style_game_tool_buttons()` 接管样式 + 几何归一） | ✅ 完成（见 §8.8） |
 | **P12** | 化学规则收口：假化合物拦截 + 顺序约束只作用于被指定玩家（非 UI 改动） | ✅ 完成（2026-11-04；见 GAMEPLAY_RULES §9 / §16.2、COMPOUND_MECHANISM_COMPARISON §6） |
-| **批次 A** | P4 批次 A 的纯代码条目：F1 多价元素卡面溢出 / F2 触屏拖拽死区 / A1 按钮·日志·价态 chip / A2 手牌·桌面动效 / A3 出牌·抽牌·弃牌动画 | 🚧 进行中（F1 ✅ / F2 ✅，见 §13） |
+| **批次 A** | P4 批次 A 的纯代码条目：F1 多价元素卡面溢出 / F2 触屏拖拽死区 / A1 按钮·日志·价态 chip / A2 手牌·桌面动效 / A3 出牌·抽牌·弃牌动画 | ✅ 完成（2026-11-04，见 §13） |
 | **P4** | 美术升级方向文档的其余条目（卡牌重绘 / 字体 / 图标 / 音频 / A5 悬停与选中放大） | ⏳ 未展开（§6 核对表 22 项：✅9 / △1 / ❌12；按 §6.2 分批次 A（纯代码）/ 批次 B（需素材）推进） |
 
 ---
@@ -728,6 +728,7 @@ meta 不存在时会刷 `ERROR`；改为 `has_meta()` 判定，并给 `StartRule
 
 **验收**：23 个测试套件全绿（新增 `tests/verify_tool_buttons.gd` **109 条**：绑定 4 / 样式接管 52 /
 悬停光晕 10 / 语义态 12 / 几何 8 / 相邻区块不重叠 5 / 按序按钮 5 / 教程高亮框 7 / 悬停缩放 6）；
+`--headless --quit-after 90` 无 ERROR；真实窗口核对 4 组状态（常态 / 悬停 / 提示开 / 退出悬停）。
 
 ---
 
@@ -901,4 +902,40 @@ if moved >= _drag_threshold():            # 触屏 24px
 **验收**：27 套测试全绿（`verify_motion` 覆盖 13 条新断言，`verify_hand_layout` / `verify_sequence_table` /
 `verify_integration` 的桌面小卡位置断言未受影响 —— 因为入场刻意不动 position）。
 
-`--headless --quit-after 90` 无 ERROR；真实窗口核对 4 组状态（常态 / 悬停 / 提示开 / 退出悬停）。
+### 13.5 A3：出牌 / 抽牌 / 弃牌动画
+
+**问题**：出牌后手牌直接少几张、桌面小卡凭空出现 —— 玩家很难把「我点的牌」和「桌上那几张」
+连起来；弃牌只是牌数减一，没有任何「这张牌离开手牌」的视觉交代。
+
+**方案：统一的「幽灵牌」通道**（`_make_fly_ghost()`）
+
+关键是 `_refresh_ui()` 会把手牌整块重建（`remove_child` + `queue_free`），
+所以**不能移动原按钮**；改成 `duplicate()` 一份挂在 `ContentLayer` 上，
+用 `global_position` 飞行，跨容器也一致。
+
+| 场景 | 实现 | 备注 |
+|---|---|---|
+| 出牌 | `_capture_play_fly_in()` 在 `_step_reset()` / `_refresh_ui()` **之前**拍快照（幽灵牌 + 原位 `visible=false`）；`_replay_play_fly_in()` 在刷新后飞向桌面小卡 | 与小卡**按卡片对象配对**（化合物小卡会按化学式重排，下标对不上）；`PLAY_FLY_MS = 260` / 终点 `0.76`；末 40% 才淡出 |
+| 弃牌 | `_fly_discarded_card()`：向上 `DISCARD_FLY_LIFT = 46px` + 淡出 | 抢在 `player_discard_and_pass()` 之前；弃牌没有落点，只做抬起 |
+| 抽牌 / 发牌 | `_animate_new_hand_cards()`：按卡片对象比对 `_hand_seen_cards`，新牌 `modulate:a` 0→1（`DEAL_IN_MS = 180`） | 开局 8 张全部算「新」→ 自带发牌入场；**只动 alpha**，scale 归悬停 / 选中补间（同改会互相拉扯） |
+
+**刻意不做 / 已知缺口**：
+
+- 弃牌 → 牌库堆的飞行：牌库只有一行文字计数（`DeckCountLabel` 已隐藏），没有可视落点
+- AI 出牌没有手牌飞入：`AIPlayer.auto_play(gm, _refresh_ui)` 不经过 `_handle_result()`，
+  只有桌面小卡入场（`_table_sig` 去重后仍会播，因为内容变了）
+- 不做「牌飞到桌面后回弹」：桌面小卡自己已有入场缩放，两段动画叠加会显得乱
+
+| 位置 | 改动 |
+|---|---|
+| `GameUI.gd` 动效规范区 | `PLAY_FLY_MS = 260` / `PLAY_FLY_SCALE = 0.76` / `DISCARD_FLY_MS = 240` / `DISCARD_FLY_LIFT = 46` / `DEAL_IN_MS = 180` |
+| `_make_fly_ghost()` / `_fly_ghost()` | 新增（副本挂 ContentLayer、忽略鼠标、`z = Z_DRAG`、播完自 `queue_free`） |
+| `_capture_play_fly_in()` / `_replay_play_fly_in()` | 新增；`_handle_result(0)` 里「捕获 → 重置/刷新 → 回放」 |
+| `_fly_discarded_card()` | 新增；`_on_discard_mode()` 弃牌分支在数据层改动前调用 |
+| `_animate_new_hand_cards()` | 新增；`_update_hand_buttons()` 末尾调用 |
+| `_build_mini_card_button()` | 加 `set_meta("card", card)`（出牌飞入的配对键） |
+| `tests/verify_motion.gd` | **+15**：发牌淡入起点 / 收敛 / 同批不重播；出牌幽灵牌数量 / 原位让位 / 挂 ContentLayer / 不吃鼠标 / `z=Z_DRAG` / 已开始飞行 / 播完自释放；弃牌幽灵牌生成 / 原位让位 / 向上抬起 / 播完自释放 |
+
+**验收**：27 套测试全绿；`verify_hand_runtime` / `verify_ai_discard` / `verify_integration` /
+`verify_sequence`（真实出牌、弃牌路径）未受影响 —— 动画只读 `hand_buttons`，不改任何数据。
+

@@ -1,6 +1,6 @@
 # 化学碰撞 — 程序架构与实现文档
 
-> **版本**: 14.6  
+> **版本**: 14.7  
 > **日期**: 2026-11-04  
 > **引擎**: Godot 4.x / GDScript
 
@@ -680,6 +680,26 @@ Godot 的 `CanvasItem` 排序是 **`z_index` 优先于树顺序**。`GamePage` �
 - 补间 meta：小卡 `mini_in_tween`、桌面文字 `reveal_tween`（都先 kill 旧的再建新的，避免叠加）
 - 回归测试：`verify_motion.gd → _test_hand_and_table_motion()` 锁死「入场不动 position」「文本未变不重播」「三种牌型色互相可区分」
 
+### 出牌 / 弃牌 / 抽牌动效（A3）
+
+三处都靠「幽灵牌」（`_make_fly_ghost()`）：**原按钮会被 `_refresh_ui()` 整块重建
+（`remove_child` + `queue_free`）**，任何「移动原按钮」的写法都会在半路凭空消失。
+幽灵牌是 `duplicate()` 出来的副本，挂在 `ContentLayer`（不随 `hand_container` 重建销毁），
+坐标统一用 `global_position`，跨容器也一致。
+
+| 场景 | 实现 | 关键点 |
+|---|---|---|
+| 出牌 | `_capture_play_fly_in()` 抢在 `_step_reset()` / `_refresh_ui()` 之前拍下被选中手牌的幽灵牌（并把原位 `visible = false`）；`_replay_play_fly_in()` 在刷新后让它们飞向桌面小卡 | 与小卡**按卡片对象配对**（化合物的小卡会按化学式重排，下标对不上）；终点 `PLAY_FLY_SCALE = 0.76`（95×118 → 72×90）；末 40% 才淡出，前段看清是哪张 |
+| 弃牌 | `_fly_discarded_card()`：向上抬 `DISCARD_FLY_LIFT = 46px` 后淡出 | 同样抢在 `player_discard_and_pass()` / 重建之前；弃牌是「牌离开手牌」，没有落点，所以只做抬起 |
+| 抽牌 / 发牌 | `_animate_new_hand_cards()`：按卡片对象比对 `_hand_seen_cards`，只对新出现的牌做 `modulate:a` 0→1 淡入 | 开局 8 张全部「新出现」→ 自带一次发牌入场；**只动 alpha**，`scale` 归悬停 / 选中缩放补间管（两边同时改会互相拉扯） |
+
+- 补间 meta：幽灵牌 `fly_tween`、新牌 `deal_in_tween`；幽灵牌播完 `queue_free()` 自清理
+- 已知缺口：**弃牌 → 牌库堆的飞行**没做（牌库没有可视节点，只有一个文字计数）；
+  AI 出牌走 `AIPlayer.auto_play(gm, _refresh_ui)`，不经过 `_handle_result()`，
+  所以 AI 出牌只有桌面小卡入场，没有手牌飞入
+- 回归测试：`verify_motion.gd → _test_play_and_discard_motion()`（发牌淡入 / 同批不重播 /
+  幽灵牌挂 ContentLayer + `mouse_filter=IGNORE` + `z=Z_DRAG` / 播完自释放 / 弃牌向上抬起）
+
 ### 教程引导文本布局
 
 `TutorialLabel` 显示 `TutorialController.get_tutorial_display()`，即
@@ -897,7 +917,7 @@ func _tool_btn_h() -> float:           # 桌面回常量，触屏回放大值
 | 痛点 | 桌面行为 | 触屏行为 |
 |------|---------|---------|
 | 悬停粘住 | 轮询鼠标位置 → 抬起牌 + 信息栏显示详情 | **只在按住时**抬起，松手立即落下并还原信息栏（Android 没有 `mouse_exited`，抬起状态会永远粘在最后点过的那张牌上） |
-| 点选时手抖被判成拖拽 | 位移 ≥ `DRAG_THRESHOLD`(6px) 即重排 | 阈值 24px **且**按住 ≥300ms 才重排；否则照常点选（否则那次 `pressed` 会被吞掉，表现为「点了没反应」） |
+| 点选时手抖被判成拖拽 | 位移 ≥ `DRAG_THRESHOLD`(6px) 即重排 | **两档**：`TOUCH_DRAG_ARM_MOVE`(10px) 起拖跟手、`TOUCH_DRAG_THRESHOLD`(24px) 松手才确认重排；<24px 回退成点选（起拖门槛 < 回退门槛，所以点击永远不会被吞） |
 | 手指压在牌缝 / 边缘外 | 严格矩形，未命中即忽略 | 严格命中优先；全落空时才用外扩 `TOUCH_HIT_PAD`(8px) 兜底，不会抢走正常判定 |
 | 看不出选中了哪张 | 悬停抬起 20px + 黄色描边 | 选中的牌**常驻上浮 10px**（悬停后落下也保留），且 `z_index=Z_HAND_SELECTED` |
 | 误点「退出游戏」 | 立刻进结算页 | 二次确认：按钮变「确认退出?」，3 秒内再点才执行，超时自动回滚文字 |
@@ -920,6 +940,8 @@ godot --headless --path . --script tests/verify_touch_ui.gd
 53 项断言分 8 组：桌面基准 10、工具行几何 15、字号 8、命中缓冲 4、选中上浮 6、
 页面按钮 3、退出二次确认 5、**关档归零 2**。最后一组会把 `_touch_ui` 切回 `false`
 并重跑 `_style_game_tool_buttons()`，确认触屏放大值没有漏进桌面路径。
+（v14.7 起又并入「拖拽两档」一组：起拖 / 确认阈值分离、12px 松手回退成点选、
+40px 松手真的重排、桌面基准断言追加 `_drag_arm_threshold() == 6`。）
 
 ### 12.6 触屏实测反馈修复（v14.5）
 
@@ -939,5 +961,5 @@ godot --headless --path . --script tests/verify_touch_ui.gd
 
 ---
 
-**文档版本**: 14.6  
+**文档版本**: 14.7  
 **最后更新**: 2026-11-02
