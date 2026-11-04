@@ -870,4 +870,35 @@ if moved >= _drag_threshold():            # 触屏 24px
 `verify_touch_ui` / `verify_start_page` / `verify_motion` / `verify_tutorial_layout` /
 `verify_help_page` 全绿。
 
+### 13.4 A2：手牌悬停 / 选中缩放 + 桌面区动效
+
+**问题**：手牌悬停只有「抬 20px」，在 16 张叠牌里主角感不足；选中只换底色（触屏再加 10px 上浮），
+手指粗的时候几乎看不出。桌面区更平：小卡整块重建时「啪」地出现，「桌面: …」无论打出什么牌型
+都是同一行深灰小字，玩家得读完整句才知道刚才是化合物还是族炸。
+
+| 项 | 改动 |
+|---|---|
+| 手牌缩放 | `_tween_card_scale()`：悬停 `1.06` / 选中 `1.04` / 常态 `1.0`，`HAND_SCALE_MS = 120`；pivot 在 `_layout_hand_cards()` 居中；`scale_tween` 与 `hover_tween` **分开两个 meta 键** |
+| 重排不压扁 | `_layout_hand_cards()` 里按「悬停 > 选中 > 常态」会话式重设 `btn.scale`（重排后 `_hover_idx` 没变，状态机不会重新触发） |
+| 桌面文字配色 | `_table_type_color()`：单质深灰蓝 `#2B3D4F` / 化合物深绿 / 族炸深红 / 有机物琥珀 / 顺序深紫 |
+| 桌面文字淡入 | `_set_table_text()`：文本变化才从 `a=0.15` 淡入（`TABLE_REVEAL_MS = 180`），未变不重播 |
+| 小卡入场 | `_animate_mini_card_in()`：`0.9 → 1.0` 缩放 + 淡入，`MINI_CARD_IN_MS = 160` + 40ms stagger；**不动 position**（槽位是布局真值） |
+| 入场去重 | `_table_sig = "牌型|符号+uid,…"` —— AI 每次行动都会 `_refresh_ui` 整块重建小卡，不去重会一直闪 |
+
+**为什么缩放不会让命中判定抖动**：悬停 / 点击命中用的是 `_card_hover_rect()`（只读 `base_pos`，
+尺寸写死 `CARD_W × (CARD_H + HOVER_LIFT)`），`scale` 完全不参与 —— 与按钮 `_attach_btn_motion()`
+同一个思路。代价是放大后的牌绘制区会比命中区宽约 3px（每边），肉眼不可察。
+
+| 位置 | 改动 |
+|---|---|
+| `GameUI.gd` 动效规范区 | `HAND_HOVER_SCALE = 1.06` / `HAND_SELECT_SCALE = 1.04` / `HAND_SCALE_MS = 120` / `TABLE_REVEAL_MS = 180` / `MINI_CARD_IN_MS = 160` / `MINI_CARD_IN_STAGGER = 0.04` / `TABLE_TEXT_COLOR` |
+| `_apply_hover()` | 位置补间旁并排加缩放补间（悬停 1.06、落回按选中态取 1.04 / 1.0） |
+| `_layout_hand_cards()` | kill `scale_tween` + 设 pivot + 按状态重设 scale |
+| `_tween_card_scale()` / `_kill_scale_tween()` | 新增（与位移补间同构，meta 键独立） |
+| `_table_type_color()` / `_set_table_text()` / `_tween_table_label_reveal()` / `_animate_mini_card_in()` | 新增；`_update_table_label()` 改用它们，并计算 `_table_sig` 决定是否播入场 |
+| `tests/verify_motion.gd` | **+13**：pivot 居中 / 选中档 < 悬停档 / 悬停 1.06 / 等比 / 选中 1.04 / 取消选中回 1.0 / 重排不残留补间 / 三种牌型色可区分 / 文字淡入起点 / 淡入收敛 / 文本未变不重播 / 小卡入场起点 / 小卡收敛且不动 position |
+
+**验收**：27 套测试全绿（`verify_motion` 覆盖 13 条新断言，`verify_hand_layout` / `verify_sequence_table` /
+`verify_integration` 的桌面小卡位置断言未受影响 —— 因为入场刻意不动 position）。
+
 `--headless --quit-after 90` 无 ERROR；真实窗口核对 4 组状态（常态 / 悬停 / 提示开 / 退出悬停）。

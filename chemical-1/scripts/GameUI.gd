@@ -179,6 +179,7 @@ const BORDER_WARN := Color(0.906, 0.298, 0.235, 1.0)    # #E74C3C
 const SHADOW_COLOR := Color(0.1, 0.15, 0.22, 0.14)
 const SHADOW_SIZE := 3
 const SHADOW_OFFSET := Vector2(0, 2)
+const TABLE_TEXT_COLOR := Color(0.17, 0.24, 0.31, 1.0)  # 桌面文字常态（单质 / 空桌）
 
 # ---- 动效规范（P3）：页面淡入 / 按钮缩放 ----
 # 页面淡入采用「根节点常驻同色底 + 目标页 modulate 0→1」，不改 visible 语义：
@@ -189,6 +190,15 @@ const PAGE_FADE_MS := 220                                # 页面淡入时长
 const BUTTON_HOVER_SCALE := 1.05                         # 按钮悬停放大
 const BUTTON_PRESS_SCALE := 0.96                         # 按钮按下回缩
 const BUTTON_SCALE_MS := 90                              # 缩放补间时长
+# 手牌缩放（A2）：手牌是主角，悬停档比按钮再大一格；选中档小于悬停档，
+# 保证「悬停中的选中牌」不会被撑得压住邻居（命中判定用静态矩形，缩放不参与）。
+const HAND_HOVER_SCALE := 1.06                           # 悬停放大
+const HAND_SELECT_SCALE := 1.04                          # 选中常驻放大（触屏没有悬停，靠它示意）
+const HAND_SCALE_MS := 120                               # 手牌缩放补间时长
+# 桌面区（A2）：小卡入场 + 牌型文字换行淡入
+const TABLE_REVEAL_MS := 180                             # 「桌面: …」文本变化时淡入时长
+const MINI_CARD_IN_MS := 160                             # 小卡入场（0.9 → 1.0 + 淡入）时长
+const MINI_CARD_IN_STAGGER := 0.04                       # 多张小卡依次入场的间隔（秒）
 
 # ---- 警告 toast：右栏上部空白格 ----
 # LogLabel 从 y=300 起、TutorialLabel 从 y=186 起、InfoLabel 只到 x=480，
@@ -205,6 +215,7 @@ var toast_layer: Control = null
 var _warning_toast: Control = null
 var _warning_label: Label = null
 var _warning_seq: int = 0
+var _table_sig: String = ""             # 桌面小卡内容签名（同一批牌不重播入场动画）
 
 # 页面淡入补间（全局单例：同一时刻只允许一个页面在淡入）
 var _page_fade_tween: Tween = null
@@ -3062,7 +3073,7 @@ func _update_table_label() -> void:
 						txt += "（" + comp_name + "）"
 		if game_manager.is_compound_immune(): txt += " [免疫]"
 		if game_manager.is_clan_bomb_chain_active(): txt += " ⚠接炸中"
-		table_label.text = txt
+		_set_table_text(txt, pat)
 
 		# 为桌面迷你卡牌计算每个元素的化合价
 		var card_valences: Dictionary = {}
@@ -3104,6 +3115,14 @@ func _update_table_label() -> void:
 			for i in range(cards.size()):
 				card_valences[i] = 0
 
+		# 内容签名：同一批牌（uid）+ 同一牌型 → 不重播入场动画。
+		# AI 每次行动都会走 _refresh_ui 整块重建小卡，不去重的话桌面会一直闪。
+		var new_sig := "%d|" % pat
+		for c in cards:
+			new_sig += "%s%d," % [c.symbol, c.uid]
+		var replay: bool = new_sig != _table_sig
+		_table_sig = new_sig
+
 		# 桌面牌槽位："桌面: …"文字下方的那一行，多张时自动压缩并水平居中
 		var slot_left := 20.0
 		var slot_w := 580.0
@@ -3123,8 +3142,67 @@ func _update_table_label() -> void:
 			mini_btn.position = Vector2(start_x + i * mini_step, slot_y)
 			_layer(0).add_child(mini_btn)
 			table_card_buttons.append(mini_btn)
+			if replay:
+				_animate_mini_card_in(mini_btn, i)
 	else:
-		table_label.text = "桌面: 空"
+		_table_sig = ""
+		_set_table_text("桌面: 空", -1)
+
+
+# -------- 桌面「桌面: …」文本：按牌型上色 + 换行淡入（A2） --------
+# 以前无论打出什么牌型都是同一行深灰小字，玩家要读完整句才知道发生了什么；
+# 牌型色让「化合物 / 族炸 / 顺序」一眼可辨（族炸还会额外带 ⚠ 文案）。
+func _table_type_color(pat: int) -> Color:
+	match pat:
+		CardPatternsScript.CardPattern.COMPOUND: return Color(0.11, 0.45, 0.29, 1.0)   # 深绿
+		CardPatternsScript.CardPattern.CLAN_BOMB: return Color(0.69, 0.23, 0.18, 1.0)  # 深红
+		CardPatternsScript.CardPattern.ORGANIC: return Color(0.55, 0.36, 0.10, 1.0)    # 琥珀
+		CardPatternsScript.CardPattern.SEQUENCE: return Color(0.40, 0.29, 0.62, 1.0)   # 深紫
+	return TABLE_TEXT_COLOR                                                          # 单质 / 空桌
+
+
+func _set_table_text(txt: String, pat: int) -> void:
+	if table_label == null or not is_instance_valid(table_label):
+		return
+	var changed: bool = table_label.text != txt
+	table_label.text = txt
+	table_label.add_theme_color_override("font_color", _table_type_color(pat))
+	if changed:
+		_tween_table_label_reveal()
+
+
+# 淡入而不是瞬间换字：桌面是全场视线焦点，"啪"一下换掉容易被当成误刷
+func _tween_table_label_reveal() -> void:
+	if table_label == null or not is_instance_valid(table_label):
+		return
+	var old = table_label.get_meta("reveal_tween", false)
+	if old is Tween and old.is_valid():
+		old.kill()
+	table_label.modulate = Color(1, 1, 1, 0.15)
+	var tw := create_tween()
+	tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(table_label, "modulate:a", 1.0, TABLE_REVEAL_MS / 1000.0)
+	table_label.set_meta("reveal_tween", tw)
+
+
+# 桌面小卡入场：0.9 → 1.0 缩放 + 淡入（stagger 40ms）。
+# 刻意不动 position —— 小卡位置是布局真值，测试与"桌面小卡槽"断言都按它算。
+func _animate_mini_card_in(btn: Control, i: int) -> void:
+	if btn == null or not is_instance_valid(btn):
+		return
+	btn.pivot_offset = btn.custom_minimum_size * 0.5
+	btn.scale = Vector2(0.9, 0.9)
+	btn.modulate = Color(1, 1, 1, 0)
+	var old = btn.get_meta("mini_in_tween", false)
+	if old is Tween and old.is_valid():
+		old.kill()
+	var tw := create_tween()
+	tw.set_parallel(true)
+	tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	var delay: float = MINI_CARD_IN_STAGGER * float(i)
+	tw.tween_property(btn, "scale", Vector2.ONE, MINI_CARD_IN_MS / 1000.0).set_delay(delay)
+	tw.tween_property(btn, "modulate:a", 1.0, MINI_CARD_IN_MS / 1000.0).set_delay(delay)
+	btn.set_meta("mini_in_tween", tw)
 
 
 func _build_mini_card_button(card, custom_valence = null) -> Button:
@@ -4076,6 +4154,12 @@ func _layout_hand_cards() -> void:
 		btn.size = Vector2(CARD_W, CARD_H)
 		# 重排会覆盖 position：先杀掉进行中的升降补间，否则动画会把牌拉回旧位置
 		_kill_hover_tween(btn)
+		# 缩放同理：重排是「瞬时整排落位」，残留的缩放补间会把牌撑在 1.06 上
+		_kill_scale_tween(btn)
+		btn.pivot_offset = Vector2(CARD_W, CARD_H) * 0.5
+		# 悬停中的牌保持放大档（重建后 _hover_idx 不变，状态机不会重新触发）
+		var sc: float = HAND_HOVER_SCALE if i == _hover_idx else (HAND_SELECT_SCALE if i in selected_indices else 1.0)
+		btn.scale = Vector2(sc, sc)
 		var at_x: float = start_x + i * step
 		# 触屏档（C）：选中的牌常驻上浮 TOUCH_SELECT_LIFT（≈7dp），与「悬停 20」区分 ——
 		# 触屏没有悬停语义，不加这个就完全看不出选了哪几张，容易重复点/漏点。
@@ -4553,6 +4637,8 @@ func _apply_hover(btn: Button, hovered: bool) -> void:
 		btn.z_index = Z_HAND_HOVER
 		# 层级立即生效，位置交给补间： 80ms 三次缓出，抬起/落下不再一格跳
 		_tween_card_y(btn, base.y - HOVER_LIFT)
+		# 缩放同拍：1.06 让"正在看的那张"从整排里跳出来（pivot 居中，命中判定不受影响）
+		_tween_card_scale(btn, HAND_HOVER_SCALE)
 		_show_card_detail(btn)
 	else:
 		var idx: int = btn.get_meta("hand_idx", -1)
@@ -4561,6 +4647,7 @@ func _apply_hover(btn: Button, hovered: bool) -> void:
 		# 松手后又落回原位，选中的视觉提示就消失了
 		var rest_lift: float = _selected_lift() if idx in selected_indices else 0.0
 		_tween_card_y(btn, base.y - rest_lift)
+		_tween_card_scale(btn, HAND_SELECT_SCALE if idx in selected_indices else 1.0)
 		_restore_card_info()
 	# 悬停外观由本状态机驱动（引擎自带 hover 态是另一套判定，会独立闪）。
 	# normal/hover/pressed 三者始终指向同一个 StyleBox：引擎无论认为是否悬停，
@@ -4590,6 +4677,26 @@ func _tween_card_y(btn: Button, target_y: float) -> void:
 func _kill_hover_tween(btn: Button) -> void:
 	if not is_instance_valid(btn): return
 	var tw = btn.get_meta("hover_tween", false)
+	if tw is Tween and tw.is_valid():
+		tw.kill()
+
+
+# -------- 手牌缩放补间（A2）：悬停 1.06 / 选中 1.04 / 常态 1.0 --------
+# 为什么放在手牌上而不是给卡牌换更大的贴图：命中判定用的是静态 _card_hover_rect()，
+# scale 不参与几何计算，所以放大既不会自激抖动，也不会把点数判给邻居。
+# meta 键与 hover_tween 分开：重排只 kill 位移补间时，缩放能自己收敛到目标值。
+func _tween_card_scale(btn: Button, target: float) -> void:
+	if not is_instance_valid(btn): return
+	_kill_scale_tween(btn)
+	var tw := create_tween()
+	tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_property(btn, "scale", Vector2(target, target), HAND_SCALE_MS / 1000.0)
+	btn.set_meta("scale_tween", tw)
+
+
+func _kill_scale_tween(btn: Button) -> void:
+	if not is_instance_valid(btn): return
+	var tw = btn.get_meta("scale_tween", false)
 	if tw is Tween and tw.is_valid():
 		tw.kill()
 

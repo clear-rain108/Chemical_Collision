@@ -2,7 +2,11 @@
 #   1) 页面淡入：常驻同色底 + 目标页 modulate 0→1，visible 语义保持同步
 #   2) 按钮缩放：pivot 居中 / 悬停 1.05 / 按下 0.96 / 禁用不缩放
 #   3) 卡牌字号：符号 28、中文名 14（紧凑牌面保持 21 / 12），且互不重叠
+#   4) 手牌缩放（A2）：悬停 1.06 / 选中 1.04 / 常态 1.0，pivot 居中且重排清补间
+#   5) 桌面区（A2）：牌型配色 + 文字淡入 + 小卡入场（0.9 → 1.0 + 淡入，不动 position）
 extends SceneTree
+
+const CardPatternsScript = preload("res://scripts/CardPatterns.gd")
 
 var fails: int = 0
 
@@ -40,6 +44,7 @@ func _run():
 	await _test_button_scale(scene)
 	await _test_end_page_motion(scene)
 	await _test_card_fonts(scene)
+	await _test_hand_and_table_motion(scene)
 
 	if fails == 0:
 		print("ALL MOTION TESTS PASSED")
@@ -255,4 +260,69 @@ func _test_card_fonts(scene) -> void:
 	_check(sym.horizontal_alignment == HORIZONTAL_ALIGNMENT_LEFT, "紧凑牌面内容左对齐（露出的左条可读）")
 
 	btn.queue_free()
+	await process_frame
+
+
+# ---------------- 5. 手牌缩放 + 桌面区（A2） ----------------
+# 手牌缩放的意义：整排手牌抬高 20px + 1.06 放大，视线一眼锁定「正在看的那张」；
+# 命中判定用静态 _card_hover_rect()（不含 scale），所以放大不会引发自激抖动。
+func _test_hand_and_table_motion(scene) -> void:
+	if scene.hand_buttons.size() < 2:
+		_check(false, "A2：手牌不足 2 张，无法验证缩放")
+		return
+	var hb: Button = scene.hand_buttons[0]
+	_check(hb.pivot_offset.is_equal_approx(Vector2(scene.CARD_W, scene.CARD_H) * 0.5),
+		"手牌 pivot 居中（放大不往右下偏）")
+	_check(scene.HAND_SELECT_SCALE < scene.HAND_HOVER_SCALE,
+		"选中档 %.2f < 悬停档 %.2f（悬停不能被选中态压制）" % [scene.HAND_SELECT_SCALE, scene.HAND_HOVER_SCALE])
+
+	# 悬停 → 1.06
+	scene._set_hover_index(0)
+	await _wait_meta_tween(hb, "scale_tween")
+	_check(abs(hb.scale.x - scene.HAND_HOVER_SCALE) < 0.01,
+		"手牌悬停放大到 %.2f（实际 %.2f）" % [scene.HAND_HOVER_SCALE, hb.scale.x])
+	_check(abs(hb.scale.x - hb.scale.y) < 0.001, "手牌缩放等比（x=y）")
+
+	# 移出 + 选中 → 1.04
+	scene.selected_indices.clear()
+	scene.selected_indices.append(0)
+	scene._set_hover_index(-1)
+	await _wait_meta_tween(hb, "scale_tween")
+	_check(abs(hb.scale.x - scene.HAND_SELECT_SCALE) < 0.01,
+		"选中的手牌落在 %.2f（实际 %.2f）" % [scene.HAND_SELECT_SCALE, hb.scale.x])
+
+	# 取消选中 + 重排 → 1.0，且不留缩放补间（重排是瞬时整排落位）
+	scene.selected_indices.clear()
+	scene._update_hand_buttons()
+	await process_frame
+	var hb2: Button = scene.hand_buttons[0]
+	_check(abs(hb2.scale.x - 1.0) < 0.01, "取消选中并重排后缩放回到 1.0（实际 %.2f）" % hb2.scale.x)
+	var tw = hb2.get_meta("scale_tween", false)
+	_check(not (tw is Tween and tw.is_valid() and tw.is_running()), "重排后不残留缩放补间")
+
+	# 桌面文字：按牌型上色 + 换行淡入
+	var c_comp: Color = scene._table_type_color(CardPatternsScript.CardPattern.COMPOUND)
+	var c_bomb: Color = scene._table_type_color(CardPatternsScript.CardPattern.CLAN_BOMB)
+	var c_seq: Color = scene._table_type_color(CardPatternsScript.CardPattern.SEQUENCE)
+	_check(c_comp.g > c_comp.r and c_bomb.r > c_bomb.g and c_seq.b > c_seq.g,
+		"牌型配色可区分：化合物偏绿 / 族炸偏红 / 顺序偏紫")
+	scene._set_table_text("桌面: 测试化合物", CardPatternsScript.CardPattern.COMPOUND)
+	_check(scene.table_label.modulate.a < 0.5, "桌面文字换行时从半透明开始淡入")
+	await _wait_meta_tween(scene.table_label, "reveal_tween")
+	_check(abs(scene.table_label.modulate.a - 1.0) < 0.01, "桌面文字淡入收敛到不透明")
+	scene._set_table_text("桌面: 测试化合物", CardPatternsScript.CardPattern.COMPOUND)
+	_check(scene.table_label.modulate.a >= 0.99, "文本未变化时不重播淡入（否则每帧刷新都闪）")
+
+	# 小卡入场：0.9 → 1.0 + 淡入，且 position 一个像素都不动（槽位是布局真值）
+	var mini = scene._build_mini_card_button(scene.game_manager.get_current_player().hand[0])
+	mini.position = Vector2(40, 186)
+	scene._layer(0).add_child(mini)
+	var pos0: Vector2 = mini.position
+	scene._animate_mini_card_in(mini, 1)
+	_check(mini.scale.x <= 0.91 and mini.modulate.a <= 0.01, "小卡入场从 0.9 / 透明开始")
+	await _wait_meta_tween(mini, "mini_in_tween")
+	_check(abs(mini.scale.x - 1.0) < 0.01 and abs(mini.modulate.a - 1.0) < 0.01,
+		"小卡入场收敛到 1.0 / 不透明")
+	_check(mini.position.is_equal_approx(pos0), "小卡入场不动 position（%s）" % str(pos0))
+	mini.queue_free()
 	await process_frame

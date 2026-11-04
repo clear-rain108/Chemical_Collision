@@ -538,10 +538,14 @@ _update_hand_buttons()    → ① _selected_cards(cp)：遍历 selected_indices�
 | 分级切换延迟 | 命中某张牌 `HOVER_SWITCH_DELAY_MS = 60ms`；仍在容器内但不在任何牌上（牌列下方）`HOVER_LEAVE_DELAY_MS = 140ms` | 60ms 跟手；140ms 让底边轻微抖动不落牌。旧的固定 110ms 对核心区也生效，显得迟钝 |
 | 顶边容错 | `_hover_keep_above()`：抬起牌顶边与容器顶边重合，越界 14px（`HOVER_EXIT_GRACE`）内仍算在牌上 | 贴边滑过时不再「越界 1px 就落牌、回来再等延迟」 |
 | 升降动画 | `_tween_card_y()`：`HOVER_ANIM_MS = 80ms`、`TRANS_CUBIC/EASE_OUT`；`z_index` 仍立即切换；每张牌只保留一个 tween，`_layout_hand_cards()` 重排前先 kill | 位置瞬移是「生硬」的主因；重排不 kill 会把牌拉回旧坐标 |
-| 样式同源 | `_apply_hover()` 同时改 `position / z_index` 与 **normal / hover / pressed 三个主题项**（三者指向同一 StyleBox） | 引擎 `hover` 态是第二套判定；未覆盖时会回退到默认深色主题（`bg=(0.225,0.225,0.225,0.6)`）——鼠标一停到牌上，整张牌就被盖成半透明深灰 |
+| 缩放（A2） | `_tween_card_scale()`：悬停 `HAND_HOVER_SCALE = 1.06` / 选中 `HAND_SELECT_SCALE = 1.04` / 常态 1.0，`HAND_SCALE_MS = 120ms`；pivot 在 `_layout_hand_cards()` 里居中 | 只抬 20px 在整排里仍不够跳；而 `scale` **不参与** `_card_hover_rect()` 命中计算，所以放大不会引发自激遮挡抖动（与按钮 `_attach_btn_motion` 同一套思路） |
+| 样式同源 | `_apply_hover()` 同时改 `position / z_index / scale` 与 **normal / hover / pressed 三个主题项**（三者指向同一 StyleBox） | 引擎 `hover` 态是第二套判定；未覆盖时会回退到默认深色主题（`bg=(0.225,0.225,0.225,0.6)`）——鼠标一停到牌上，整张牌就被盖成半透明深灰 |
 
 - 状态字段：`_hover_idx`（当前抬起）/ `_hover_pending_idx`（待稳定目标）/ `_hover_pending_at`（时间戳）
-- 按钮 meta：`base_pos` / `hand_idx` / `sb_normal` / `sb_hover` / `hover_tween`（后者存当前升降补间）
+- 按钮 meta：`base_pos` / `hand_idx` / `sb_normal` / `sb_hover` / `hover_tween`（位移补间）/ `scale_tween`（缩放补间）
+  —— **两个 meta 键必须分开**：重排只 kill 位移补间，缩放会在下一帧自己收敛到目标档
+- `_layout_hand_cards()` 里会话式地重设 `btn.scale`（悬停牌保持 1.06、选中 1.04、其余 1.0），
+  否则重排会把正在悬停的牌「压扁」回 1.0，而 `_hover_idx` 没变、状态机不会重新触发
 - `_update_hover_at(mp)` 是可注入鼠标位置的核心判定，自动化测试据此验证防抖；
   `_on_hand_card_hover(btn, bool)` 保留为公共入口（测试与外部直接调用）
 - headless 环境（自动化测试）跳过 `_process` 轮询，避免 `(0,0)` 误触发
@@ -660,6 +664,21 @@ Godot 的 `CanvasItem` 排序是 **`z_index` 优先于树顺序**。`GamePage` �
   且必须小于 `Z_SCRIM`，否则会重现穿透。
 - 回归测试：`tests/verify_hand_layout.gd → _test_layers()` 断言层 z 序、层铺满、
   顺序弹窗落在 `OverlayLayer`、警告框落在 `ToastLayer`。
+
+### 桌面区（小卡 + 牌型文字）
+
+`_update_table_label()` 每次都**整块重建**桌面小卡（先 `queue_free` 旧的再 `_build_mini_card_button()`
+逐张新建），因为桌面小卡的化合价 / 排序都要按化合物化学式实时重算。因此动效必须解决两个问题：
+
+| 问题 | 处理 |
+|---|---|
+| AI 每次行动都会走 `_refresh_ui` → 整块重建 → 小卡每帧重播入场会一直闪 | 内容签名 `_table_sig = "牌型|符号+uid,…"`：签名不变就不播入场（`replay` 标志） |
+| 小卡位置是布局真值（测试与「桌面小卡槽」断言都按 `position` 算） | 入场只动 `scale`（0.9 → 1.0）与 `modulate:a`（0 → 1），**一个像素都不动 position**；多张按 `MINI_CARD_IN_STAGGER = 40ms` 依次入场 |
+| 「桌面: …」换字容易被当成误刷 | `_set_table_text()` 文本变化时从 `a=0.15` 淡入（`TABLE_REVEAL_MS = 180ms`）；文本未变不重播 |
+| 玩家要读完整句才知道打了什么牌型 | `_table_type_color()` 按牌型上色：单质深灰蓝 / 化合物深绿 / 族炸深红 / 有机物琥珀 / 顺序深紫 |
+
+- 补间 meta：小卡 `mini_in_tween`、桌面文字 `reveal_tween`（都先 kill 旧的再建新的，避免叠加）
+- 回归测试：`verify_motion.gd → _test_hand_and_table_motion()` 锁死「入场不动 position」「文本未变不重播」「三种牌型色互相可区分」
 
 ### 教程引导文本布局
 
