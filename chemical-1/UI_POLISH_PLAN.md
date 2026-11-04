@@ -917,7 +917,7 @@ if moved >= _drag_threshold():            # 触屏 24px
 |---|---|---|
 | 出牌 | `_capture_play_fly_in()` 在 `_step_reset()` / `_refresh_ui()` **之前**拍快照（幽灵牌 + 原位 `visible=false`）；`_replay_play_fly_in()` 在刷新后飞向桌面小卡 | 与小卡**按卡片对象配对**（化合物小卡会按化学式重排，下标对不上）；`PLAY_FLY_MS = 260` / 终点 `0.76`；末 40% 才淡出 |
 | 弃牌 | `_fly_discarded_card()`：向上 `DISCARD_FLY_LIFT = 46px` + 淡出 | 抢在 `player_discard_and_pass()` 之前；弃牌没有落点，只做抬起 |
-| 抽牌 / 发牌 | `_animate_new_hand_cards()`：按卡片对象比对 `_hand_seen_cards`，新牌 `modulate:a` 0→1（`DEAL_IN_MS = 180`） | 开局 8 张全部算「新」→ 自带发牌入场；**只动 alpha**，scale 归悬停 / 选中补间（同改会互相拉扯） |
+| 抽牌 / 发牌 | `_animate_new_hand_cards()`：按卡片对象比对 `_hand_seen_cards`，新牌 `modulate:a` 0→1（`DEAL_IN_MS = 180`） | 开局 8 张全部算「新」→ 自带发牌入场；**只动 alpha**，scale 归悬停 / 选中补间（同改会互相拉扯）（A5 已改为「从上方落下 + 淡入」，见 §13.7） |
 
 **刻意不做 / 已知缺口**：
 
@@ -928,7 +928,7 @@ if moved >= _drag_threshold():            # 触屏 24px
 
 | 位置 | 改动 |
 |---|---|
-| `GameUI.gd` 动效规范区 | `PLAY_FLY_MS = 260` / `PLAY_FLY_SCALE = 0.76` / `DISCARD_FLY_MS = 240` / `DISCARD_FLY_LIFT = 46` / `DEAL_IN_MS = 180` |
+| `GameUI.gd` 动效规范区 | `PLAY_FLY_MS = 260` / `PLAY_FLY_SCALE = 0.76` / `DISCARD_FLY_MS = 240` / `DISCARD_FLY_LIFT = 46` / `DEAL_IN_MS = 180`（A5 已把时长放慢到 480 / 420 / 380，见 §13.7） |
 | `_make_fly_ghost()` / `_fly_ghost()` | 新增（副本挂 ContentLayer、忽略鼠标、`z = Z_DRAG`、播完自 `queue_free`） |
 | `_capture_play_fly_in()` / `_replay_play_fly_in()` | 新增；`_handle_result(0)` 里「捕获 → 重置/刷新 → 回放」 |
 | `_fly_discarded_card()` | 新增；`_on_discard_mode()` 弃牌分支在数据层改动前调用 |
@@ -977,4 +977,50 @@ if moved >= _drag_threshold():            # 触屏 24px
 
 **验收**：28 套测试全绿（`verify_log_panel` 46 条断言，`verify_hand_layout` /
 `verify_tutorial_layout` / `verify_touch_ui` 的右栏断言未受影响）。
+
+### 13.7 A5：动效节奏放慢 + 发牌改为「落下」+ 出牌走弧线
+
+**问题**（三处叠加的「太快」）：
+
+1. 时长普遍压在 0.16~0.26s —— 60fps 下只有 10~16 帧，观感是「啪一下出现」，而不是
+   「有一张牌进来了」。人眼要读出「哪张牌飞走了」大概需要 0.3s 以上。
+2. 发牌只做 `modulate:a` 淡入 —— 牌一直在最终位置上变实，没有任何「发到你手里」的方向信息。
+3. 出牌是直线平移 —— 起点（手牌）和终点（桌面小卡）都在同一条水平带上时，
+   直线飞行会被误读成「原地缩小 + 淡出」。
+
+| 项 | 改动 |
+|---|---|
+| 出牌飞行 | `PLAY_FLY_MS` 260 → **480**；新增 `PLAY_FLY_ARC = 40`，`_fly_ghost(..., arc)` 走二次贝塞尔（`tween_method` + `_bezier2()`），中点抬高 40px，两端点不动 |
+| 弃牌抬起 | `DISCARD_FLY_MS` 240 → **420**、`DISCARD_FLY_LIFT` 46 → **64**（只抬不放弧：弃牌没有落点，弧线反而像「又落回来」） |
+| 发牌 / 抽牌 | `DEAL_IN_MS` 180 → **380**，新增 `DEAL_IN_DROP = 52` / `DEAL_IN_STAGGER = 0.06`；`_animate_new_hand_cards()` 改为「从 `base_pos + (0,-52)` 落到 `base_pos` + 淡入」，补间结束 `_snap_card_position()` 强制归位 |
+| 小卡入场 | `MINI_CARD_IN_MS` 160 → **320**、stagger 0.04 → **0.08** |
+| 桌面文字 | `TABLE_REVEAL_MS` 180 → **300** |
+
+**为什么发牌要动 position 而小卡入场不动**：小卡的槽位是布局真值，`verify_hand_layout`
+/ `verify_sequence_table` 都按它断言；手牌的「真值」存在 `meta("base_pos")` 里，
+`_layout_hand_cards()` 每次都重写，所以入场偏移可以临时覆盖，收尾再用 meta 归位即可。
+`DEAL_IN_DROP` 只影响入场的一段位移，不参与任何命中判定。
+
+**为什么透明度比位移先走完（0.7 倍时长）**：两者同时结束时，牌会在「刚好落到位」的那一帧
+才完全实心，看起来像落定后又闪了一下；提前 30% 完成淡入，落点帧是纯位移，收得干净。
+
+**踩到的坑（已修）**：发牌补间挂在手牌按钮上，而 `_update_hand_buttons()` 会整块重建
+（`remove_child` + `queue_free`）。旧按钮被释放后补间还在跑，会报
+`Invalid access to 'position' on a previously freed object`。改法：重建前先
+`kill()` 旧按钮的 `deal_in_tween`（与 `_kill_scale_tween()` 同一个思路）。
+
+| 位置 | 改动 |
+|---|---|
+| `GameUI.gd` 动效规范区 | `PLAY_FLY_MS = 480` / `PLAY_FLY_ARC = 40` / `DISCARD_FLY_MS = 420` / `DISCARD_FLY_LIFT = 64` / `DEAL_IN_MS = 380` / `DEAL_IN_DROP = 52` / `DEAL_IN_STAGGER = 0.06` / `MINI_CARD_IN_MS = 320` / `MINI_CARD_IN_STAGGER = 0.08` / `TABLE_REVEAL_MS = 300` |
+| `_bezier2()` / `_place_ghost()` | 新增：二次贝塞尔取点 + 幽灵牌落点写入（`tween_method` 专用） |
+| `_fly_ghost()` | 新增 `arc` 参数：`arc > 0` 走 `tween_method` 抛物线，`arc == 0` 保持原 `tween_property` 直飞 |
+| `_replay_play_fly_in()` | 传入 `PLAY_FLY_ARC` |
+| `_animate_new_hand_cards()` | 重写：位置 + 透明度并行补间、`DEAL_IN_STAGGER` 错峰、收尾归位 |
+| `_snap_card_position()` | 新增：入场收尾把牌钉回 `base_pos` |
+| `_update_hand_buttons()` | 重建前 `kill()` 旧按钮的发牌补间（修「碰已释放节点」） |
+| `tests/verify_motion.gd` | **+10**：小卡入场放慢 / 桌面文字放慢 / 发牌起点在 base_pos 上方 52px / 起点透明 / 发牌放慢带间隔 / 落回真值；贝塞尔两端点与中点 / 出牌最高点抬高（实测 380 vs 直线 400）/ 出牌放慢 / 弃牌放慢抬高；并把「弃牌幽灵牌位置」改为飞行途中采样（播完自释放，结束后读不到） |
+| `tests/verify_hand_runtime.gd` | 加 `_wait_deal_in()`：几何断言前等发牌补间落定（入场途中读到的 y 是 `base - 52`） |
+
+**验收**：28 套测试全绿、无脚本报错；截图确认 8 张牌依次从上方落下（中段第 1~3 张半透明、
+落定后 8 张归位）。
 

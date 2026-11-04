@@ -328,6 +328,13 @@ func _test_hand_and_table_motion(scene) -> void:
 	mini.queue_free()
 	await process_frame
 
+	# A5：原有 160/180ms 在 60fps 下只有 9~11 帧，观感接近「瞬间出现」——统一放慢
+	_check(scene.MINI_CARD_IN_MS >= 300 and scene.MINI_CARD_IN_STAGGER >= 0.07,
+		"小卡入场放慢并拉大间隔（%dms / %.2fs）"
+			% [scene.MINI_CARD_IN_MS, scene.MINI_CARD_IN_STAGGER])
+	_check(scene.TABLE_REVEAL_MS >= 260,
+		"桌面文字淡入放慢（%dms，原 180）" % scene.TABLE_REVEAL_MS)
+
 
 # ---------------- 6. 出牌 / 弃牌 / 抽牌（A3） ----------------
 # 三处都依赖「幽灵牌」：原按钮会被 _refresh_ui 整块重建，只有 duplicate 的副本能跨过重建飞行。
@@ -347,6 +354,24 @@ func _test_play_and_discard_motion(scene) -> void:
 	scene._update_hand_buttons()
 	await process_frame
 	_check(abs(scene.hand_buttons[0].modulate.a - 1.0) < 0.01, "同一批牌重建不重播发牌淡入")
+
+	# 1b) A5 发牌改为「从上方落下」：起点 = base_pos 上方 DEAL_IN_DROP，落位补间结束停在真值
+	scene._hand_seen_cards = []
+	scene._update_hand_buttons()
+	var nb2: Button = scene.hand_buttons[0]
+	var base2: Vector2 = nb2.get_meta("base_pos", nb2.position)
+	# 不 await：补间还没走第一帧，此刻读到的就是纯起点
+	_check(abs(nb2.position.y - (base2.y - scene.DEAL_IN_DROP)) < 0.5,
+		"发牌入场从 base_pos 上方 %.0fpx 起（y=%.1f base=%.1f）"
+			% [scene.DEAL_IN_DROP, nb2.position.y, base2.y])
+	_check(nb2.modulate.a < 0.01, "发牌入场同时从透明开始（a=%.2f）" % nb2.modulate.a)
+	_check(scene.DEAL_IN_MS >= 300 and scene.DEAL_IN_STAGGER > 0.0,
+		"发牌入场放慢并带间隔（%dms / %.2fs）"
+			% [scene.DEAL_IN_MS, scene.DEAL_IN_STAGGER])
+	await process_frame
+	await _wait_meta_tween(nb2, "deal_in_tween")
+	_check(nb2.position.is_equal_approx(base2) and abs(nb2.modulate.a - 1.0) < 0.01,
+		"发牌入场落回布局真值（%s）" % str(nb2.position))
 
 	# 2) 出牌飞入：选中 2 张 → 每张拍一个幽灵牌，原位让位
 	scene.selected_indices.clear()
@@ -370,10 +395,36 @@ func _test_play_and_discard_motion(scene) -> void:
 		await process_frame
 		_check(not is_instance_valid(g0), "出牌幽灵牌播完自动释放（不残留节点）")
 
+	# 2b) A5 出牌走抛物线：中点 y 必须明显高于「起点→终点」直线（抬升 PLAY_FLY_ARC）
+	var probe := Control.new()
+	probe.size = Vector2(95, 118)
+	scene._layer(0).add_child(probe)
+	probe.global_position = Vector2(100, 400)
+	_check(scene._bezier2(Vector2(0, 0), Vector2(0, -40), Vector2(100, 0), 0.0) == Vector2.ZERO
+			and scene._bezier2(Vector2(0, 0), Vector2(0, -40), Vector2(100, 0), 1.0) == Vector2(100, 0)
+			and abs(scene._bezier2(Vector2(0, 0), Vector2(0, -40), Vector2(100, 0), 0.5).y + 20.0) < 0.01,
+		"二次贝塞尔：两端点不动、中点抬高半个控制点")
+	scene._fly_ghost(probe, Vector2(500, 400), 0.76, scene.PLAY_FLY_MS, 0.0, scene.PLAY_FLY_ARC)
+	var top_y: float = 10000.0
+	var guard_arc := 0
+	var tw_arc = probe.get_meta("fly_tween", false)
+	while tw_arc is Tween and tw_arc.is_valid() and tw_arc.is_running() and guard_arc < 900:
+		await process_frame
+		if is_instance_valid(probe):
+			top_y = minf(top_y, probe.global_position.y)
+		guard_arc += 1
+	_check(top_y < 400.0 - scene.PLAY_FLY_ARC * 0.4,
+		"出牌飞行带弧线：最高点抬到 %.1f（直线应恒为 400）" % top_y)
+	_check(scene.PLAY_FLY_MS >= 400,
+		"出牌飞行放慢到 %dms（原 260）" % scene.PLAY_FLY_MS)
+
 	# 3) 弃牌抬起：向上飞 DISCARD_FLY_LIFT 后消失
 	scene.selected_indices.clear()
 	scene._update_hand_buttons()
 	await process_frame
+	_check(scene.DISCARD_FLY_MS >= 360 and scene.DISCARD_FLY_LIFT >= 56.0,
+		"弃牌抬起放慢并抬高（%dms / %.0fpx）"
+			% [scene.DISCARD_FLY_MS, scene.DISCARD_FLY_LIFT])
 	scene.selected_indices.append(0)
 	var before_y: float = scene.hand_buttons[0].global_position.y
 	scene._fly_discarded_card()
@@ -385,9 +436,18 @@ func _test_play_and_discard_motion(scene) -> void:
 	_check(disc != null, "弃牌：生成幽灵牌")
 	if disc != null:
 		_check(not scene.hand_buttons[0].visible, "弃牌：原位牌立即让位")
-		await _wait_meta_tween(disc, "fly_tween")
-		_check(disc.global_position.y < before_y - 10.0,
-			"弃牌向上抬起（%.1f < %.1f）" % [disc.global_position.y, before_y])
+		# 幽灵牌播完自释放 → 位置只能在飞行途中采样（结束后节点已经没了）
+		var disc_top: float = before_y
+		var guard_disc := 0
+		var tw_disc = disc.get_meta("fly_tween", false)
+		while tw_disc is Tween and tw_disc.is_valid() and tw_disc.is_running() and guard_disc < 900:
+			await process_frame
+			if is_instance_valid(disc):
+				disc_top = minf(disc_top, disc.global_position.y)
+			guard_disc += 1
+		_check(disc_top < before_y - scene.DISCARD_FLY_LIFT * 0.6,
+			"弃牌向上抬起（最高到 %.1f，基准 %.1f，抬升 %.0fpx）"
+				% [disc_top, before_y, before_y - disc_top])
 		await process_frame
 		_check(not is_instance_valid(disc), "弃牌幽灵牌播完自动释放")
 	scene.selected_indices.clear()

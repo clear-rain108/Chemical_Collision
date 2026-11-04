@@ -13,6 +13,19 @@ func _check(cond: bool, msg: String) -> void:
 		fails += 1
 		print("FAIL: " + msg)
 
+
+# 发牌入场（A5）：新牌先停在 base_pos 上方 DEAL_IN_DROP 处，落位补间结束才等于布局真值。
+# 几何断言前用同一把尺子等它落定（补间末帧会强制归位，等完必收敛）。
+func _wait_deal_in(buttons: Array) -> void:
+	for b in buttons:
+		if not is_instance_valid(b):
+			continue
+		var tw = b.get_meta("deal_in_tween", false)
+		var guard := 0
+		while tw is Tween and tw.is_valid() and tw.is_running() and guard < 900:
+			await process_frame
+			guard += 1
+
 func _run():
 	var scene = load("res://Main.tscn").instantiate()
 	root.add_child(scene)
@@ -30,6 +43,8 @@ func _run():
 		print("ABORT: 手牌为空")
 		quit(1)
 		return
+	# 发牌入场落位后再量几何（否则读到的是入场途中的 -52px 偏移）
+	await _wait_deal_in(hb)
 
 	var ok_size := true
 	var ok_bounds := true
@@ -84,6 +99,7 @@ func _run():
 			guard += 1
 		scene.call("_update_hand_buttons")
 		await process_frame
+		await _wait_deal_in(scene.hand_buttons)
 		var hb3: Array = scene.hand_buttons
 		_check(hb3.size() == 16, "补满后手牌 16 张 (%d)" % hb3.size())
 		if hb3.size() == 16:

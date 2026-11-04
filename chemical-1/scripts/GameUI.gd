@@ -208,16 +208,23 @@ const HAND_HOVER_SCALE := 1.06                           # 悬停放大
 const HAND_SELECT_SCALE := 1.04                          # 选中常驻放大（触屏没有悬停，靠它示意）
 const HAND_SCALE_MS := 120                               # 手牌缩放补间时长
 # 桌面区（A2）：小卡入场 + 牌型文字换行淡入
-const TABLE_REVEAL_MS := 180                             # 「桌面: …」文本变化时淡入时长
-const MINI_CARD_IN_MS := 160                             # 小卡入场（0.9 → 1.0 + 淡入）时长
-const MINI_CARD_IN_STAGGER := 0.04                       # 多张小卡依次入场的间隔（秒）
+# A5 整体放慢：160ms 的入场在 60fps 下只有 9 帧，观感接近「瞬间出现」，
+# 320ms 才有「滑进来」的过程感；顺序出牌时 4 张牌要逐个看清，stagger 也一起加倍。
+const TABLE_REVEAL_MS := 300                             # 「桌面: …」文本变化时淡入时长
+const MINI_CARD_IN_MS := 320                             # 小卡入场（0.9 → 1.0 + 淡入）时长
+const MINI_CARD_IN_STAGGER := 0.08                       # 多张小卡依次入场的间隔（秒）
 # 出牌 / 弃牌 / 抽牌（A3）：全部走「幽灵牌」——原按钮会被 _refresh_ui 整块重建，
 # 只有 duplicate 出来的副本能跨过重建继续飞行。
-const PLAY_FLY_MS := 260                                 # 出牌：手牌 → 桌面小卡的飞行时长
+# A5：原 260/240/180ms 都压在 0.3s 以内，牌几乎「闪」过去；统一放慢到 0.4~0.5s，
+# 并给飞行动画加抛物线抬升（直线平移在小屏上会被看成「原地淡出」）。
+const PLAY_FLY_MS := 480                                 # 出牌：手牌 → 桌面小卡的飞行时长
 const PLAY_FLY_SCALE := 0.76                             # 终点缩放（95×118 → 72×90 小卡）
-const DISCARD_FLY_MS := 240                              # 弃牌：向上抬起并淡出
-const DISCARD_FLY_LIFT := 46.0                           # 弃牌抬起高度
-const DEAL_IN_MS := 180                                  # 新抽的牌淡入时长（首次渲染也算「发牌」）
+const PLAY_FLY_ARC := 40.0                               # 飞行弧线中点抬高（二次贝塞尔控制点）
+const DISCARD_FLY_MS := 420                              # 弃牌：向上抬起并淡出
+const DISCARD_FLY_LIFT := 64.0                           # 弃牌抬起高度
+const DEAL_IN_MS := 380                                  # 新抽的牌落下 + 淡入时长（首次渲染也算「发牌」）
+const DEAL_IN_DROP := 52.0                               # 落下的起点高度（牌从手牌区上方落进来）
+const DEAL_IN_STAGGER := 0.06                            # 多张新牌依次入场的间隔（秒）
 
 # ---- 警告 toast：右栏上部空白格 ----
 # LogLabel 从 y=300 起、TutorialLabel 从 y=186 起、InfoLabel 只到 x=480，
@@ -3321,14 +3328,35 @@ func _make_fly_ghost(btn: Control) -> Control:
 	return ghost
 
 
-func _fly_ghost(ghost: Control, to_pos: Vector2, to_scale: float, ms: int, delay: float) -> void:
+# 二次贝塞尔取点（p = 0..1）：_fly_ghost 的抛物弧用它，避免手写两段 position 补间
+func _bezier2(a: Vector2, c: Vector2, b: Vector2, p: float) -> Vector2:
+	var q: float = 1.0 - p
+	return a * (q * q) + c * (2.0 * q * p) + b * (p * p)
+
+
+func _place_ghost(ghost: Control, to_pos: Vector2) -> void:
+	if ghost == null or not is_instance_valid(ghost):
+		return
+	ghost.global_position = to_pos
+
+
+# arc > 0 时走抛物线（出牌）：中点抬高 arc，终点仍是 to_pos，落点精度不变
+func _fly_ghost(ghost: Control, to_pos: Vector2, to_scale: float, ms: int, delay: float, arc: float = 0.0) -> void:
 	if ghost == null or not is_instance_valid(ghost):
 		return
 	var dur: float = ms / 1000.0
+	var from_pos: Vector2 = ghost.global_position
 	var tw := create_tween()
 	tw.set_parallel(true)
 	tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	tw.tween_property(ghost, "global_position", to_pos, dur).set_delay(delay)
+	if arc > 0.0:
+		var ctrl: Vector2 = (from_pos + to_pos) * 0.5 + Vector2(0, -arc)
+		var steps = tw.tween_method(
+			func(p: float): _place_ghost(ghost, _bezier2(from_pos, ctrl, to_pos, p)),
+			0.0, 1.0, dur)
+		steps.set_delay(delay)
+	else:
+		tw.tween_property(ghost, "global_position", to_pos, dur).set_delay(delay)
 	tw.tween_property(ghost, "scale", Vector2(to_scale, to_scale), dur).set_delay(delay)
 	# 末 40% 才淡出：前段要看清「是哪张牌飞过去了」
 	tw.tween_property(ghost, "modulate:a", 0.0, dur * 0.6).set_delay(delay + dur * 0.4)
@@ -3380,7 +3408,7 @@ func _replay_play_fly_in(snaps: Array) -> void:
 			var slot := Rect2(Vector2(20, 186), Vector2(72, 90))
 			target = slot
 		var to: Vector2 = target.position + (target.size - Vector2(CARD_W, CARD_H)) * 0.5
-		_fly_ghost(ghost, to, PLAY_FLY_SCALE, PLAY_FLY_MS, 0.03 * float(i))
+		_fly_ghost(ghost, to, PLAY_FLY_SCALE, PLAY_FLY_MS, 0.03 * float(i), PLAY_FLY_ARC)
 
 
 # 弃牌：从原位向上抬起并淡出 —— 「这张牌离开手牌」的唯一视觉出口
@@ -3400,10 +3428,14 @@ func _fly_discarded_card() -> void:
 	_fly_ghost(ghost, ghost.global_position + Vector2(0, -DISCARD_FLY_LIFT), 0.92, DISCARD_FLY_MS, 0.0)
 
 
-# 抽牌 / 发牌：新出现的卡片对象淡入（开局 8 张全部算新增 → 自带一次发牌入场）。
-# 只动 modulate：scale 归悬停 / 选中缩放补间管，两边同时改会互相拉扯。
+# 抽牌 / 发牌：新出现的卡片对象从手牌区上方 DEAL_IN_DROP 处落下 + 淡入
+#（开局 8 张全部算新增 → 自带一次发牌入场）。
+# 只动 position / modulate：scale 归悬停 / 选中缩放补间管，两边同时改会互相拉扯。
+# 落点用 _layout_hand_cards() 写好的 meta("base_pos")（真实布局结果）；
+# 补间结束时强制归位 —— 入场途中若发生重排，base_pos 已是新值，这一句把牌钉回真值。
 func _animate_new_hand_cards() -> void:
 	var now_cards: Array = []
+	var order: int = 0
 	for b in hand_buttons:
 		if not is_instance_valid(b):
 			continue
@@ -3413,12 +3445,30 @@ func _animate_new_hand_cards() -> void:
 		now_cards.append(c)
 		if c in _hand_seen_cards:
 			continue
+		var base_pos: Vector2 = b.get_meta("base_pos", b.position)
+		var old = b.get_meta("deal_in_tween", false)
+		if old is Tween and old.is_valid():
+			old.kill()
+		b.position = base_pos + Vector2(0, -DEAL_IN_DROP)
 		b.modulate = Color(1, 1, 1, 0.0)
 		var tw := create_tween()
+		tw.set_parallel(true)
 		tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-		tw.tween_property(b, "modulate:a", 1.0, DEAL_IN_MS / 1000.0)
+		var delay: float = DEAL_IN_STAGGER * float(order)
+		tw.tween_property(b, "position", base_pos, DEAL_IN_MS / 1000.0).set_delay(delay)
+		# 透明度比位移先走完（0.7 倍时长）：牌落到位时已经实心，不会有「落定才显形」的断层
+		tw.tween_property(b, "modulate:a", 1.0, DEAL_IN_MS / 1000.0 * 0.7).set_delay(delay)
+		tw.chain().tween_callback(func(): _snap_card_position(b, base_pos))
 		b.set_meta("deal_in_tween", tw)
+		order += 1
 	_hand_seen_cards = now_cards
+
+
+# 入场收尾：无论补间被谁打断，牌都必须停在布局真值上
+func _snap_card_position(btn: Control, to_pos: Vector2) -> void:
+	if btn == null or not is_instance_valid(btn):
+		return
+	btn.position = to_pos
 
 
 func _build_mini_card_button(card, custom_valence = null) -> Button:
@@ -3544,7 +3594,7 @@ func _on_hand_reorder() -> void:
 	_update_hand_reorder_button()
 
 
-# -------- 右栏日志（A1 底板 + F4 可折叠标题条） --------
+# -------- 右栏日志（A1 底板 + A4 可折叠标题条） --------
 # 挂 GamePage 直接子节点（跟随页面显隐），插在 LogLabel 之前 —— 同级按树顺序绘制，
 # 底板必须先画；mouse_filter = IGNORE 保证它不吃手牌 / 按钮的点击。
 # 标题条是唯一新增的可点元素（折叠开关），也挂在 GamePage 上、紧跟底板。
@@ -4218,7 +4268,11 @@ func _update_hand_buttons() -> void:
 	_hover_idx = -1
 	_hover_pending_idx = -1
 	# 先 remove_child 再 queue_free：避免旧牌残留在容器中干扰重叠布局
+	# 发牌入场的补间挂在旧按钮上，重建前先杀掉 —— 否则补间会去碰已释放的节点（脚本报错）
 	for child in hand_container.get_children():
+		var old_deal = child.get_meta("deal_in_tween", false)
+		if old_deal is Tween and old_deal.is_valid():
+			old_deal.kill()
 		hand_container.remove_child(child)
 		child.queue_free()
 	hand_buttons.clear()
