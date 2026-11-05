@@ -146,7 +146,7 @@ v3 = 「两条路径 + 一个裁决点」：
 | 路径 | 函数 | 作用 |
 |---|---|---|
 | 默认配平 | `_assign_valences(cards, cv)` | 金属取最高正价 / 非金属取最低负价 / H 与含氧酸中心原子提升为正价；产出 `formula` + `ratio_ok` |
-| 价态搜索 | `_search_valences(cards)` | 默认配平 `ratio_ok == false` 时，2~3 种元素按**实际张数** DFS 找解；金属 / 准金属只取最高正价 |
+| 价态搜索 | `_search_valences(cards)` | 默认配平 `ratio_ok == false` 时，2~3 种元素按**实际张数** DFS 找解；金属 / 准金属取全部正价并降序（v4，见 §7） |
 | 对外出口 | `get_valence_pairs(cards)` | 先默认配平，失败再搜索；返回 `{symbol: valence}`，供 AI / 提示使用 |
 
 成立条件（`_valence_assignment_ok`）：
@@ -165,7 +165,8 @@ v3 = 「两条路径 + 一个裁决点」：
 
 即：**引擎是唯一裁决点**，面板列出的是超集（含引擎会拒的组合，玩家选了会收到 `-1`）；
 AI / 提示因为只拿 `get_valence_pairs()`，天然不会提假化合物 ——
-代价是它们也不主动建议「低价金属」（如 Fe 1 张 + Cl 2 张 的 Fe(+2)，只能玩家在面板手选）。
+v3 时代代价是它们也不主动建议「低价金属」（如 Fe 1 张 + Cl 2 张 的 Fe(+2)，只能玩家在面板手选）；
+**v4 起金属价域开放，这类组合 AI / 提示也会自动给出（见 §7）**。
 
 ### 6.2 判定结果对照
 
@@ -177,8 +178,9 @@ AI / 提示因为只拿 `get_valence_pairs()`，天然不会提假化合物 —�
 | BCl₃ | 失败 | B +3 / Cl -1 | ✅ |
 | ClF（卤族互化开启） | 失败 | Cl +1 / F -1 | ✅ |
 | Fe + 2Cl | Fe 取 +3 → 3 ≠ 2 | 金属只取最高价 → 无解 | 仅面板手选 Fe(+2) |
+| Fe + 2Cl（v4） | 同上 | Fe 价域 [3, 2] → Fe(+2) / Cl(-1) | ✅ 自动（见 §7） |
 
 `play_cards()` 侧：化合物分支 `get_compound_formula(cards, cv)` 为空或 `ratio_ok == false`
 一律 `-1`，旧「空式子就放行」的分支已删除。
 
-回归：`tests/verify_compound_chemistry.gd`（38 项，solver / 引擎 / 提示 / AI 四层）。
+回归：`tests/verify_compound_chemistry.gd`（40 项，solver / 引擎 / 提示 / AI 四层）。

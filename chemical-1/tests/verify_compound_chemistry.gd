@@ -141,7 +141,8 @@ func _test_solver() -> void:
 		"Cl+F 化合价 = Cl(+1)/F(-1)（实际 %s）" % str(cv_clf))
 
 	# 面板显式指定低价金属：Fe(+2) + 2Cl(-1) → FeCl₂
-	# （默认配平只给金属最高价，但玩家在面板上能选 +2，play_cards 必须接受）
+	# （默认配平只给金属最高价，玩家在面板上能选 +2，play_cards 必须接受；
+	#   v4 开放金属价域后，AI / 提示也能自动给出这个解，见下面的自动解断言）
 	var fe_cl2 := _cards(["Fe", "Cl", "Cl"])
 	var fi_fe = CompoundSolverScript.get_compound_formula(fe_cl2, {"Fe": 2, "Cl": -1})
 	_check(not fi_fe.is_empty() and bool(fi_fe.get("ratio_ok", false)),
@@ -152,6 +153,14 @@ func _test_solver() -> void:
 	var fi_fe3 = CompoundSolverScript.get_compound_formula(fe_cl2, {"Fe": 3, "Cl": -1})
 	_check(fi_fe3.is_empty() or not bool(fi_fe3.get("ratio_ok", false)),
 		"Fe(+3)+2Cl(-1) 电荷不平 → 不配平")
+
+	# v4：金属价域开放（全部正价，降序），这组牌不再需要手选
+	var cv_fe_auto = CompoundSolverScript.get_valence_pairs(fe_cl2)
+	_check(int(cv_fe_auto.get("Fe", 0)) == 2 and int(cv_fe_auto.get("Cl", 0)) == -1,
+		"Fe+2Cl 自动解出 Fe(+2)/Cl(-1)（v4 金属价域开放，实际 %s）" % str(cv_fe_auto))
+	var fi_fe_auto = CompoundSolverScript.get_compound_formula(fe_cl2, cv_fe_auto)
+	_check(not fi_fe_auto.is_empty() and bool(fi_fe_auto.get("ratio_ok", false)),
+		"自动价可直接配平（实际 %s）" % str(fi_fe_auto.get("formula", "")))
 
 
 # ============================================================

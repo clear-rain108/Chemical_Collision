@@ -38,7 +38,7 @@ static func get_element_data() -> Array:
 		["Li", "锂", "Lithium", 3, CardDataScript.GROUP_IA, 2, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 1, [1], 0.98, 6.941, "最轻的金属"],
 		["Be", "铍", "Beryllium", 4, CardDataScript.GROUP_IIA, 2, CardDataScript.TYPE_METAL, CardDataScript.FORM_SOLID, 2, [2], 1.57, 9.012, "轻质高强度金属"],
 		["B", "硼", "Boron", 5, CardDataScript.GROUP_IIIA, 2, CardDataScript.TYPE_METALLOID, CardDataScript.FORM_SOLID, 3, [3], 2.04, 10.811, "硬度仅次于金刚石"],
-		["C", "碳", "Carbon", 6, CardDataScript.GROUP_IVA, 2, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_SOLID, 4, [4, -4], 2.55, 12.011, "生命的基础元素"],
+		["C", "碳", "Carbon", 6, CardDataScript.GROUP_IVA, 2, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_SOLID, 4, [4, 2, -4], 2.55, 12.011, "生命的基础元素"],
 		["N", "氮", "Nitrogen", 7, CardDataScript.GROUP_VA, 2, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_GAS, 5, [-3, 3, 5], 3.04, 14.007, "大气中含量最多的气体"],
 		["O", "氧", "Oxygen", 8, CardDataScript.GROUP_VIA, 2, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_GAS, 6, [-2], 3.44, 15.999, "维持生命必需的气体"],
 		["F", "氟", "Fluorine", 9, CardDataScript.GROUP_VIIA, 2, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_GAS, 7, [-1], 3.98, 18.998, "最活泼的非金属"],

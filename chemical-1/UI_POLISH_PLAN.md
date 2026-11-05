@@ -282,17 +282,18 @@ R4 容错带内外与横向越界），既有 `_test_case()` / `_test_hover_debo
 
 ## 5. 验证基线
 
-28 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
+29 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
 
 ```bat
 set GD=D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe
-for %f in (ai_discard clan_bomb_cooling compound_chemistry constraint element_limit end_page halogen hand_layout hand_reorder hand_runtime hand_view help_page hint integration logger motion net_foundation organic pattern_ambiguity refactor sequence sequence_lock sequence_table start_page tool_buttons touch_ui tutorial tutorial_layout valence_chip) do (
+for %f in (ai_discard clan_bomb_cooling compound_chemistry constraint element_limit end_page halogen hand_layout hand_reorder hand_runtime hand_view help_page hint integration logger motion net_foundation organic pattern_ambiguity refactor sequence sequence_lock sequence_table start_page tool_buttons touch_ui tutorial tutorial_layout valence_chip valence_plan) do (
   %GD% --path . --headless --script res://tests/verify_%f.gd
 )
 ```
 
 | 测试 | 覆盖 |
 |------|------|
+| `verify_valence_plan` | **价态模型 v4**（C 补 +2 → CO / 金属·准金属价域=全部正价降序 / 低价金属 FeO·FeCl₂·Cu₂O·MnO₂·Cr₂O₃ 自动解出 / 高价主流解优先 Fe₂O₃·CuO / v3 裁决不倒退 / 连续 30 次求解一致）（39 条） |
 | `verify_pattern_ambiguity` | **牌型二义性**（`compare_cards` 支持显式牌型；桌面「看着像族炸」的化合物不再误拒下家合法化合物；族炸压制不误伤；`-2` 细分为打平 / 原子序数和不够 / 族炸张数不够 / 牌型压制；状态栏·桌面·全量状态统一取 `table_pattern`；提示与引擎同源）（42 条） |
 | `verify_hand_layout` | 手牌尺寸/居中/叠卡步长/紧凑牌面/悬停上浮/**防抖状态机**/**选中与悬停样式**/**悬停流畅化（R1–R4）**/**警告 toast 布局**/**样式工厂**（120+ 条） |
 | `verify_hand_reorder` | **手牌拖拽重排 P7**（自动排列回归锁 / move_card 边界 / 拖拽落库 / 按钮 card meta 对应 / 手动模式不打回按序 / 抽牌追加末尾 / 选中索引跟随对象 / 拖出区外取消 / 插入槽判定 / 顺序签名 / 按序恢复 / 补发 pressed 被吞 / 18 张布局）（44 条） |
@@ -311,7 +312,7 @@ for %f in (ai_discard clan_bomb_cooling compound_chemistry constraint element_li
 | `verify_sequence` / `verify_sequence_table` | 顺序牌型与桌面判定 |
 | `verify_tutorial` | 教程关卡状态机 |
 | `verify_ai_discard` | 手牌上限自动弃牌 |
-| `verify_compound_chemistry` | **化学规则 P12**（`get_valence_pairs` 价态裁决 / NCl·BrN·IN 拒绝 / NCl₃·NI₃·BCl₃·ClF 保留 / Fe 1 张 + Cl 2 张只认 Fe(+2) / 引擎空式子与 `ratio_ok=false` 一律 -1 / 提示与 AI 同源）（38 条） |
+| `verify_compound_chemistry` | **化学规则 P12**（`get_valence_pairs` 价态裁决 / NCl·BrN·IN 拒绝 / NCl₃·NI₃·BCl₃·ClF 保留 / Fe 1 张 + Cl 2 张只认 Fe(+2)（v4 起自动解出）/ 引擎空式子与 `ratio_ok=false` 一律 -1 / 提示与 AI 同源）（40 条） |
 | `verify_sequence_lock` | **顺序约束只锁被指定玩家**（set 时按反转方向选 target / 非 target 出牌不受限 / 跳过与弃牌罚抽 2 张 / 族炸与接炸链不解除 / 覆盖与快照 / state_hash 含 target）（52 条） |
 | `verify_hand_view` / `verify_tool_buttons` / `verify_touch_ui` / `verify_tutorial_layout` / `verify_clan_bomb_cooling` / `verify_net_foundation` | 手牌视图 / 工具按钮几何与样式 / 触屏 A1·B·C（53 条，见 ARCHITECTURE §12.5）/ 教程提示框布局 / 族炸冷却 / 联机协议地基（54 条） |
 | `verify_help_page` | **帮助中心 P5**（结构 / Tab 懒加载 / 2 列卡片 + 7 列图鉴 / 字号 ≥11 / 无空格对齐 / 29 种 182 张 / 旧页备份）（57 条） |

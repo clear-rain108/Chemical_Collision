@@ -346,8 +346,14 @@ static func _assign_valences(cards: Array, custom_valences: Dictionary = {}) -> 
 # 像 NCl₃（N 为 +3）、BCl₃（B 为 +3）、ClF（Cl 为 +1）这类需要"非金属作正价"的组合
 # 只能靠搜索找到。搜索同时要求：
 #   a) 至少一正一负；b) 按实际张数加权后总电荷 = 0；c) 正价元素电负性 ≤ 负价元素。
-# 金属 / 准金属只取最高正价（与默认配平口径一致，不额外引入多价规则）；
-# 非金属取 common_valence 中的任意价。只枚举 2~3 种元素（与化合价面板能力对齐）。
+# 价域口径（v4）：
+#   金属 / 准金属 → **全部正价，降序**（Fe 有 +3/+2，Cu 有 +2/+1）；
+#   非金属 → common_valence 原顺序（负价在前，多负价的元素先试最负）。
+# 降序不是随便定的：把「常见高价」排前面，同一组牌有多个解时先命中的就是主流解
+#   Fe + 3O → Fe(+3)（Fe₂O₃）；Fe + O → +3 电荷不平，自动退到 +2（FeO）。
+# 旧实现只给最高正价，Cu₂O(Cu +1) / FeO(Fe +2) / FeCl₂(Fe +2) 这类常见低价化合物
+# 根本搜不出来 —— 玩家在面板手选低价，反而被引擎判成非法。
+# 只枚举 2~3 种元素（与化合价面板能力对齐）。
 static func _search_valences(cards: Array) -> Dictionary:
 	var elems = _valence_domains(cards)
 	if elems.size() < 2 or elems.size() > 3:
@@ -367,12 +373,11 @@ static func _valence_domains(cards: Array) -> Array:
 		var metal_like: bool = (c.element_type == CardDataScript.TYPE_METAL \
 				or c.element_type == CardDataScript.TYPE_METALLOID)
 		if metal_like:
-			var hi = 0
 			for v in c.common_valence:
-				if v > hi:
-					hi = v
-			if hi > 0:
-				vals.append(hi)
+				if v > 0 and v not in vals:
+					vals.append(v)
+			vals.sort()
+			vals.reverse()   # 降序：高价优先（常见化合物优先命中）
 		else:
 			for v in c.common_valence:
 				if v != 0:

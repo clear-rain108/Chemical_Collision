@@ -5140,7 +5140,9 @@ func _fit_card_valence(lbl: Label, card, max_w: float, base_fs: int) -> void:
 		_sync_valence_chip(lbl)
 		return
 	var font: Font = lbl.get_theme_font("font")
-	var min_fs: int = mini(CARD_VAL_MIN_FS, base_fs)
+	# 触屏档把收缩下限一起抬 1 档（10 → 11）：手机上 10px 已经读不清，
+	# 宽度不够时宁可退到「两端价 + …」，也不要缩成一团糊字。
+	var min_fs: int = mini(_touch_fs(CARD_VAL_MIN_FS, 1), base_fs)
 	var txt_full: String = _format_valence_full(vals)
 	var txt_tight: String = _format_valence_tight(vals)
 	var best_text := ""

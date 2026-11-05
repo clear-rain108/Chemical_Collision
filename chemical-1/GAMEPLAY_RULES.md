@@ -194,14 +194,30 @@ detect_pattern(cards, skip_clan_bomb=false) 判定优先级:
 - **唯一裁决点**：`GameManager.play_cards()` 里的 `CompoundSolver.get_compound_formula(cards, cv)`
   （内部 `_assign_valences`）。面板 / AI / 提示给出的任何价都要过它，空式子或 `ratio_ok == false` 即 `-1`。
 - **AI / 提示的取价出口**：`CompoundSolver.get_valence_pairs()`（默认配平优先，失败再做价态搜索）。
-  两者因此不会提出引擎会拒的组合；代价是也不主动建议「低价金属」
-  （如 Fe 1 张 + Cl 2 张 的 Fe(+2)，只能玩家在面板手选）。
+  两者因此不会提出引擎会拒的组合；v4 开放金属价域后，低价金属（Fe 1 张 + Cl 2 张 → Fe(+2)）
+  AI / 提示也能自动给出，不再只能靠玩家在面板手选。
 - **人类面板**：`_update_valence_buttons()` 列出每张牌 `common_valence` 的**全部价**，玩家自选；
   UI 只预检「一正一负 + 最简比张数 + 手牌够不够」，选出的组合仍由引擎裁决 ——
   所以面板选项是**超集**（`NCl` / `ClN` 这类组合能选，但确认后会被 `-1` 拒绝）。
 - **空式子不再放行**：`play_cards()` 化合物分支若 `get_compound_formula()` 为空或 `ratio_ok=false`，
   一律返回 `-1`（旧实现"给不出化学式就放行"会让 `ClN` 这类假化合物混进桌面）。
 - 回归用例：`tests/verify_compound_chemistry.gd`（solver / 引擎 / 提示 / AI 四层）。
+
+#### 价态域（v4：金属不再只认最高价）
+
+搜索解时每个元素的候选价来自其 `common_valence`：
+
+| 类型 | 价域 | 例子 |
+|---|---|---|
+| 金属 / 准金属 | **全部正价，降序**（高价优先） | Fe [3, 2]、Cu [2, 1]、Cr [6, 3, 2]、Mn [7, 4, 2] |
+| 非金属 | 数据原顺序 | Cl [-1, 1, 3, 5, 7]、S [-2, 4, 6]、C [4, 2, -4] |
+
+- **高价优先 = 主流解优先**：`Fe + 3O` → Fe(+3)（Fe₂O₃）；`Fe + O` 用 +3 电荷不平，自动退到 Fe(+2)（FeO）。
+  同一组牌有多个解时，先命中的那个就是 UI / AI / 联机回放看到的那个（顺序固定 → 可复现）。
+- **低价金属终于能解**：Cu₂O(Cu +1) / FeO(Fe +2) / FeCl₂(Fe +2) / MnO₂(Mn +4) / Cr₂O₃(Cr +3)
+  现在自动解出；旧实现只给最高正价，这些组合只能靠玩家手选，AI / 提示给不出来。
+- **C 补上 +2**：`C + O` → C(+2)/O(-2) = CO（`C + 2O` 仍取 C(+4) = CO₂，`CH₄` 仍用 C(-4)）。
+- 回归用例：`tests/verify_valence_plan.gd`（数据 / 价域顺序 / 低价金属 / v3 不倒退 / 可复现性）。
 
 ---
 
