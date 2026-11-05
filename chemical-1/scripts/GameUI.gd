@@ -140,7 +140,7 @@ const TOUCH_DRAG_GHOST_ALPHA := 0.9
 # _touch_ui=true（真机）时按钮/字号/手势切到触控档。
 # 换算基准：1080p 手机横屏 2340×1080 → 缩放 1.667 → 1 逻辑 px ≈ 0.667dp，
 #   32px 的工具行只有 21dp（Android 建议 ≥48dp），必须放大。
-var _touch_ui: bool = false             # 触屏档案开关（_ready 里按 OS.has_feature("mobile") 置位）
+var _touch_ui: bool = false             # 触屏档案开关（_ready 里按平台特性 / 命令行置位）
 var _quit_confirm_pending: bool = false # 触屏「退出游戏」二次确认（防误触直接跳结算页）
 const TOUCH_BTN_MIN_H := 48             # 触控目标最小高度（≈32dp）
 const TOUCH_FS_BONUS := 2               # 页面按钮 / 标签字号通用加成
@@ -151,6 +151,33 @@ const TOUCH_DRAG_ARM_MOVE := 10.0       # 按下后位移 ≥10px 立即起拖�
 const TOUCH_DRAG_THRESHOLD := 24.0      # 确认阈值（≈16dp）：松手总位移 ≥24px 才算重排，<24px 回退成点选
 const TOUCH_SELECT_LIFT := 10.0         # 选中牌常驻上浮（与悬停 20 区分，一眼看出选了谁）
 const TOUCH_HIT_PAD := 8.0              # 触屏命中外扩缓冲（≈5dp，手指比鼠标粗）
+
+# ---- 触屏档案的「怎么判定」（A6-1：让桌面也能开触控档）----
+# 判定顺序：命令行强制 > 平台特性（OS.has_feature("mobile")）。
+#   --touch-ui   桌面 / CI 上强制打开触控档 —— 不用真机就能看到 48px 按钮、
+#                10px 选中上浮、24px 拖拽阈值到底长什么样
+#   --desktop-ui 真机上强制关掉 —— 排查「是不是触屏档导致的」时用
+# 两者同时出现时**后写的那个赢**（与常见 CLI 习惯一致）。
+# 纯函数（不读全局状态）：测试可以直接喂参数，不用真的重启进程。
+static func resolve_touch_profile(is_mobile: bool, args: Array) -> bool:
+	var profile := is_mobile
+	for raw in args:
+		var a := String(raw)
+		if a == "--touch-ui":
+			profile = true
+		elif a == "--desktop-ui":
+			profile = false
+	return profile
+
+
+# 当前进程的命令行参数：Godot 自带参数与「-- 之后的用户参数」都扫一遍，
+# 于是 `godot --path . --touch-ui` 与 `godot --path . -- --touch-ui` 都能生效。
+static func touch_profile_args() -> Array:
+	var args: Array = []
+	args.append_array(OS.get_cmdline_args())
+	args.append_array(OS.get_cmdline_user_args())
+	return args
+
 
 
 # ---- GamePage 内的 CanvasItem 层级 ----
@@ -262,8 +289,13 @@ var level0_flow_index: int = 0
 # 四、初始化
 # ============================================================
 func _ready() -> void:
-	# 触屏档案（Android / iOS）：只影响按钮尺寸、字号与手势，不改任何布局坐标
-	_touch_ui = OS.has_feature("mobile")
+	# 触屏档案（Android / iOS）：只影响按钮尺寸、字号与手势，不改任何布局坐标。
+	# A6-1：桌面 / CI 可以用 --touch-ui 强制打开（--desktop-ui 强制关掉），
+	# 这样触控档的布局不用真机也能看、也能进自动化测试。
+	var is_mobile := OS.has_feature("mobile")
+	_touch_ui = resolve_touch_profile(is_mobile, touch_profile_args())
+	if _touch_ui != is_mobile:
+		print("[UI] 触屏档案 = %s（命令行强制；平台 mobile=%s）" % [str(_touch_ui), str(is_mobile)])
 	_ensure_page_backdrop()   # 必须先于任何页面淡入，否则第一帧会闪出窗口清屏色
 	_setup_pages()
 	_show_start_page()

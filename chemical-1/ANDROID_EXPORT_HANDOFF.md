@@ -327,4 +327,5 @@ Copy-Item "...\work-backup\project.godot.bak"      "D:\Github_Library\Chemical\C
 | 现在能装吗？ | 能，两个包都通过 v2+v3 验签；debug 包需允许「未知来源」 |
 | 导出报「找不到发布密钥库」？ | 见 §7.8：用 `--export-release` 前必须配 `keystore/release`；只想快出包就 `--export-debug` |
 | 包名突然变 `com.example.*`、图标没了？ | 见 §7.9：预设被编辑器写回默认值，关编辑器后 `git checkout -- export_presets.cfg` |
+| 想在电脑上看触控档的布局？ | `Godot_v4.7.2-stable_win64.exe --path . --touch-ui`（A6-1；48px 工具行 / 上浮 10 / 拖拽 24，不用真机就能验收）。真机上想排查「是不是触屏档导致的」用 `--desktop-ui` |
 | 换机器要重装什么？ | 4.7.2 导出模板 + Android SDK + JDK 17，然后在编辑器设置里指路径；`D:\keys\` 里的发布密钥库要单独拷过去 |

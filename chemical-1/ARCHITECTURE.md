@@ -19,7 +19,7 @@
 9. [场景结构 - Main.tscn](#9-场景结构---maintscn)
 10. [数据流](#10-数据流)
 11. [关键算法](#11-关键算法)
-12. [触屏档案（A1/B/C）](#12-触屏档案a1bc)
+12. [触屏档案（A1/B/C/A6-1）](#12-触屏档案a1bc)
 
 ---
 
@@ -894,7 +894,7 @@ GameManager.init_game / init_tutorial
 
 ---
 
-## 12. 触屏档案（A1 / B / C）
+## 12. 触屏档案（A1 / B / C / A6-1）
 
 > 目标：桌面（1152×648 鼠标）与 Android 手机（touch）共用同一份场景与脚本，
 > **不新增第二套 UI、不复制场景**。
@@ -910,14 +910,41 @@ GameManager.init_game / init_tutorial
 | `_tool_btn_h()` 等取值函数 | 运行期调用点 | 32 | 48 |
 
 ```gdscript
-var _touch_ui: bool = false            # _ready(): _touch_ui = OS.has_feature("mobile")
+var _touch_ui: bool = false            # _ready(): 平台特性 + 命令行开关（见 12.1.1）
 
 func _tool_btn_h() -> float:           # 桌面回常量，触屏回放大值
 	return float(TOUCH_TOOL_BTN_H) if _touch_ui else float(TOOL_BTN_H)
 ```
 
 桌面路径**逐像素不变**，23 套老测试零改动；触屏路径由 `tests/verify_touch_ui.gd`（53 断言）覆盖。
-`headless` 下 `OS.has_feature("mobile")` 为 false，所以自动化测试永远走桌面层。
+`headless` 下 `OS.has_feature("mobile")` 为 false，所以自动化测试永远走桌面层 ——
+除非显式传 `--touch-ui`（见下）。
+
+#### 12.1.1 A6-1：桌面也能开触控档（`--touch-ui`）
+
+以前 `_touch_ui` 只由 `OS.has_feature("mobile")` 决定，结果**触控档只能在真机上看**：
+桌面上没法预览 48px 按钮 / 10px 选中上浮 / 24px 拖拽阈值，自动化也只能像
+`verify_touch_ui` 那样手动改 `scene._touch_ui`。
+
+现在改成「命令行 > 平台」，判定函数是纯函数，测试可直接喂参数：
+
+```gdscript
+static func resolve_touch_profile(is_mobile: bool, args: Array) -> bool:
+	# --touch-ui 强制开、--desktop-ui 强制关；同时出现时后写的赢
+```
+
+| 启动方式 | 效果 |
+|---|---|
+| `godot --path .` | 桌面档（不变） |
+| `godot --path . --touch-ui` | **桌面跑触控档**：48px 工具行 / 选中上浮 10 / 拖拽 24 / 按钮最小高 48，用来肉眼验收触控布局 |
+| `godot --path . --desktop-ui`（真机上） | 强制回桌面档，排查「是不是触控档导致的」 |
+| 手机上不传参数 | 触控档（`OS.has_feature("mobile")`） |
+
+`touch_profile_args()` 同时扫 `OS.get_cmdline_args()` 与 `OS.get_cmdline_user_args()`，
+所以 `--touch-ui` 放在 `--` 前面或后面都生效；被强制时会打印一行
+`[UI] 触屏档案 = true（命令行强制；平台 mobile=false）`，方便确认跑的是哪一档。
+回归：`tests/verify_touch_flag.gd`（19 断言，**两种启动方式都要跑一遍**）。
+
 
 ### 12.2 A1 屏幕适配（`project.godot`）
 
@@ -966,7 +993,9 @@ func _tool_btn_h() -> float:           # 桌面回常量，触屏回放大值
 ### 12.5 测试与回归
 
 ```bash
-godot --headless --path . --script tests/verify_touch_ui.gd
+godot --headless --path . --script tests/verify_touch_ui.gd      # 桌面基准 vs 触控值（手动开关档案）
+godot --headless --path . --script tests/verify_touch_flag.gd    # 默认档（平台判定）
+godot --headless --path . --script tests/verify_touch_flag.gd --touch-ui   # 强制触控档（A6-1）
 ```
 
 53 项断言分 8 组：桌面基准 10、工具行几何 15、字号 8、命中缓冲 4、选中上浮 6、

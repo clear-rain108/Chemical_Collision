@@ -35,6 +35,10 @@ func _run():
 	await process_frame
 	await process_frame
 
+	# 本套逐项对照「桌面基准曲线 vs 触控曲线」，所以先把档案压回桌面。
+	# （用 --touch-ui 启动时的行为由 tests/verify_touch_flag.gd 负责验证）
+	scene._touch_ui = false
+
 	# 1) 没开赛之前先验证「桌面基准」：这一层是 23 套老测试的契约
 	_test_desktop_baseline(scene)
 
