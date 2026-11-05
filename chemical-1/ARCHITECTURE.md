@@ -256,16 +256,21 @@ PlayerManager.PlayerInfo
 
 ```
 init_game(total, ai) → bool   （牌库 = generate_deck(get_allowed_symbols())，元素限制时只含前 20 号 + 勾选扩展）
-play_cards(idx, cards, cv) → int
+validate_play(idx, cards, cv, intended) → int   （**只读**：只判定不改局面，UI / 提示 / AI 预检用）
+_evaluate_play(idx, cards, cv, intended) → int  （唯一规则源：0 合法 / 1 合法且是顺序 / 负数非法）
   ├─ 元素限制：开关开启且含越界元素 → -8（is_element_allowed 兜底）
-  ├─ detect_pattern → 族炸/非族炸判定
+  ├─ detect_pattern → 族炸/非族炸判定（结果写进 last_evaluated_pattern）
   ├─ 化合物 + 开关关闭 + 含≥2种卤素 → -7（卤族互化，is_halogen_mix）
   ├─ 顺序约束：仅 idx == sequence_constraint_target 时校验，牌型不符 → -6
-  ├─ 族炸: 冷却/免疫/接炸比较 → next_turn()（牌权移交）
+  ├─ 族炸：冷却 / 免疫 / 接炸比较 → -3 / -4 / -2
+  ├─ 非族炸：牌型匹配 → 比大小 → -4 / -2
+  └─ 化合物：式子为空 或 ratio_ok=false → -1（假化合物拦截）
+play_cards(idx, cards, cv) → int   （先 _evaluate_play，<0 直接返回，通过后才落子）
+  ├─ 移牌 + 写 table_*（含 table_custom_valences）→ 溢出化合物免疫
+  ├─ 族炸：冷却置位 + 接炸链 + 牌权移交 → next_turn()
   │        └─ 若 idx 正是 target 且约束为「族炸」→ 视为完成，清约束
-  ├─ 化合物: 式子为空 或 ratio_ok=false → -1（假化合物拦截）
-  │        └─ 保存 table_custom_valences → 溢出检查
-  └─ 非族炸: 牌型匹配 → 比大小
+  ├─ 顺序：反转方向 + 清旧约束 → 返回 1（UI 弹「指定牌型」）
+  └─ 其余：解除冷却 / 清约束 / 判定胜负 → next_turn()
 player_pass(idx) → 上限检查 → 抽牌 → next_turn()
   └─ idx == target 时：罚抽 2 张并结束约束（达上限先弃 1 张）
 player_discard_and_pass(idx, card) → 上限弃牌（target 额外罚抽 2 张并结束约束）
@@ -465,11 +470,15 @@ HelpPage (Control, full rect, visible=false)
 | `GameUI._clear_hint()` | 清空 `_hint_text` 并 `hint_button.set_pressed_no_signal(false)` |
 | `_update_card_info_label()` | `_hint_text` 非空时优先显示；`_hint_owner` / `_hint_hand_size` 变化即作废回默认「可用牌型」 |
 
-**铁律**：`HintAdvisor._check()` 必须与 `GameManager.play_cards()` 的校验逐条一致，否则玩家照着提示点会得到
-「非法出牌」。最容易漏的两条是 **桌面是化合物时，有机物也会被判 `-4`（牌型不匹配）**，
-以及 **`pattern == COMPOUND` 且开关关闭时纯卤素组合返回 `-7`（卤族互化）**，提示必须跟着过滤。
+**铁律**：提示必须与引擎**同一条规则**。P13 之后这条铁律由代码结构保证 ——
+`HintAdvisor._check()` 不再手抄一遍条件，而是直接调用 `GameManager.validate_play()`
+（`GameManager._evaluate_play()` 是唯一真相），所以「提示说能打、点了却被拒」在结构上不可能再发生。
+历史坑（仍由测试锁着）：**桌面是化合物时，有机物也会被判 `-4`（牌型不匹配）**，
+以及 **`pattern == COMPOUND` 且开关关闭时纯卤素组合返回 `-7`（卤族互化）**。
 `tests/verify_hint.gd` 对每条建议都用「全新 GameManager + 同样参数」再跑一次
-`play_cards` 做交叉验证（返回必须 ≥ 0）；`tests/verify_halogen.gd` 专门锁死 F+Cl 只能建议族炸。
+`play_cards` 做交叉验证（返回必须 ≥ 0）；`tests/verify_halogen.gd` 专门锁死 F+Cl 只能建议族炸；
+`tests/verify_validate_play.gd` 锁死 `validate_play` 与 `play_cards` 返回码一致且只读。
+
 
 作废时机：`_on_card_clicked`（玩家自己动牌）、`_on_back`、`_step_reset`（出牌后/新一局）、
 以及局面变化（换人 / 手牌数变化）。返回时 `selected_indices` 仍保留（原行为，方便换牌型重出）。
@@ -876,6 +885,7 @@ GameManager.init_game / init_tutorial
 | `_assign_valences` | CompoundSolver.gd（唯一价态分配入口：默认配平 + 电负性有序校验）| O(n) |
 | `_search_valences` | CompoundSolver.gd（默认配平失败时的**统一**价态搜索：2~3 种元素 DFS、按实际张数电荷平衡；>3 种元素不做搜索）| O(价域^元素种数) |
 | `_search_mixed_valences` | CompoundSolver.gd（统一搜索无解时的**混合**价态搜索：同元素各副本可异价、必须同号；前 n-1 元素枚举多重集组合，末元素有界 DP 反解；组合数 > `MIXED_NODE_CAP`(5000) 直接放弃）| O(min(组合数, 5000) × 张数) |
+| `validate_play` / `_evaluate_play` | GameManager.gd（出牌合法性的**唯一规则源**，只读；`play_cards` 通过后才落子）| O(n) |
 | compare_cards | CardPatterns.gd | O(n) |
 | generate_deck | CardDatabase.gd | O(28×copies) |
 | shuffle | CardDatabase.gd | O(n) Fisher-Yates |

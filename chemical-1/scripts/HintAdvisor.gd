@@ -276,77 +276,20 @@ static func _is_halogen_sym(sym: String) -> bool:
 
 
 # ============================================================
-# 三、可用性判定（逐条对齐 GameManager.play_cards，见每段注释）
+# 三、可用性判定（直接问引擎，不再自己复读一遍规则）
 # ============================================================
+# 以前这里是 play_cards 校验逻辑的一份手抄副本，两边稍有出入就会「提示说能打、
+# 点了却被拒」。P13 把规则拆成 GameManager._evaluate_play()（唯一真相）+
+# validate_play()（只读入口）后，提示直接调用引擎：
+#   返回 0 = 合法可出 / 1 = 合法且是顺序牌 → 都算「能打」；负数 = 非法。
+# 只读保证：判定不改手牌 / 桌面 / 轮转 / 日志，提示按钮可以随便点。
 static func _check(gm, cards: Array, cv: Dictionary, intended: int) -> bool:
-	if cards.is_empty():
+	if gm == null or cards.is_empty():
 		return false
-	var cp = gm.get_current_player()
-	if cp == null:
+	if gm.get_current_player() == null:
 		return false
+	return gm.validate_play(gm.get_current_player_index(), cards, cv, intended) >= 0
 
-	# --- play_cards: skip_bomb / prefer_sequence ---
-	var skip_bomb: bool = cv.size() >= 2 or cv.has("_organic")
-	var prefer_seq: bool = intended == P_SEQUENCE
-	var pattern: int = CardPatternsScript.detect_pattern(cards, skip_bomb, prefer_seq)
-	if pattern == -1:
-		return false
-
-	# --- play_cards: intended_pattern 与检测结果必须一致 ---
-	if intended >= 0 and pattern != intended:
-		var organic_as_compound: bool = gm.organic_rules_enabled \
-			and pattern == P_ORGANIC and intended == P_COMPOUND
-		if not organic_as_compound:
-			return false
-
-	# --- play_cards: 卤族互化（仅化合物；族炸不受限） ---
-	if pattern == P_COMPOUND and not gm.halogen_exchange_allowed and gm.is_halogen_mix(cards):
-		return false
-
-	# --- play_cards: 第零关 AI 禁出族炸（提示只服务人类玩家，保留同条件） ---
-	if gm.tutorial_level == 0 and gm.tutorial_level0_phase >= 1 and cp.is_ai and pattern == P_CLAN:
-		return false
-
-	# --- play_cards: 顺序指定牌型的约束（只作用于被指定的那名玩家） ---
-	if gm.sequence_constraint_active \
-			and gm.get_current_player_index() == gm.sequence_constraint_target:
-		if gm.sequence_constraint >= 0 and pattern != gm.sequence_constraint:
-			var constraint_match: bool = gm.sequence_constraint == P_COMPOUND and pattern == P_ORGANIC
-			if not constraint_match:
-				return false
-
-	# --- play_cards: 族炸 / 桌面接牌 ---
-	if pattern == P_CLAN:
-		if gm.clan_bomb_disabled:
-			return false
-		# 与 GameManager.play_cards 保持一致：冷却优先于接炸链（含链中接炸）
-		if cp.clan_bomb_cooling:
-			return false
-		if gm.compound_immune and not gm.clan_bomb_chain_active:
-			return false
-		if gm.clan_bomb_chain_active and gm.table_cards.size() > 0:
-			if CardPatternsScript.compare_cards(cards, gm.table_cards, pattern, gm.table_pattern) <= 0:
-				return false
-	else:
-		if gm.clan_bomb_chain_active:
-			return false
-		if not gm.is_round_starter:
-			if gm.table_pattern == P_ELEMENT and pattern != P_ELEMENT:
-				return false
-			if gm.table_pattern == P_COMPOUND and pattern != P_COMPOUND:
-				return false
-			if gm.table_cards.size() > 0 and gm.table_pattern != P_SEQUENCE:
-				# 显式传入牌型：桌面可能「既是族炸又能配成化合物」，
-				# 按牌面重新检测会让提示漏掉实际可出的合法出牌。
-				if CardPatternsScript.compare_cards(cards, gm.table_cards, pattern, gm.table_pattern) <= 0:
-					return false
-
-	# --- play_cards: 化合物必须给出化学式且比例配平 ---
-	if pattern == P_COMPOUND:
-		var fi: Dictionary = CompoundSolverScript.get_compound_formula(cards, cv)
-		if fi.is_empty() or not fi.get("ratio_ok", false):
-			return false
-	return true
 
 
 # ============================================================

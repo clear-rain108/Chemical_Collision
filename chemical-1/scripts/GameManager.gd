@@ -45,6 +45,11 @@ var is_round_starter: bool = true
 # 于是统一文案「牌不够大」。这里由引擎在拒绝点写好原因，UI 直接展示。
 var last_reject_reason: String = ""
 
+# 最近一次 play_cards / validate_play 判定出的牌型（-1 = 还没判定 / 非法）。
+# 牌型有「二义性」（同一批牌既像族炸又能配成化合物），判定真相只在引擎里：
+# UI / 提示 / AI 需要知道「这批牌被当成什么」时读这个字段，不要自己再 detect 一遍。
+var last_evaluated_pattern: int = -1
+
 # 信息记录（统一日志模块）
 var logger: RefCounted = GameLoggerScript.new()
 var log_messages: Array:
@@ -197,8 +202,33 @@ func get_current_player_index() -> int:
 # ============================================================
 # intended_pattern: 玩家明确选择的牌型（CardPattern 枚举值，-1 表示自动检测）。
 # 当牌组同时满足多种牌型（如"既是族炸也是顺序"）时，以玩家选择的为准。
-func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {}, intended_pattern: int = -1) -> int:
+#
+# 结构（P13 拆分）：
+#   _evaluate_play()  只读判定（唯一规则源），返回码 + last_evaluated_pattern
+#   validate_play()   对外只读入口（UI 置灰 / 提示 / AI 预检用，绝不改局面）
+#   play_cards()      先判定、通过后才落子（改手牌 / 桌面 / 轮转）
+# 为什么要拆：以前「能不能打」的规则散在 play_cards + HintAdvisor._check 两处，
+# 两边稍有出入就会出现「提示说能打、点了却被拒」。现在规则只有一份，
+# 提示 / AI / UI 直接问引擎，不再各自复读一遍条件。
+
+# ---- 只读判定（不改变局面）----
+# 返回：0 = 合法可出 / 1 = 合法且是顺序牌（出牌后要选指定牌型）/ 负数 = 非法（同 play_cards）
+# 唯一的副作用是诊断字段 last_reject_reason / last_evaluated_pattern（不进 state_hash）。
+func validate_play(player_index: int, cards: Array, custom_valences: Dictionary = {},
+		intended_pattern: int = -1) -> int:
+	return _evaluate_play(player_index, cards, custom_valences, intended_pattern)
+
+
+func get_last_evaluated_pattern() -> int:
+	return last_evaluated_pattern
+
+
+# ---- 规则正文：所有「能不能打」的判断都在这里 ----
+# 注意：本函数绝不能改手牌 / 桌面 / 轮转 / 日志，否则 validate_play 就不再只读。
+func _evaluate_play(player_index: int, cards: Array, custom_valences: Dictionary,
+		intended_pattern: int) -> int:
 	last_reject_reason = ""
+	last_evaluated_pattern = -1
 	if player_index < 0 or player_index >= players.size() or cards.is_empty():
 		return -1
 
@@ -289,13 +319,25 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 						last_reject_reason = _compare_fail_reason(cards, pattern, table_cards, table_pattern, cmp)
 						return -2
 
-	# -------- 化合物比例校验（必须在移除卡牌之前） --------
+	# -------- 化合物比例校验 --------
 	# 给不出化学式（无法配平 / 电负性倒置 / 含稀有气体）一律拒绝。
 	# 旧实现「空式子就放行」会让 NCl / BrN / IN 这类假化合物混进桌面。
 	if pattern == CardPatternsScript.CardPattern.COMPOUND:
 		var fi = CompoundSolverScript.get_compound_formula(cards, custom_valences)
 		if fi.is_empty() or not fi.get("ratio_ok", false):
 			return -1  # 无法配平 / 比例不匹配
+
+	last_evaluated_pattern = pattern
+	return 1 if pattern == CardPatternsScript.CardPattern.SEQUENCE else 0
+
+
+# 出牌：先只读判定，通过后才落子。
+func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {}, intended_pattern: int = -1) -> int:
+	var code: int = _evaluate_play(player_index, cards, custom_valences, intended_pattern)
+	if code < 0:
+		return code
+	var pattern: int = last_evaluated_pattern
+	var player = players[player_index]
 
 	# -------- 从手牌移除，更新桌面 --------
 	player.remove_cards(cards)

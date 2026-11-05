@@ -282,11 +282,11 @@ R4 容错带内外与横向越界），既有 `_test_case()` / `_test_hover_debo
 
 ## 5. 验证基线
 
-30 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
+31 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
 
 ```bat
 set GD=D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe
-for %f in (ai_discard clan_bomb_cooling compound_chemistry constraint element_limit end_page halogen hand_layout hand_reorder hand_runtime hand_view help_page hint integration logger mixed_valence_ui motion net_foundation organic pattern_ambiguity refactor sequence sequence_lock sequence_table start_page tool_buttons touch_ui tutorial tutorial_layout valence_chip valence_plan) do (
+for %f in (ai_discard clan_bomb_cooling compound_chemistry constraint element_limit end_page halogen hand_layout hand_reorder hand_runtime hand_view help_page hint integration logger mixed_valence_ui motion net_foundation organic pattern_ambiguity refactor sequence sequence_lock sequence_table start_page tool_buttons touch_ui tutorial tutorial_layout valence_chip valence_plan validate_play) do (
   %GD% --path . --headless --script res://tests/verify_%f.gd
 )
 ```
@@ -295,6 +295,7 @@ for %f in (ai_discard clan_bomb_cooling compound_chemistry constraint element_li
 |------|------|
 | `verify_valence_plan` | **价态模型 v4**（C 补 +2 → CO / 金属·准金属价域=全部正价降序 / 低价金属 FeO·FeCl₂·Cu₂O·MnO₂·Cr₂O₃ 自动解出 / 高价主流解优先 Fe₂O₃·CuO / v3 裁决不倒退 / 30 次求解一致 / **混合价态 Fe₃O₄**：统一无解→混合解 +3/+3/+2、非法写法一律 -1、统一解优先、`SPECIAL_NAMES` 特殊命名、联机 JSON 往返与事件重放指纹一致、100 次一致 + <50ms）（95 条） |
 | `verify_mixed_valence_ui` | **混合价态面板入口**（Na+Cl / N+Cl 不显示入口 / 3Fe+4O 显示「混合价态自动配平 ▶」+ 方案文本 Fe +3/+3/+2 / 点按钮真打出、桌面记录数组、日志「四氧化三铁」）（9 条） |
+| `verify_validate_play` | **只读判定 P13**（`validate_play` 与 `play_cards` 返回码逐例一致 / 判定不改手牌·桌面·日志·state_hash / 幂等 / `last_evaluated_pattern` 是牌型唯一真相（N+P 族炸 vs 化合物 PN）/ -1·-2·-3·-4·-6·-7·-8 七条拒绝路径 + 顺序 1 + 有机物 0 + Fe₃O₄ 混合价态）（76 条） |
 | `verify_pattern_ambiguity` | **牌型二义性**（`compare_cards` 支持显式牌型；桌面「看着像族炸」的化合物不再误拒下家合法化合物；族炸压制不误伤；`-2` 细分为打平 / 原子序数和不够 / 族炸张数不够 / 牌型压制；状态栏·桌面·全量状态统一取 `table_pattern`；提示与引擎同源）（42 条） |
 | `verify_hand_layout` | 手牌尺寸/居中/叠卡步长/紧凑牌面/悬停上浮/**防抖状态机**/**选中与悬停样式**/**悬停流畅化（R1–R4）**/**警告 toast 布局**/**样式工厂**（120+ 条） |
 | `verify_hand_reorder` | **手牌拖拽重排 P7**（自动排列回归锁 / move_card 边界 / 拖拽落库 / 按钮 card meta 对应 / 手动模式不打回按序 / 抽牌追加末尾 / 选中索引跟随对象 / 拖出区外取消 / 插入槽判定 / 顺序签名 / 按序恢复 / 补发 pressed 被吞 / 18 张布局）（44 条） |
