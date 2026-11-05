@@ -3091,7 +3091,11 @@ func _update_status_bar() -> void:
 	var table_txt = "桌面: 空"
 	if game_manager.get_table_player_index() >= 0:
 		var tp = game_manager.get_players()[game_manager.get_table_player_index()]
-		var pat = CardPatternsScript.detect_pattern(game_manager.get_table_cards())
+		# 桌面牌型以「打出时记录的 table_pattern」为准；按牌面重新检测会把
+		# 「既是族炸又能配成化合物」的牌（如 N + P）显示成另一种，与判定结果矛盾。
+		var pat = game_manager.get_table_pattern()
+		if pat < 0:
+			pat = CardPatternsScript.detect_pattern(game_manager.get_table_cards())
 		var pn = CardPatternsScript.get_pattern_name(pat)
 		table_txt = "桌面: %s 打出 %s" % [tp.player_name, pn]
 	status_bar_label.text = "▶ %s %s%s%s  手牌 %d/%d  ｜  牌库 %d  ｜  %s" % [
@@ -3154,7 +3158,10 @@ func _update_table_label() -> void:
 	if game_manager.get_table_player_index() >= 0:
 		var p = game_manager.get_players()[game_manager.get_table_player_index()]
 		var cards = game_manager.get_table_cards()
-		var pat = CardPatternsScript.detect_pattern(cards)
+		# 同 _update_status_bar：桌面牌型一律取 table_pattern（打出时的真相）
+		var pat = game_manager.get_table_pattern()
+		if pat < 0:
+			pat = CardPatternsScript.detect_pattern(cards)
 		var pn = CardPatternsScript.get_pattern_name(pat)
 		var en = CardPatternsScript.get_element_display(cards)
 		var syms: Array = []
@@ -5658,7 +5665,14 @@ func _handle_result(result: int) -> void:
 		_show_sequence_constraint_dialog()
 		return
 	var msg = "非法出牌！"
-	if result == -2: msg = "牌不够大！"
+	if result == -2:
+		# 引擎把 -2 的细分原因写在 last_reject_reason 里：
+		# 牌型被压制 / 族炸张数不够 / 原子序数和不够 / 与桌面打平
+		msg = "牌不够大！"
+		if game_manager != null:
+			var why: String = game_manager.get_last_reject_reason()
+			if why != "":
+				msg += "\n" + why
 	elif result == -3:
 		var cp_err = game_manager.get_current_player() if game_manager != null else null
 		if cp_err != null and cp_err.clan_bomb_cooling:

@@ -325,7 +325,7 @@ static func _check(gm, cards: Array, cv: Dictionary, intended: int) -> bool:
 		if gm.compound_immune and not gm.clan_bomb_chain_active:
 			return false
 		if gm.clan_bomb_chain_active and gm.table_cards.size() > 0:
-			if CardPatternsScript.compare_cards(cards, gm.table_cards) <= 0:
+			if CardPatternsScript.compare_cards(cards, gm.table_cards, pattern, gm.table_pattern) <= 0:
 				return false
 	else:
 		if gm.clan_bomb_chain_active:
@@ -336,7 +336,9 @@ static func _check(gm, cards: Array, cv: Dictionary, intended: int) -> bool:
 			if gm.table_pattern == P_COMPOUND and pattern != P_COMPOUND:
 				return false
 			if gm.table_cards.size() > 0 and gm.table_pattern != P_SEQUENCE:
-				if CardPatternsScript.compare_cards(cards, gm.table_cards) <= 0:
+				# 显式传入牌型：桌面可能「既是族炸又能配成化合物」，
+				# 按牌面重新检测会让提示漏掉实际可出的合法出牌。
+				if CardPatternsScript.compare_cards(cards, gm.table_cards, pattern, gm.table_pattern) <= 0:
 					return false
 
 	# --- play_cards: 化合物必须给出化学式且比例配平 ---

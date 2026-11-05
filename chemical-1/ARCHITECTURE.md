@@ -173,7 +173,7 @@ CardPatterns.detect_pattern(cards, skip_clan_bomb=false):
 | CardPattern 枚举 + DIATOMIC_SYMBOLS | 牌型定义与双原子分子元素集 |
 | detect_pattern / _is_same_element | 牌型检测总入口 |
 | _is_sequence / _is_clan_bomb | 顺序 / 族炸检测 |
-| compare_cards / _compare_by_total_atomic | 比大小（族炸>有机物>化合物>单质）|
+| compare_cards / _compare_by_total_atomic | 比大小（族炸>有机物>化合物>单质）；**牌型可显式传入**（`pattern_a/pattern_b`，默认 -1 = 按牌面检测），出牌校验 / 桌面显示 / 提示一律传 `table_pattern`，避免「同一批牌既是族炸又能配成化合物」时的误判 |
 | get_pattern_name / get_element_display | 牌型中文名 / 单质显示 |
 
 ### 5.2 CompoundSolver.gd（化合物形成模块）

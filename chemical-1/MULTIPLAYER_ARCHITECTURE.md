@@ -309,7 +309,7 @@ NAT 之后的机器没有公网可达地址。让 A、B 两台机器直连只有
 | `0` | 成功 | `GameManager` | 正常刷新 |
 | `1` | 打出顺序，待指定牌型 | `GameManager` | 弹 `_show_sequence_constraint_dialog` |
 | `-1` | 非法出牌 | `GameManager` | `_handle_result` 文案 |
-| `-2` | 牌不够大 | `GameManager` | 同上 |
+| `-2` | 牌不够大 | `GameManager` | 同上；细分原因见 `GameManager.last_reject_reason`（打平 / 原子序数和不够 / 族炸张数不够 / 牌型压制），`_handle_result` 会拼在「牌不够大！」下面一行 |
 | `-3` | 不能出族炸 | `GameManager` | 同上 |
 | `-4` | 牌型不匹配 | `GameManager` | 同上 |
 | `-6` | 不符合顺序指定牌型 | `GameManager` | 同上 |

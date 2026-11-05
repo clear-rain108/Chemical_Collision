@@ -282,17 +282,18 @@ R4 容错带内外与横向越界），既有 `_test_case()` / `_test_hover_debo
 
 ## 5. 验证基线
 
-27 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
+28 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
 
 ```bat
 set GD=D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe
-for %f in (ai_discard clan_bomb_cooling compound_chemistry constraint element_limit end_page halogen hand_layout hand_reorder hand_runtime hand_view help_page hint integration logger motion net_foundation organic refactor sequence sequence_lock sequence_table start_page tool_buttons touch_ui tutorial tutorial_layout) do (
+for %f in (ai_discard clan_bomb_cooling compound_chemistry constraint element_limit end_page halogen hand_layout hand_reorder hand_runtime hand_view help_page hint integration logger motion net_foundation organic pattern_ambiguity refactor sequence sequence_lock sequence_table start_page tool_buttons touch_ui tutorial tutorial_layout valence_chip) do (
   %GD% --path . --headless --script res://tests/verify_%f.gd
 )
 ```
 
 | 测试 | 覆盖 |
 |------|------|
+| `verify_pattern_ambiguity` | **牌型二义性**（`compare_cards` 支持显式牌型；桌面「看着像族炸」的化合物不再误拒下家合法化合物；族炸压制不误伤；`-2` 细分为打平 / 原子序数和不够 / 族炸张数不够 / 牌型压制；状态栏·桌面·全量状态统一取 `table_pattern`；提示与引擎同源）（42 条） |
 | `verify_hand_layout` | 手牌尺寸/居中/叠卡步长/紧凑牌面/悬停上浮/**防抖状态机**/**选中与悬停样式**/**悬停流畅化（R1–R4）**/**警告 toast 布局**/**样式工厂**（120+ 条） |
 | `verify_hand_reorder` | **手牌拖拽重排 P7**（自动排列回归锁 / move_card 边界 / 拖拽落库 / 按钮 card meta 对应 / 手动模式不打回按序 / 抽牌追加末尾 / 选中索引跟随对象 / 拖出区外取消 / 插入槽判定 / 顺序签名 / 按序恢复 / 补发 pressed 被吞 / 18 张布局）（44 条） |
 | `verify_motion` | **页面淡入**（同色底 / 目标页 modulate / visible 同步 / 中途切换）/ **按钮缩放**（pivot、1.05、0.96、禁用不缩放、单补间、悬停发光）/ **结束页入场**（子节点淡入 / 上浮基准不累积）/ **卡牌字号**（28 / 14，紧凑 21 / 12，互不重叠）（53 条） |

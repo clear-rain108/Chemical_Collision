@@ -40,6 +40,11 @@ var table_pattern: int = -1    # 桌面牌型（用于限制接牌类型）
 var table_custom_valences: Dictionary = {}  # 桌面化合物的实际化合价（渲染化学式/排序/化合价显示）
 var is_round_starter: bool = true
 
+# 最近一次 play_cards 被 -2（牌不够大）拒绝的具体原因。
+# UI 只能拿到返回码，无法说明「是牌型被压制 / 张数不够 / 原子序数和不够」，
+# 于是统一文案「牌不够大」。这里由引擎在拒绝点写好原因，UI 直接展示。
+var last_reject_reason: String = ""
+
 # 信息记录（统一日志模块）
 var logger: RefCounted = GameLoggerScript.new()
 var log_messages: Array:
@@ -193,6 +198,7 @@ func get_current_player_index() -> int:
 # intended_pattern: 玩家明确选择的牌型（CardPattern 枚举值，-1 表示自动检测）。
 # 当牌组同时满足多种牌型（如"既是族炸也是顺序"）时，以玩家选择的为准。
 func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {}, intended_pattern: int = -1) -> int:
+	last_reject_reason = ""
 	if player_index < 0 or player_index >= players.size() or cards.is_empty():
 		return -1
 
@@ -260,8 +266,9 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 			return -4  # 溢出化合物免疫族炸
 		if clan_bomb_chain_active:
 			if table_cards.size() > 0:
-				var cmp = CardPatternsScript.compare_cards(cards, table_cards)
+				var cmp = CardPatternsScript.compare_cards(cards, table_cards, pattern, table_pattern)
 				if cmp <= 0:
+					last_reject_reason = _compare_fail_reason(cards, pattern, table_cards, table_pattern, cmp)
 					return -2
 	else:
 		# -------- 非族炸：检查是否可以接当前桌面 --------
@@ -275,8 +282,11 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 			if table_cards.size() > 0:
 				# 桌面是顺序牌：无大小比较（下家只受指定牌型约束）
 				if table_pattern != CardPatternsScript.CardPattern.SEQUENCE:
-					var cmp = CardPatternsScript.compare_cards(cards, table_cards)
+					# 显式传入双方牌型：table_pattern 是「桌面实际被当成的牌型」，
+					# 不能用 detect_pattern() 重新推断（同一批牌可能既是族炸又像化合物）。
+					var cmp = CardPatternsScript.compare_cards(cards, table_cards, pattern, table_pattern)
 					if cmp <= 0:
+						last_reject_reason = _compare_fail_reason(cards, pattern, table_cards, table_pattern, cmp)
 						return -2
 
 	# -------- 化合物比例校验（必须在移除卡牌之前） --------
@@ -412,6 +422,36 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 	_check_tutorial_progress(pattern, not player.is_ai)
 	next_turn()
 	return 0
+
+
+# ---- 比大小失败的具体原因（-2 的细分文案）----
+# 统一文案「牌不够大」会让玩家无法判断该换组合还是该换牌型：
+#   牌型被压制 / 族炸张数不够 / 原子序数和不够 / 与桌面打平
+func _compare_fail_reason(cards: Array, pattern: int, table: Array, table_pat: int, cmp: int) -> String:
+	var mine := _atomic_sum(cards)
+	var theirs := _atomic_sum(table)
+	if cmp == 0:
+		return "与桌面打平（原子序数和同为 %d）；同类牌必须比桌面更小" % mine
+	if pattern == table_pat:
+		if pattern == CardPatternsScript.CardPattern.CLAN_BOMB and cards.size() != table.size():
+			return "族炸张数不够（%d 张 vs 桌面 %d 张）" % [cards.size(), table.size()]
+		return "原子序数和 %d 大于桌面 %d（数值越小牌越大）" % [mine, theirs]
+	return "%s 压不过桌面的 %s（%d vs %d）" % [
+		CardPatternsScript.get_pattern_name(pattern).trim_suffix("！"),
+		CardPatternsScript.get_pattern_name(table_pat).trim_suffix("！"),
+		mine, theirs,
+	]
+
+
+func _atomic_sum(cards: Array) -> int:
+	var total := 0
+	for c in cards:
+		total += int(c.atomic_number)
+	return total
+
+
+func get_last_reject_reason() -> String:
+	return last_reject_reason
 
 
 # ============================================================
@@ -780,7 +820,11 @@ func get_all_players_info() -> String:
 		info += "%s %s: %d 张牌%s%s%s\n" % [ai_tag, p.player_name, p.get_hand_count(), pass_tag, bomb_tag, marker]
 	if table_player_index >= 0:
 		var tp = players[table_player_index]
-		var pat = CardPatternsScript.detect_pattern(table_cards)
+		# 用桌面记录的牌型，而不是按牌面重新检测：同一批牌可能既是族炸又能配成化合物，
+		# 重新检测会显示出与实际打出的牌型不一致的名字（会误导玩家对输赢的判断）。
+		var pat = table_pattern
+		if pat < 0:
+			pat = CardPatternsScript.detect_pattern(table_cards)
 		var pn = CardPatternsScript.get_pattern_name(pat)
 		var el = CardPatternsScript.get_element_display(table_cards)
 		info += "桌面: %s 打出 %s (%s" % [tp.player_name, _cards_to_string(table_cards), pn]

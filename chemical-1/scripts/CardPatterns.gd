@@ -112,9 +112,20 @@ static func get_element_display(cards: Array) -> String:
 # ============================================================
 # 六、比大小规则
 # ============================================================
-static func compare_cards(cards_a: Array, cards_b: Array) -> int:
-	var pattern_a = detect_pattern(cards_a)
-	var pattern_b = detect_pattern(cards_b)
+# pattern_a / pattern_b：这两组牌「实际被当成了哪个牌型」，传 -1 表示按牌面自动检测。
+#
+# 为什么需要显式牌型（Bug 修复：合法化合物被判「牌不够大」）：
+# 同一批牌可能同时满足多个牌型。例：N + P 既是 VA 族炸，又能配成化合物 PN；
+# AI 走化合物路径时 skip_clan_bomb=true，桌面 table_pattern = COMPOUND，
+# 但 detect_pattern() 只看牌面，会把它读成 CLAN_BOMB —— 于是下家出的
+# 合法化合物（如 B + P，原子序数和 20 < 22）被当成「要压过族炸」而拒成 -2。
+# 规则真相只有一处：GameManager.table_pattern（打出时记录的牌型）。
+# 出牌校验 / 桌面显示 / 提示都必须把已知牌型显式传进来。
+static func compare_cards(cards_a: Array, cards_b: Array, pattern_a: int = -1, pattern_b: int = -1) -> int:
+	if pattern_a < 0:
+		pattern_a = detect_pattern(cards_a)
+	if pattern_b < 0:
+		pattern_b = detect_pattern(cards_b)
 
 	if pattern_a == -1 or pattern_b == -1:
 		return 0
