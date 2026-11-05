@@ -182,13 +182,16 @@ CardPatterns.detect_pattern(cards, skip_clan_bomb=false):
 
 | 模块 | 说明 |
 |------|------|
-| 命名常量表 | OXYANION_MAP / OXYACID_FORMULAS / ACID_SALT_ANIONS / VARIABLE_METAL_CN_NAMES / NONMETAL_CN_NAMES（数据表驱动）|
-| is_compound | 化合物合法性检测 =「默认配平成功 或 价态搜索可配平」，二者都要求电负性有序 |
-| _assign_valences | **唯一价态分配入口**：默认配平（金属取最高正价 / 非金属取最低负价 / 无金属时提升 H 与酸中心原子）；显式化合价走同一函数校验 |
-| _search_valences / _valence_domains / _dfs_valences / _valence_assignment_ok | 默认配平失败时的价态搜索：2~3 种元素、按实际张数电荷平衡、正价元素电负性 ≤ 负价元素（NCl₃/BCl₃/ClF 由此识别，NCl/BrN/IN 被排除）。**价域（v4）**：金属 / 准金属取全部正价并降序（高价优先 → 主流解先命中，Fe₂O₃ 仍是 +3、FeO 自动退 +2），非金属保持数据顺序 |
-| get_valence_pairs | AI / 提示共用的价态出口（默认配平优先，失败再搜索）；人类面板列 `common_valence` 全价，最终由 `_assign_valences` 裁决 |
+| 命名常量表 | OXYANION_MAP / OXYACID_FORMULAS / ACID_SALT_ANIONS / VARIABLE_METAL_CN_NAMES / NONMETAL_CN_NAMES / **SPECIAL_NAMES**（数据表驱动）|
+| is_compound | 化合物合法性检测 =「默认配平成功 或 统一价态搜索可配平 或 混合价态搜索可配平」，都要求电负性有序 |
+| _assign_valences | **唯一价态分配入口**：默认配平（金属取最高正价 / 非金属取最低负价 / 无金属时提升 H 与酸中心原子）；显式化合价走同一函数校验（int = 每张同价，Array = 每张各一价）。产出 `formula` / `formula_key` / `mixed` / `ratio_ok` |
+| _valence_plan_of / _plan_is_mixed / _entry_charge | **化合价表达式规范化**（v4）：`int → [v,v,…]`、`Array → 降序规范化`；长度 ≠ 张数 / 含 0 / 同元素跨正负 → `[]`（非法）。`entry.charge` = 该元素全部副本的净电荷（混合价下 `count × valence` 不再成立，电荷平衡只认它）|
+| _search_valences / _valence_domains / _dfs_valences / _valence_assignment_ok | 默认配平失败时的**统一价态**搜索：2~3 种元素、按实际张数电荷平衡、正价元素电负性 ≤ 负价元素（NCl₃/BCl₃/ClF 由此识别，NCl/BrN/IN 被排除）。**价域（v4）**：金属 / 准金属取全部正价并降序（高价优先 → 主流解先命中，Fe₂O₃ 仍是 +3、FeO 自动退 +2），非金属保持数据顺序 |
+| _search_mixed_valences / _search_mixed_signs / _dfs_mixed_valences / _solve_last_valence / _valence_combos / _mixed_charge_reachable / _multiset_count | **混合价态搜索**（v4，Fe₃O₄）：同元素各副本可取不同价、必须同号；前 n-1 元素枚举多重集组合，末元素用有界 DP 反解；组合数 > `MIXED_NODE_CAP`(5000) 直接判无解（联机不卡帧）|
+| get_valence_pairs / get_uniform_valence_pairs / get_mixed_valence_pairs / _cv_from_formula | AI / 提示共用的价态出口：默认配平 → 统一搜索 → 混合搜索（统一解永远优先）；面板用 `get_uniform…` 判断要不要显示「混合价态自动配平」入口 |
 | get_compound_formula | 配平 + 化学式生成（`ratio_ok=false` 即视为打不出）|
-| get_compound_name / _try_get_oxy_name | IUPAC 命名（含氧酸/含氧酸盐/酸式盐）|
+| get_compound_name / _try_get_oxy_name | IUPAC 命名（含氧酸/含氧酸盐/酸式盐）；先查 `SPECIAL_NAMES`（按 `formula_key`，只影响显示），混合价态查不到表就只显示化学式 |
+
 | is_organic / get_organic_name | 有机物识别与命名（CH4/C2H6/C3H8 及单一卤代物）|
 | _to_subscript / _gcd | 化学式下标渲染 / 配平辅助 |
 
@@ -243,7 +246,7 @@ PlayerManager.PlayerInfo
 | halogen_exchange_allowed | 补充规则：允许卤族互化（默认 `false`；只放开 COMPOUND，族炸始终合法） |
 | element_limit_enabled | 补充规则：元素限制（默认 `false`；`true` 时牌库 = 前 20 号 + `allowed_extra_elements`） |
 | allowed_extra_elements | 元素限制额外放行的符号（如 `["Fe","Cu"]`；关闭限制时忽略） |
-| table_custom_valences | 桌面化合物实际化合价（play_cards 出牌时保存，渲染化学式/排序/化合价显示用）|
+| table_custom_valences | 桌面化合物实际化合价（play_cards 出牌时保存，渲染化学式/排序/化合价显示用）。值可以是 int（每张同价）或 Array（混合价态，如 `{"Fe":[3,3,2],"O":-2}`，长度 = 该元素张数）|
 | sequence_constraint | 顺序牌指定牌型（`CardPattern.Pattern`；`-1` = 未指定）|
 | sequence_constraint_active | 约束是否生效（`set_sequence_constraint()` 置 true；只有被指定的玩家结算后才置 false）|
 | sequence_constraint_target | 被指定的座位号（`-1` = 无目标）。`set_sequence_constraint()` 取「**反转方向**上的下一名」（顺序牌在 `play_cards()` 里已先反转方向），并跳过手牌为空的玩家；`play_cards()` 只在 `player_index == sequence_constraint_target` 时校验，别人出牌 / 族炸 / 接炸链结束 / 跳过都不解除 |
@@ -306,6 +309,11 @@ AIPlayer.auto_play(game_manager, ui_refresh)
 > `CompoundSolver.get_valence_pairs()` —— 与提示按钮同一个取价出口；人类面板仍列
 > `common_valence` 全价，但三条路径最终都由 `play_cards()` 的 `_assign_valences` 裁决，
 > 因此 AI 不会提出引擎拒绝的假化合物（NCl / BrN / IN）。
+>
+> **覆盖差异（已知，非 bug）**：AI / 提示目前只枚举「2 张牌」的化合物配对，
+> 所以混合价态（Fe₃O₄＝3Fe+4O）只有人类能打 —— 两元素各 1 张时不可能出现混合价。
+> 这类组合走人类面板顶部的「混合价态自动配平」按钮（`_mixed_valence_for_selection()`）。
+
 
 ### 7.4 TutorialController.gd（教程控制）
 
@@ -866,7 +874,8 @@ GameManager.init_game / init_tutorial
 | _is_clan_bomb | CardPatterns.gd | O(n) |
 | get_compound_formula | CompoundSolver.gd（配平 + 化学式；空式子 / `ratio_ok=false` 即打不出）| O(n) |
 | `_assign_valences` | CompoundSolver.gd（唯一价态分配入口：默认配平 + 电负性有序校验）| O(n) |
-| `_search_valences` | CompoundSolver.gd（默认配平失败时的价态搜索：2~3 种元素 DFS、按实际张数电荷平衡；>3 种元素不做搜索）| O(价域^元素种数) |
+| `_search_valences` | CompoundSolver.gd（默认配平失败时的**统一**价态搜索：2~3 种元素 DFS、按实际张数电荷平衡；>3 种元素不做搜索）| O(价域^元素种数) |
+| `_search_mixed_valences` | CompoundSolver.gd（统一搜索无解时的**混合**价态搜索：同元素各副本可异价、必须同号；前 n-1 元素枚举多重集组合，末元素有界 DP 反解；组合数 > `MIXED_NODE_CAP`(5000) 直接放弃）| O(min(组合数, 5000) × 张数) |
 | compare_cards | CardPatterns.gd | O(n) |
 | generate_deck | CardDatabase.gd | O(28×copies) |
 | shuffle | CardDatabase.gd | O(n) Fisher-Yates |

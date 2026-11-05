@@ -3210,10 +3210,18 @@ func _update_table_label() -> void:
 				if ordered_cards.size() == cards.size():
 					cards = ordered_cards
 				# 计算每个元素的化合价（按重排后的索引）
+				# 混合价态（Fe₃O₄）按「每张牌一个价」显示：Fe 三张分别是 +3 / +3 / +2，
+				# 而不是把平均值或其中一个价重复三遍。
 				for e in pos_list2 + neg_list2:
+					var plan: Array = e.get("plan", [])
+					var k := 0
 					for i in range(cards.size()):
 						if cards[i].symbol == e.symbol:
-							card_valences[i] = e.ox_state
+							if bool(e.get("mixed", false)) and k < plan.size():
+								card_valences[i] = int(plan[k])
+							else:
+								card_valences[i] = e.ox_state
+							k += 1
 		elif pat == CardPatternsScript.CardPattern.SEQUENCE:
 			# 顺序牌按原子序数升序显示（与玩家选择顺序无关，体现连续序列）
 			var sorted_cards: Array = cards.duplicate()
@@ -5343,6 +5351,17 @@ func _update_valence_buttons() -> void:
 		action_panel.add_child(_mkb("至少选两种元素 (返回)", _on_back, false))
 		return
 
+	# ---- 混合价态入口（v4）----
+	# Fe₃O₄ 这类「同一元素每张牌取不同价」的组合，下面「每种元素一个价」的按钮
+	# 永远配不平（3 张 Fe 同价时总电荷必是 3 的倍数，压不过 4 张 O 的 -8）。
+	# 只在「统一价态无解 + 混合价态有解」时出现，平时不打扰玩家。
+	var mixed_cv := _mixed_valence_for_selection()
+	if not mixed_cv.is_empty():
+		action_panel.add_child(_mkb("混合价态自动配平 ▶", _on_confirm_mixed_valence.bind(mixed_cv), false))
+		var mixed_lbl = Label.new()
+		mixed_lbl.text = _mixed_valence_text(mixed_cv)
+		action_panel.add_child(mixed_lbl)
+
 	var all_assigned = true
 	for sym in elem_map:
 		var card = elem_map[sym]
@@ -5368,6 +5387,65 @@ func _update_valence_buttons() -> void:
 		action_panel.add_child(_mkb("确认打出", _on_confirm_compound, false))
 		action_panel.add_child(_mkb("重选化合价", _on_reset_valence, false))
 		action_panel.add_child(_mkb("返回", _on_back, false))
+
+
+# 当前选中的牌组：统一价态无解、混合价态有解 → 返回混合价字典；否则 {}
+# （返回的字典直接喂给 play_cards，形如 {"Fe": [3, 3, 2], "O": -2}）
+func _mixed_valence_for_selection() -> Dictionary:
+	if game_manager == null:
+		return {}
+	var cp = game_manager.get_current_player()
+	if cp == null:
+		return {}
+	var cards: Array = []
+	for idx in selected_indices:
+		if idx >= 0 and idx < cp.hand.size():
+			cards.append(cp.hand[idx])
+	if cards.size() < 2:
+		return {}
+	# 统一解已经能打 → 不提供混合入口（保持「主流解优先」）
+	if not CompoundSolverScript.get_uniform_valence_pairs(cards).is_empty():
+		return {}
+	var mixed: Dictionary = CompoundSolverScript.get_mixed_valence_pairs(cards)
+	if mixed.is_empty():
+		return {}
+	var has_array := false
+	for sym in mixed:
+		if mixed[sym] is Array:
+			has_array = true
+	if not has_array:
+		return {}
+	# 真正会用这个字典出牌 → 先确认它确实配平，避免玩家点了按钮又收到「非法出牌」
+	var fi = CompoundSolverScript.get_compound_formula(cards, mixed)
+	if fi.is_empty() or not bool(fi.get("ratio_ok", false)):
+		return {}
+	return mixed
+
+
+# 混合价态的可读文本：{"Fe": [3,3,2], "O": -2} → "混合价态：Fe +3/+3/+2，O -2"
+# 混合（数组）的元素排在前面 —— 玩家最需要核对的就是它。
+func _mixed_valence_text(cv: Dictionary) -> String:
+	var parts: Array = []
+	for sym in cv:
+		if not (cv[sym] is Array):
+			continue
+		parts.append(_valence_text_of(sym, cv[sym]))
+	for sym in cv:
+		if cv[sym] is Array:
+			continue
+		parts.append(_valence_text_of(sym, cv[sym]))
+	return "混合价态：" + "，".join(parts)
+
+
+func _valence_text_of(sym: String, v) -> String:
+	if v is Array:
+		var seg: Array = []
+		for x in v:
+			seg.append("%+d" % int(x))
+		return "%s %s" % [sym, "/".join(seg)]
+	return "%s %+d" % [sym, int(v)]
+
+
 
 
 # ============================================================
@@ -5595,6 +5673,27 @@ func _on_confirm_compound() -> void:
 func _on_reset_valence() -> void:
 	compound_selections.clear()
 	_update_action_panel()
+
+
+# 混合价态一键出牌（v4）：Fe₃O₄ 这类「同元素多价」的组合走这条路径。
+# cv 由 _mixed_valence_for_selection() 求出并校验过配平，这里只负责收集卡牌并交给引擎。
+func _on_confirm_mixed_valence(cv: Dictionary) -> void:
+	if game_manager == null:
+		return
+	var cp = game_manager.get_current_player()
+	if cp == null:
+		return
+	var ccards: Array = []
+	for idx in selected_indices:
+		if idx >= 0 and idx < cp.hand.size():
+			ccards.append(cp.hand[idx])
+	if ccards.size() < 2:
+		_show_info("请先选择要打出的化合物卡牌！")
+		return
+	var result = game_manager.play_cards(game_manager.get_current_player_index(), ccards,
+		cv.duplicate(true), CardPatternsScript.CardPattern.COMPOUND)
+	_handle_result(result)
+
 
 func _on_back() -> void:
 	_clear_hint()

@@ -79,6 +79,43 @@ const NONMETAL_CN_NAMES = {
 	"S": "硫", "Cl": "氯", "Ar": "氩", "Br": "溴", "I": "碘",
 }
 
+# ------------------------------------------------------------
+# 特殊化合物中文名（**只影响显示，不参与任何合法性判定**）
+# ------------------------------------------------------------
+# key = 无下标数字化学式（formula_key，如 Fe3O4 / H2O），value = 中文名。
+# 为什么需要它：
+#   1) 默认命名是「负价元素名 + 化 + 正价金属名」（NaCl → 氯化钠），
+#      遇到混合价态（Fe₃O₄ = Fe(+3)×2 + Fe(+2)）没有单一价态可套，会编出错名字；
+#   2) 习惯名（H₂O = 水）、非金属作正价（CO = 一氧化碳）也不遵守这套构词法。
+# 收录原则（≤ 30 条，可玩性优先）：
+#   a) 教材 / 生活里一眼认得的；b) 用本作牌库的价态真能打出来（张数 ≤ 手牌 8 张）；
+#   c) key 必须与 _assign_valences 产出的 formula_key 完全一致
+#      —— 注意化学式按「正价在前」排列，氨是 H3N 而不是 NH3。
+# 表里没有的组合仍走原命名逻辑（含氧酸 / 酸式盐 / 二元化合物），不会退化成空白。
+const SPECIAL_NAMES = {
+	# 水
+	"H2O": "水",
+	# 碳氧化物
+	"CO": "一氧化碳", "CO2": "二氧化碳",
+	# 氨与氢化物
+	"H3N": "氨", "NaH": "氢化钠", "KH": "氢化钾", "LiH": "氢化锂", "CaH2": "氢化钙",
+	# 硫 / 磷氧化物
+	"SO2": "二氧化硫", "SO3": "三氧化硫", "P2O5": "五氧化二磷",
+	# 铁系（Fe3O4 是混合价态：Fe(+3)×2 + Fe(+2)）
+	"FeO": "氧化亚铁", "Fe2O3": "三氧化二铁", "Fe3O4": "四氧化三铁",
+	# 铜系
+	"CuO": "氧化铜", "Cu2O": "氧化亚铜",
+	# 锰 / 铬 / 铝 / 硅
+	"MnO2": "二氧化锰", "Cr2O3": "三氧化二铬", "CrO3": "三氧化铬",
+	"Al2O3": "三氧化二铝", "SiO2": "二氧化硅",
+	# 碱金属 / 碱土金属 / 锌的氧化物
+	"Na2O": "氧化钠", "K2O": "氧化钾", "MgO": "氧化镁", "CaO": "氧化钙", "ZnO": "氧化锌",
+}
+
+# 混合价态搜索的组合数上限（超过直接放弃：宁可这一手判非法，也不能在联机对局里卡帧）。
+# 典型 Fe₃O₄ = 3 张 Fe（价域 2 个）+ 4 张 O（价域 1 个）→ 组合数 4，远低于上限。
+const MIXED_NODE_CAP := 5000
+
 # ============================================================
 # 二、有机物检测（视为化合物的子类）
 # ============================================================
@@ -176,6 +213,8 @@ static func get_organic_name(cards: Array) -> String:
 # 判定 = 「默认配平（金属 / 含氧酸根 / H 化物）能成立」或「存在按张数电荷平衡的价态分配」。
 # 这样 NCl / BrN / IN（非金属之间 1:1、电荷对不上或电负性倒置）不再被判成化合物，
 # 而 NCl₃ / NI₃ / BCl₃ / ClF 这类真实化合物仍然成立。
+# v4：再补一层「混合价态」判定 —— Fe₃O₄（Fe +3/+3/+2）只有混合解，
+# 漏掉这层的话牌型识别会说它不是化合物，玩家照着打反而被拒。
 static func is_compound(cards: Array) -> bool:
 	if cards.size() < 2:
 		return false
@@ -184,7 +223,9 @@ static func is_compound(cards: Array) -> bool:
 			return false
 	if not _assign_valences(cards, {}).is_empty():
 		return true
-	return not _search_valences(cards).is_empty()
+	if not _search_valences(cards).is_empty():
+		return true
+	return not _search_mixed_valences(cards).is_empty()
 
 
 # 获取化合价配平比例与化学式
@@ -219,25 +260,39 @@ static func _assign_valences(cards: Array, custom_valences: Dictionary = {}) -> 
 
 	if custom_valences.size() >= 2 and not custom_valences.has("_organic"):
 		for sym in custom_valences:
-			var v = custom_valences[sym]
-			var cnt = elem_counts.get(sym, 0)
+			var raw = custom_valences[sym]
+			var cnt: int = int(elem_counts.get(sym, 0))
 			var card_data = elem_cards.get(sym)
-			if v > 0:
-				pos_list.append({
-					"symbol": sym, "valence": abs(v), "count": cnt,
-					"electronegativity": card_data.electronegativity if card_data else 0.0,
-					"name_cn": card_data.name_cn if card_data else sym,
-					"name_en": card_data.name_en if card_data else sym,
-					"ox_state": v,
-				})
+			if cnt <= 0:
+				continue   # 价态表里多给了本手牌没有的元素：忽略，不参与化学式与电荷
+			var plan := _valence_plan_of(raw, cnt)
+			if plan.is_empty():
+				return {}
+			var charge := 0
+			for pv in plan:
+				charge += int(pv)
+			var avg := float(charge) / float(plan.size())
+			var entry := {
+				"symbol": sym, "valence": absf(avg), "count": cnt,
+				# charge = 这几种元素「所有副本」加起来的净电荷：
+				# 混合价态下 count * valence 不再等于它（如 Fe₃O₄ 的 3×8/3 = 8），
+				# 电荷平衡一律走这个字段，避免浮点误差。
+				"charge": absi(charge),
+				"mixed": _plan_is_mixed(plan),
+				"plan": plan,
+				"electronegativity": card_data.electronegativity if card_data else 0.0,
+				"name_cn": card_data.name_cn if card_data else sym,
+				"name_en": card_data.name_en if card_data else sym,
+				# ox_state 只服务于「单价的」命名 / 显示路径；混合价态没有单价，
+				# 命名走 SPECIAL_NAMES，桌面小卡走 plan（每张各显示各的价）。
+				"ox_state": int(round(avg)),
+			}
+			if charge > 0:
+				pos_list.append(entry)
+			elif charge < 0:
+				neg_list.append(entry)
 			else:
-				neg_list.append({
-					"symbol": sym, "valence": abs(v), "count": cnt,
-					"electronegativity": card_data.electronegativity if card_data else 0.0,
-					"name_cn": card_data.name_cn if card_data else sym,
-					"name_en": card_data.name_en if card_data else sym,
-					"ox_state": v,
-				})
+				return {}   # 净电荷 0（如 Fe 取 [+1, -1]）放哪边都不成立
 	else:
 		for sym in elem_counts:
 			var card_data = elem_cards.get(sym)
@@ -319,17 +374,27 @@ static func _assign_valences(cards: Array, custom_valences: Dictionary = {}) -> 
 
 	# 电荷平衡验证
 	var total_pos = 0; var total_neg = 0
-	for e in pos_list: total_pos += e.count * e.valence
-	for e in neg_list: total_neg += e.count * e.valence
+	for e in pos_list: total_pos += _entry_charge(e)
+	for e in neg_list: total_neg += _entry_charge(e)
 	var ratio_ok = (total_pos == total_neg and total_pos > 0)
 
-	# 构建化学式
+	# 构建化学式（下标）与 formula_key（纯 ASCII 数字，SPECIAL_NAMES 的 key）
 	var formula = ""
-	for e in pos_list: formula += e.symbol + ("" if e.count == 1 else _to_subscript(e.count))
-	for e in neg_list: formula += e.symbol + ("" if e.count == 1 else _to_subscript(e.count))
+	var formula_key = ""
+	var mixed := false
+	for e in pos_list:
+		formula += e.symbol + ("" if e.count == 1 else _to_subscript(e.count))
+		formula_key += e.symbol + ("" if e.count == 1 else str(e.count))
+		if bool(e.get("mixed", false)): mixed = true
+	for e in neg_list:
+		formula += e.symbol + ("" if e.count == 1 else _to_subscript(e.count))
+		formula_key += e.symbol + ("" if e.count == 1 else str(e.count))
+		if bool(e.get("mixed", false)): mixed = true
 
 	return {
 		"formula": formula,
+		"formula_key": formula_key,
+		"mixed": mixed,
 		"ratio_ok": ratio_ok,
 		"total_positive": total_pos,
 		"total_negative": total_neg,
@@ -337,6 +402,64 @@ static func _assign_valences(cards: Array, custom_valences: Dictionary = {}) -> 
 		"pos_list": pos_list,
 		"neg_list": neg_list,
 	}
+
+
+# ------------------------------------------------------------
+# 三之一½、化合价表达式的规范化（统一价 / 混合价的唯一入口）
+# ------------------------------------------------------------
+# 化合价有两种写法，引擎内部一律先规范成「每张牌一个价」的数组 plan：
+#   int        → [v, v, ...]    统一价态（v3 以来的写法，联机协议 / 存档原样兼容）
+#   Array      → 降序规范化      混合价态（Fe₃O₄ 的 Fe = [+3, +3, +2]）
+# 非法一律返回 []（调用方据此判 {} = 不是化合物）：
+#   a) 长度 ≠ 张数（少给一张 / 多给一张都对不上具体卡）；
+#   b) 含 0（0 价在本作里没有意义）；
+#   c) 同一元素跨正负（「一张 Fe 当正价、另一张当负价」化学上不成立）。
+# 降序是**表示规范化**而不是「把价派给某一张牌」：同元素副本完全等价，
+# 排序只为让面板 / 桌面 / 联机指纹对同一组合给出同一个字符串。
+static func _valence_plan_of(raw, count: int) -> Array:
+	if count <= 0:
+		return []
+	var plan: Array = []
+	if raw is Array:
+		if raw.size() != count:
+			return []
+		var sign := 0
+		for v in raw:
+			var iv := int(v)
+			if iv == 0:
+				return []
+			var s := 1 if iv > 0 else -1
+			if sign != 0 and s != sign:
+				return []
+			sign = s
+			plan.append(iv)
+		plan.sort()
+		plan.reverse()
+		return plan
+	var single := int(raw)
+	if single == 0:
+		return []
+	for _i in range(count):
+		plan.append(single)
+	return plan
+
+
+# plan 里是否真的「一元素多价」（Fe₃O₄ 的 [+3, +3, +2] → true，NaCl 的 [1] → false）
+static func _plan_is_mixed(plan: Array) -> bool:
+	if plan.size() < 2:
+		return false
+	for v in plan:
+		if int(v) != int(plan[0]):
+			return true
+	return false
+
+
+# 一个元素（可能混合价）对总电荷的贡献：优先用规范化时算好的 charge，
+# 默认配平分支的元素条目没有 charge，回落到 count * valence。
+static func _entry_charge(e: Dictionary) -> int:
+	if e.has("charge"):
+		return int(e["charge"])
+	return int(e.get("count", 0)) * int(e.get("valence", 0))
 
 
 # ------------------------------------------------------------
@@ -424,17 +547,235 @@ static func _valence_assignment_ok(elems: Array, chosen: Dictionary) -> bool:
 	return pos_elec <= neg_elec + 0.001
 
 
+# ------------------------------------------------------------
+# 三之三、混合价态搜索（v4）：同一元素的多张牌各取不同价
+# ------------------------------------------------------------
+# 典型：Fe₃O₄ = Fe(+3)×2 + Fe(+2)×1。3 张 Fe 若同价，总电荷必是 3 的倍数，
+# 而 4 张 O 的 -2 之和是 -8 ——「每元素一个价」永远配不平，只能靠混合价。
+# 规则：
+#   1) **只在统一搜索失败后调用**（统一解优先，保证主流解与可复现性）；
+#   2) 每元素各副本必须同号（不许「一张 Fe 当正价、另一张当负价」）；
+#   3) 正价元素电负性 ≤ 负价元素（与统一搜索同一条化学约束）；
+#   4) 末元素用有界 DP 反解剩余电荷，其余元素枚举「非递增组合」——
+#      副本互换不产生新解，组合数从排列数级别的爆炸降到 C(n+k-1, n)；
+#   5) 组合数 > MIXED_NODE_CAP 直接放弃：联机对局宁可判非法，也不能卡帧。
+static func _search_mixed_valences(cards: Array) -> Dictionary:
+	var elems = _valence_domains(cards)
+	if elems.size() < 2 or elems.size() > 3:
+		return {}
+	var estimate := 1
+	var has_mixed_potential := false
+	for e in elems:
+		var count: int = int(e["count"])
+		var values: Array = e["values"]
+		var pos_n := 0
+		var neg_n := 0
+		for v in values:
+			if int(v) > 0: pos_n += 1
+			else: neg_n += 1
+		# 混合的前提：某元素 ≥2 张，且同号价域里至少 2 个值
+		if count >= 2 and (pos_n >= 2 or neg_n >= 2):
+			has_mixed_potential = true
+		estimate *= _multiset_count(count, values.size())
+	if not has_mixed_potential or estimate > MIXED_NODE_CAP:
+		return {}
+	var found := _search_mixed_signs(elems, 0)
+	if found.is_empty():
+		return {}
+	var cv: Dictionary = {}
+	for sym in found:
+		var plan: Array = (found[sym] as Array).duplicate()
+		plan.sort()
+		plan.reverse()
+		if _plan_is_mixed(plan):
+			cv[sym] = plan
+		else:
+			cv[sym] = int(plan[0])
+	return cv
+
+
+# 穷举「哪些元素作正价」的符号分配（2~3 元素 → ≤8 种），逐个尝试 DFS
+static func _search_mixed_signs(elems: Array, mask: int) -> Dictionary:
+	var n: int = elems.size()
+	if mask >= (1 << n):
+		return {}
+	var domains: Array = []
+	var pos_elec := -1.0
+	var neg_elec := 999.0
+	var has_pos := false
+	var has_neg := false
+	for i in range(n):
+		var e = elems[i]
+		var positive: bool = (mask & (1 << i)) != 0
+		var dom: Array = []
+		for v in e["values"]:
+			var iv := int(v)
+			if (positive and iv > 0) or (not positive and iv < 0):
+				dom.append(iv)
+		if dom.is_empty():
+			return _search_mixed_signs(elems, mask + 1)
+		domains.append(dom)
+		var enc: float = float(e["card"].electronegativity)
+		if positive:
+			has_pos = true
+			pos_elec = maxf(pos_elec, enc)
+		else:
+			has_neg = true
+			neg_elec = minf(neg_elec, enc)
+	# 必须有正有负，且正价侧电负性不大于负价侧（同统一搜索的化学约束）
+	if not (has_pos and has_neg) or pos_elec > neg_elec + 0.001:
+		return _search_mixed_signs(elems, mask + 1)
+	var plan := _dfs_mixed_valences(elems, domains, 0, [], 0)
+	if plan.is_empty():
+		return _search_mixed_signs(elems, mask + 1)
+	return plan
+
+
+# 前 n-1 个元素枚举组合，末元素交给 DP 反解
+static func _dfs_mixed_valences(elems: Array, domains: Array, idx: int,
+		chosen: Array, charge: int) -> Dictionary:
+	var n: int = elems.size()
+	if idx >= n - 1:
+		var last_vals := _solve_last_valence(domains[idx], int(elems[idx]["count"]), -charge)
+		if last_vals.is_empty():
+			return {}
+		var out: Dictionary = {}
+		for i in range(n - 1):
+			out[elems[i]["symbol"]] = (chosen[i] as Array).duplicate()
+		out[elems[n - 1]["symbol"]] = last_vals
+		return out
+	for combo in _valence_combos(domains[idx], int(elems[idx]["count"])):
+		var sum := 0
+		for v in combo:
+			sum += int(v)
+		if not _mixed_charge_reachable(elems, domains, idx + 1, charge + sum):
+			continue
+		chosen.append(combo)
+		var found := _dfs_mixed_valences(elems, domains, idx + 1, chosen, charge + sum)
+		chosen.pop_back()
+		if not found.is_empty():
+			return found
+	return {}
+
+
+# 末元素：给定副本数与目标电荷，用有界 DP 反解出一组价（降序返回，无解返回 []）。
+# 状态 = (已用副本数, 当前和)，逐层推进并记录首选前驱 → 结果确定（同一输入永远同一答案）。
+static func _solve_last_valence(dom: Array, count: int, target: int) -> Array:
+	if count <= 0:
+		return []
+	var parent: Dictionary = {}
+	var frontier: Array = [Vector2i(0, 0)]
+	for k in range(count):
+		var next_frontier: Array = []
+		for st in frontier:
+			for v in dom:
+				var key := Vector2i(k + 1, st.y + int(v))
+				if parent.has(key):
+					continue
+				parent[key] = {"prev": st, "v": int(v)}
+				next_frontier.append(key)
+		frontier = next_frontier
+		if frontier.is_empty():
+			return []
+	var goal := Vector2i(count, target)
+	if not parent.has(goal):
+		return []
+	var vals: Array = []
+	var cur: Vector2i = goal
+	while cur.x > 0:
+		var info: Dictionary = parent[cur]
+		vals.append(int(info["v"]))
+		cur = info["prev"]
+	vals.sort()
+	vals.reverse()
+	return vals
+
+
+# 长度为 count 的「非递增组合」（同元素副本可互换 → 只枚举组合，不枚举排列）
+static func _valence_combos(dom: Array, count: int) -> Array:
+	var out: Array = []
+	_collect_valence_combos(dom, count, 0, [], out)
+	return out
+
+
+static func _collect_valence_combos(dom: Array, count: int, start: int,
+		cur: Array, out: Array) -> void:
+	if cur.size() == count:
+		out.append(cur.duplicate())
+		return
+	for i in range(start, dom.size()):
+		cur.append(int(dom[i]))
+		_collect_valence_combos(dom, count, i, cur, out)
+		cur.pop_back()
+
+
+# 剪枝：剩下的元素（含末元素）能否把 partial 抵消回 0（区间判定，只看可达范围）
+static func _mixed_charge_reachable(elems: Array, domains: Array, start: int, partial: int) -> bool:
+	var lo := partial
+	var hi := partial
+	for i in range(start, elems.size()):
+		var cnt: int = int(elems[i]["count"])
+		var dom: Array = domains[i]
+		var dmin := int(dom[0])
+		var dmax := int(dom[0])
+		for v in dom:
+			dmin = mini(dmin, int(v))
+			dmax = maxi(dmax, int(v))
+		lo += cnt * dmin
+		hi += cnt * dmax
+	return lo <= 0 and 0 <= hi
+
+
+# 从 kinds 个价里取 total 张（可重复）的组合数 C(total + kinds - 1, total)
+static func _multiset_count(total: int, kinds: int) -> int:
+	if total <= 0 or kinds <= 0:
+		return 1
+	var n: int = total + kinds - 1
+	var k: int = mini(total, kinds - 1)
+	var result := 1
+	for i in range(k):
+		result = result * (n - i) / (i + 1)
+	return result
+
+
 # 供 AI / 提示 / 化合价面板使用：返回按实际张数可行的 {symbol: valence}，无解返回 {}
+# 求解优先级（决定「同一组牌打出什么」，所以要稳定且可解释）：
+#   1) 默认配平（金属最高价 / 非金属最低价 / 含氧酸根）—— 主流解，v3 行为不变
+#   2) 统一价态搜索（每元素一个价，按张数电荷平衡）
+#   3) 混合价态搜索（同元素各副本可取不同价，如 Fe₃O₄）
+# 统一解永远优先于混合解：Fe + 3O 是 Fe₂O₃（Fe +3），不会给出 Fe +3/+3/+2 之类
+# 的「更奇怪但数学上也成立」的解；也让 state_hash / 联机回放对同一手牌可复现。
 static func get_valence_pairs(cards: Array) -> Dictionary:
+	var uniform := get_uniform_valence_pairs(cards)
+	if not uniform.is_empty():
+		return uniform
+	return _search_mixed_valences(cards)
+
+
+# 统一价态解（每元素一个价）：默认配平优先，其次按张数搜索。无解返回 {}。
+# UI 用它判断「要不要给玩家一个混合价态入口」（统一无解 + 混合有解 才显示）。
+static func get_uniform_valence_pairs(cards: Array) -> Dictionary:
 	var fi = _assign_valences(cards, {})
 	if not fi.is_empty() and fi.get("ratio_ok", false):
-		var cv: Dictionary = {}
-		for e in fi.get("pos_list", []):
-			cv[e.symbol] = e.ox_state
-		for e in fi.get("neg_list", []):
-			cv[e.symbol] = e.ox_state
-		return cv
+		return _cv_from_formula(fi)
 	return _search_valences(cards)
+
+
+# 混合价态解（可能含 Array 值）。无解返回 {}。
+static func get_mixed_valence_pairs(cards: Array) -> Dictionary:
+	return _search_mixed_valences(cards)
+
+
+# 从 _assign_valences 的化学式结果反推 {symbol: valence}
+# （混合价态返回每张牌一个价的数组，其余返回 int）
+static func _cv_from_formula(fi: Dictionary) -> Dictionary:
+	var cv: Dictionary = {}
+	for e in fi.get("pos_list", []) + fi.get("neg_list", []):
+		if bool(e.get("mixed", false)):
+			cv[e.symbol] = (e.get("plan", []) as Array).duplicate()
+		else:
+			cv[e.symbol] = int(e.get("ox_state", 0))
+	return cv
 
 
 # ============================================================
@@ -451,6 +792,17 @@ static func get_compound_name(cards: Array, custom_valences: Dictionary = {}) ->
 	var pos_list: Array = fi.get("pos_list", [])
 	var neg_list: Array = fi.get("neg_list", [])
 	if pos_list.is_empty() or neg_list.is_empty():
+		return ""
+
+	# 特殊命名表优先（显示层覆盖）：Fe₃O₄ / H₂O / CO 这类默认构词法拼不对的组合。
+	# 只查表、不参与合法性判定 —— 表里查不到就继续走原来的命名逻辑。
+	var key := str(fi.get("formula_key", ""))
+	if SPECIAL_NAMES.has(key):
+		return SPECIAL_NAMES[key]
+
+	# 混合价态没有「一个」价态数字，亚铁/铁、氧化某这套构词法不成立；
+	# 表里没收录时只显示化学式（宁可少个名字，也不编一个错的）。
+	if bool(fi.get("mixed", false)):
 		return ""
 
 	# 先尝试匹配含氧酸/含氧酸盐/酸式盐

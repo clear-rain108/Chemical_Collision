@@ -1145,8 +1145,24 @@ func _sorted_pairs(src: Dictionary) -> Array:
 	keys.sort()
 	var out: Array = []
 	for k in keys:
-		out.append("%s=%s" % [String(k), str(src[k])])
+		out.append("%s=%s" % [String(k), _valence_key_of(src[k])])
 	return out
+
+
+# 指纹里化合价的文本形式：数组（混合价）先降序规范化再拼，
+# 避免「[3,2] 与 [2,3]」这种表示差异导致 state_hash 失配；
+# 单个数字保持 v3 的写法（老存档 / 老事件重放的指纹不变）。
+func _valence_key_of(v) -> String:
+	if v is Array:
+		var arr: Array = []
+		for x in v:
+			arr.append(int(x))
+		arr.sort()
+		arr.reverse()
+		return str(arr)
+	if v is bool:
+		return str(v)
+	return str(int(v))
 
 
 # ---- 事件应用（客人重放 / 主机本地执行 / 自动化测试）----
@@ -1230,11 +1246,24 @@ func _cards_by_uids(player_index: int, uids):
 
 
 # 化合价字典规范化：键转 String，值保持 bool（"_organic" 标记）/ 转 int（JSON 数字是 float）
+# 混合价态（v4）的值是数组：[+3, +3, +2] = 该元素每张牌各取一个价。
+# JSON 往返后数组里是 float，这里统一转 int 并降序规范化 —— 主机与客人
+# 各自解析同一笔事件后必须得到同一个表示，否则 state_hash 会莫名其妙地对不上。
 func _valences_from(src) -> Dictionary:
 	var out: Dictionary = {}
 	if not (src is Dictionary):
 		return out
 	for k in src:
 		var v = src[k]
-		out[String(k)] = v if (v is bool) else int(v)
+		if v is bool:
+			out[String(k)] = v
+		elif v is Array:
+			var arr: Array = []
+			for x in v:
+				arr.append(int(x))
+			arr.sort()
+			arr.reverse()
+			out[String(k)] = arr
+		else:
+			out[String(k)] = int(v)
 	return out
