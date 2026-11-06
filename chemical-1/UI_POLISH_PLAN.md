@@ -1170,4 +1170,35 @@ Godot_v4.7.2-stable_win64.exe --path . --touch-ui
 **验收**：36 套测试全绿（36 + `verify_touch_flag --touch-ui` = 37 次运行）；
 `verify_valence_panel` 19 条全过；`verify_mixed_valence_ui` 9 条不受影响（Na+Cl 多出「自动配平 ▶」但仍无混合入口）。
 
+### 14.3 P14-D：开始页「触屏界面」开关（运行时切换，可逆）
+
+**问题**：`_touch_ui` 只有两个来源 —— `OS.has_feature("mobile")` 和启动参数 `--touch-ui`。
+玩家在平板上想让按钮大一点、或在桌面上想临时看触控布局，都必须重启并带参数；
+真机上更是完全没入口。
+
+**改法**：开始页设置卡加一个 toggle，走与命令行完全相同的 `_touch_ui` 字段。
+
+| 位置 | 改动 |
+|---|---|
+| `_start_page_settings()` | 新增 `TouchUIToggle`（240×32 @ (344,129)，与「补充规则」同排右侧，不加卡高） |
+| `_setup_pages()` | `toggled.connect(_on_touch_ui_toggled)`；末尾 `_sync_touch_toggle()` 让 `--touch-ui` 启动时也显示「开」 |
+| `GameUI.set_touch_ui(on)` / `is_touch_ui()` | 唯一出口：置 `_touch_ui` + `_touch_ui_manual`，打印一行 `[UI] 触屏档案 = ...（开始页开关）`，再广播 |
+| `_apply_touch_profile_everywhere()` | 5 个页面走 `_apply_touch_sizing` / `_revert_touch_sizing`；游戏页重刷工具行几何、按序按钮、`_refresh_ui()` |
+| `_apply_touch_sizing()` | 第一次动某颗按钮时把 `size / cms / position / 字号` 存 `meta("touch_orig")`（反复切换时原点不变） |
+| `_revert_touch_sizing()` | **新增**：逐颗还原，顺序 = `cms → 字号 → size` |
+| `_sync_touch_toggle()` | 用 `set_pressed_no_signal()` 同步按下态 + 文案「触屏界面 · 开/关」 |
+| `_reposition_reorder_button()` | **新增**：「按序 ⇅」位置/高度/字号跟着档位走（它不走 `_apply_touch_sizing`） |
+| `tests/verify_touch_toggle.gd` | **新增（24 条）**：开关存在/默认关；开启后工具行 48·顶 542、开始页按钮 48、字号 +2、操作面板 48、卡面符号字号放大；重复开启不叠加；**关闭后逐项还原**（工具行 32·顶 558、按钮尺寸字号、面板 45、卡面 28）；直接点开关等价于 `set_touch_ui()` |
+
+**踩坑（顺序敏感）**：还原时必须 `custom_minimum_size → 字号 → size`。先写 `size` 会被「当前」
+最小尺寸夹住 —— 实测先是停在 48（cms 仍 48），再停在 42（字号仍 18 撑出的最小高），
+两次都像「开关没生效」。
+
+**未做持久化**：项目里没有 `ConfigFile` / `user://` 存档，开关只在本次运行内有效；
+手机上平台判定默认就开触控档，所以实际只影响桌面预览。要持久化需要先引入一套配置层，
+不在本次范围。
+
+**验收**：37 套测试全绿（37 + `verify_touch_flag --touch-ui` = 38 次运行）；`verify_start_page` /
+`verify_help_page` / `verify_end_page` 等既有页面断言不受新开关影响。
+
 

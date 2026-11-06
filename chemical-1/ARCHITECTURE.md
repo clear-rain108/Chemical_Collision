@@ -965,6 +965,26 @@ static func resolve_touch_profile(is_mobile: bool, args: Array) -> bool:
 `[UI] 触屏档案 = true（命令行强制；平台 mobile=false）`，方便确认跑的是哪一档。
 回归：`tests/verify_touch_flag.gd`（19 断言，**两种启动方式都要跑一遍**）。
 
+#### 12.1.2 P14-D：开始页的「触屏界面」开关（运行时切换，可逆）
+
+`--touch-ui` 只解决「启动时」，真机上玩家想调大按钮仍然没有办法，桌面上也得开终端。
+现在开始页设置卡（`SettingsCard`，与「补充规则」同一行右侧）有一个 toggle：
+
+| 项 | 实现 |
+|---|---|
+| 入口 | `_start_make_toggle("TouchUIToggle", "触屏界面 · 关", …)`，240×32 @ (344,129)；不进补充规则小页 —— 它不是游戏规则 |
+| 切换 | `_on_touch_ui_toggled` → **`set_touch_ui(on)`**（唯一出口，与 `--touch-ui` / 平台判定共用 `_touch_ui`） |
+| 广播 | `_apply_touch_profile_everywhere()`：5 个页面 `_apply_touch_sizing` / `_revert_touch_sizing`，游戏页重刷工具行几何 + 按序按钮 + `_refresh_ui()` |
+| 回滚 | `_apply_touch_sizing()` 第一次动某颗按钮时把 `size / custom_minimum_size / position / 字号` 存进 `meta("touch_orig")`；`_revert_touch_sizing()` 逐颗还原 |
+| 文案 | `_sync_touch_toggle()` 用 `set_pressed_no_signal()` 同步（否则 `--touch-ui` 启动时会补发一次 `toggled` → 弹「已开启」提示） |
+
+**还原顺序的坑（实测两次才过）**：必须先写 `custom_minimum_size` → 再写字号 → 最后写 `size`。
+反过来 `size` 会被「当前」最小尺寸反复夹住：先停在 48（旧 cms），再停在 42（旧字号撑出的最小高），
+看起来就像开关没生效。回归：`tests/verify_touch_toggle.gd`（24 断言，含「开→关」逐项还原与幂等）。
+
+> 未做持久化：项目里没有 `ConfigFile` / `user://` 存档，开关只在本次运行内有效。
+> 手机上平台判定本来就默认触控档，所以实际只影响桌面调试。
+
 
 ### 12.2 A1 屏幕适配（`project.godot`）
 
@@ -990,6 +1010,8 @@ static func resolve_touch_profile(is_mobile: bool, args: Array) -> bool:
    用 `set_meta("touch_sized")` 挡住第二次，否则字号变成 +4。
 2. **`_style_game_tool_buttons()` 必须先刷样式再定 `size`**：字号会抬高 Button 的最小尺寸，
    先设 `size` 会被 clamp 到「旧字号」的 min —— 触屏 48 切回桌面时高度会僵在 ~40 而不是 32。
+3. **还原同理（P14-D）**：`_revert_touch_sizing()` 的顺序必须是 `custom_minimum_size → 字号 → size`，
+   否则「关」之后按钮停在 48 / 42，看起来像开关没生效（见 §12.1.2）。
 
 ### 12.4 C 触控交互（`_touch_ui` 生效时）
 

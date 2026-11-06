@@ -143,6 +143,7 @@ const TOUCH_DRAG_GHOST_ALPHA := 0.9
 # 换算基准：1080p 手机横屏 2340×1080 → 缩放 1.667 → 1 逻辑 px ≈ 0.667dp，
 #   32px 的工具行只有 21dp（Android 建议 ≥48dp），必须放大。
 var _touch_ui: bool = false             # 触屏档案开关（_ready 里按平台特性 / 命令行置位）
+var _touch_ui_manual: bool = false      # 玩家在开始页手动拨过开关（P14-D，仅用于提示文案 / 测试断言）
 var _quit_confirm_pending: bool = false # 触屏「退出游戏」二次确认（防误触直接跳结算页）
 var _ap_refit_left: int = 2             # A6-2：出牌面板被最小尺寸夹住时的剩余重算次数（防死循环）
 const TOUCH_BTN_MIN_H := 48             # 触控目标最小高度（≈32dp）
@@ -357,6 +358,10 @@ func _setup_pages() -> void:
 	var halogen_cb = _start_child("HalogenCheckBox")
 	if halogen_cb:
 		halogen_cb.toggled.connect(_on_halogen_toggled)
+	# 触屏界面开关（P14-D）：不用命令行也能切触控档
+	var touch_tg = _start_child("TouchUIToggle")
+	if touch_tg:
+		touch_tg.toggled.connect(_on_touch_ui_toggled)
 
 	if end_page:
 		# 结束页子节点全在结算卡 EndCard 之内（P8）
@@ -420,6 +425,8 @@ func _setup_pages() -> void:
 	_apply_touch_sizing(get_node_or_null("TutorialPage"))
 	_apply_touch_sizing(help_page)
 	_apply_touch_sizing(_supp_rules_page)
+	# 开关初值跟随当前档位（--touch-ui / 平台判定），用 no_signal 避免误触发一次「已开启」提示
+	_sync_touch_toggle()
 
 
 # ============================================================
@@ -953,6 +960,16 @@ func _start_page_settings() -> void:
 	rule_hint.position = Vector2(266, 462)
 	rule_hint.size = Vector2(620, 20)
 	rule_hint.modulate.a = 0.0
+
+	# P14-D：触屏界面开关。放在「补充规则」同一行的右侧 —— 卡内还剩约 250px，
+	# 不改卡片高度（第 3 个开关曾把开局按钮挤出卡外，见 P10 的注释）。
+	# 它不是游戏规则，所以不进补充规则小页，就摆在设置卡上随手可切。
+	var touch_tg := _start_make_toggle("TouchUIToggle", "触屏界面 · 关", Vector2(344, 129))
+	touch_tg.custom_minimum_size = Vector2(240, 32)
+	touch_tg.size = Vector2(240, 32)
+	touch_tg.add_theme_font_size_override("font_size", 15)
+	touch_tg.tooltip_text = "按钮更高、字号 +2、手势更跟手（真机 / 平板推荐开启，随时可切回）"
+	card.add_child(touch_tg)
 
 
 func _start_setting_label(node_name: String, text: String, pos: Vector2) -> Label:
@@ -4130,6 +4147,15 @@ func _apply_touch_sizing(root: Node) -> void:
 		# 不打标记的话字号会 +2 +2 叠成 +4
 		if b.has_meta("touch_sized"):
 			continue
+		# 记住原始几何 / 字号：P14-D 的开关可以随时关掉触控档，必须逐颗还原。
+		# 只记第一次（开→关→开 反复切换时，原点始终是桌面档的值）。
+		if not b.has_meta("touch_orig"):
+			b.set_meta("touch_orig", {
+				"size": b.size,
+				"cms": b.custom_minimum_size,
+				"pos": b.position,
+				"fs": b.get_theme_font_size("font_size"),
+			})
 		b.set_meta("touch_sized", true)
 		var old_h: float = b.size.y if b.size.y > 0.0 else b.custom_minimum_size.y
 		if old_h > 0.0 and old_h < float(TOUCH_BTN_MIN_H):
@@ -4141,6 +4167,97 @@ func _apply_touch_sizing(root: Node) -> void:
 		var fs: int = b.get_theme_font_size("font_size")
 		if fs > 0:
 			b.add_theme_font_size_override("font_size", fs + TOUCH_FS_BONUS)
+
+
+# 还原：把 _apply_touch_sizing 改过的按钮逐颗恢复（size / 最小高 / 坐标 / 字号）。
+# 为什么要还原而不是重建页面：这些按钮是代码生成的，位置写在各调用点，
+# 重建一遍等于重跑 _setup_pages（会重连信号、重播入场动画），关个开关不该这么重。
+func _revert_touch_sizing(root: Node) -> void:
+	if root == null:
+		return
+	for b in _collect_buttons(root):
+		if b.has_meta("touch_sized"):
+			b.remove_meta("touch_sized")
+		if not b.has_meta("touch_orig"):
+			continue
+		var orig: Dictionary = b.get_meta("touch_orig")
+		b.remove_meta("touch_orig")
+		# 顺序要紧：最小尺寸 → 字号 → size。
+		# 反过来会被「当前」最小尺寸反复夹住（实测：先写 size 会停在 48，再停在 42 ——
+		# 都是旧字号撑出来的最小高度，看着像没还原）。
+		b.custom_minimum_size = orig["cms"]
+		var fs: int = int(orig["fs"])
+		if fs > 0:
+			b.add_theme_font_size_override("font_size", fs)
+		b.size = orig["size"]
+		b.position = orig["pos"]
+		b.pivot_offset = b.size * 0.5
+
+
+# ============================================================
+# 九之二、触屏档运行时开关（P14-D）
+# ============================================================
+# 为什么需要界面开关：--touch-ui 只在启动时生效，真机上玩家想「把按钮调大」只能改系统设置；
+# 桌面上也总得开终端加参数。开始页「触屏界面」开关 = set_touch_ui()，
+# 与命令行 / 平台判定共用同一个 _touch_ui 字段，几何取值函数自然跟着变。
+func is_touch_ui() -> bool:
+	return _touch_ui
+
+
+func set_touch_ui(on: bool) -> void:
+	if on == _touch_ui:
+		_sync_touch_toggle()
+		return
+	_touch_ui = on
+	_touch_ui_manual = true
+	print("[UI] 触屏档案 = %s（开始页开关）" % str(on))
+	_apply_touch_profile_everywhere()
+	_sync_touch_toggle()
+
+
+# 把当前档位刷到所有已构建的页面 + 游戏页（可逆：关掉时逐颗还原，不重建页面）
+func _apply_touch_profile_everywhere() -> void:
+	for p in [start_page, end_page, get_node_or_null("TutorialPage"), help_page, _supp_rules_page]:
+		if p == null:
+			continue
+		if _touch_ui:
+			_apply_touch_sizing(p)
+		else:
+			_revert_touch_sizing(p)
+	if game_page == null:
+		return
+	# 游戏页：工具行 / 按序按钮吃 _touch_btn_*() 几何，手牌与操作面板吃 _touch_fs()，
+	# 都在下一次重建时取值 —— 这里主动触发一次重建。
+	_style_game_tool_buttons()
+	_reposition_reorder_button()
+	if game_manager != null and not game_manager.is_game_over():
+		_refresh_ui()
+
+
+func _reposition_reorder_button() -> void:
+	if not is_instance_valid(_reorder_btn):
+		return
+	var h: float = _tool_btn_h()
+	_reorder_btn.custom_minimum_size = Vector2(REORDER_BTN_W, h)
+	_reorder_btn.size = Vector2(REORDER_BTN_W, h)
+	_reorder_btn.position = Vector2(_reorder_btn_left(), _tool_btn_top())
+	_reorder_btn.add_theme_font_size_override("font_size", _touch_fs(14, 4))
+
+
+# 开始页开关的文字 / 按下态跟随 _touch_ui（命令行强制开启时也显示「开」）
+func _sync_touch_toggle() -> void:
+	var tg = _start_child("TouchUIToggle")
+	if tg == null:
+		return
+	if tg.button_pressed != _touch_ui:
+		# 不能用 button_pressed = _touch_ui：那会补发 toggled → 触发「已开启」提示 + 重复 set
+		tg.set_pressed_no_signal(_touch_ui)
+	tg.text = "触屏界面 · 开" if _touch_ui else "触屏界面 · 关"
+
+
+func _on_touch_ui_toggled(pressed: bool) -> void:
+	set_touch_ui(pressed)
+	_start_flash_rule_hint("触屏界面已开启（按钮更高、字号 +2）" if pressed else "触屏界面已关闭")
 
 
 func _collect_buttons(root: Node) -> Array:
