@@ -223,6 +223,73 @@ func get_last_evaluated_pattern() -> int:
 	return last_evaluated_pattern
 
 
+# ============================================================
+# 八之一、先出后验（P14-C）：玩家只选牌，牌型由引擎按固定优先级挑
+# ============================================================
+# 为什么需要：老流程是「出牌(选牌型) → 单质 / 化合物 / 顺序 / 族炸 → （化合物还要逐元素选价）」，
+# 新手常在「该选哪一种」上卡住，选错就弹「非法出牌！」。真机截图里玩家连点两次都被拒。
+# 现在给一条「直接出牌」的路径：候选顺序固定（决定同一组牌打出什么，必须稳定可解释），
+# 每个候选都先用 validate_play() 只读预检，第一个通过的才落子。
+#   1) 有机物   —— 打出即胜，最先
+#   2) 单质     —— 1 张，或 2 张同种双原子（H₂/O₂/N₂/F₂/Cl₂/Br₂/I₂）
+#   3) 化合物   —— 统一价态解优先，其次混合价态解（Fe₃O₄）
+#   4) 顺序     —— 需本局开启顺序规则
+#   5) 族炸     —— 同族不同元素，2 张起
+# 化合物排在手顺序/族炸之前：同族元素往往也能配成化合物（N+P / B+P），
+# 而化合物是「有化学意义」的那一种，也更容易接住桌面（P13 的牌型二义性同一考虑）。
+func auto_play(player_index: int, cards: Array) -> int:
+	var plan := auto_play_preview(player_index, cards)
+	var code: int = int(plan["code"])
+	if code < 0:
+		# 把「最有用」的那条原因留下（化合物配不平 >> 「不能出族炸」）
+		last_reject_reason = str(plan["reason"])
+		return code
+	return play_cards(player_index, cards, plan["custom_valences"], int(plan["pattern"]))
+
+
+# 只读预览（不落子、只写诊断字段）：UI 用它决定按钮状态，测试用它锁死候选顺序。
+# 返回 {"code": 同 play_cards, "pattern": 命中的牌型, "custom_valences": 该牌型要用的价,
+#      "reason": 全军覆没时的原因（优先化合物那条）}
+func auto_play_preview(player_index: int, cards: Array) -> Dictionary:
+	var out := {"code": -1, "pattern": -1, "custom_valences": {}, "reason": ""}
+	if cards.is_empty():
+		out["reason"] = "请先选择要打出的牌"
+		return out
+	var compound_reason := ""
+	var last_code: int = -1
+	for cand in _auto_play_candidates(cards):
+		last_code = validate_play(player_index, cards, cand["cv"], cand["pattern"])
+		if last_code >= 0:
+			out["code"] = last_code
+			out["pattern"] = cand["pattern"]
+			out["custom_valences"] = cand["cv"]
+			return out
+		if int(cand["pattern"]) == CardPatternsScript.CardPattern.COMPOUND and compound_reason == "":
+			compound_reason = last_reject_reason
+	out["code"] = -1
+	out["reason"] = compound_reason if compound_reason != "" else last_reject_reason
+	return out
+
+
+# 候选列表（顺序即优先级）。每组牌最多 5 条，且都带 intended_pattern，
+# 这样「既是族炸又能配成化合物」的牌不会被 detect_pattern 的口径带偏。
+func _auto_play_candidates(cards: Array) -> Array:
+	var out: Array = []
+	if CardPatternsScript.detect_pattern(cards, true) == CardPatternsScript.CardPattern.ORGANIC:
+		out.append({"pattern": CardPatternsScript.CardPattern.ORGANIC, "cv": {"_organic": true}})
+	out.append({"pattern": CardPatternsScript.CardPattern.ELEMENT, "cv": {}})
+	var uniform := CompoundSolverScript.get_uniform_valence_pairs(cards)
+	if not uniform.is_empty():
+		out.append({"pattern": CardPatternsScript.CardPattern.COMPOUND, "cv": uniform})
+	var mixed := CompoundSolverScript.get_mixed_valence_pairs(cards)
+	if not mixed.is_empty():
+		out.append({"pattern": CardPatternsScript.CardPattern.COMPOUND, "cv": mixed})
+	if sequence_rules_enabled:
+		out.append({"pattern": CardPatternsScript.CardPattern.SEQUENCE, "cv": {}})
+	out.append({"pattern": CardPatternsScript.CardPattern.CLAN_BOMB, "cv": {}})
+	return out
+
+
 # ---- 规则正文：所有「能不能打」的判断都在这里 ----
 # 注意：本函数绝不能改手牌 / 桌面 / 轮转 / 日志，否则 validate_play 就不再只读。
 func _evaluate_play(player_index: int, cards: Array, custom_valences: Dictionary,

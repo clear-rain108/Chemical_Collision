@@ -1201,4 +1201,27 @@ Godot_v4.7.2-stable_win64.exe --path . --touch-ui
 **验收**：37 套测试全绿（37 + `verify_touch_flag --touch-ui` = 38 次运行）；`verify_start_page` /
 `verify_help_page` / `verify_end_page` 等既有页面断言不受新开关影响。
 
+### 14.4 P14-C：「直接出牌 ⚡」先出后验
+
+**问题**：老流程三步走（`出牌(选牌型)` → 单质 / 化合物 / 顺序 / 族炸 → 化合物还要逐元素选价），
+新手先卡在「该选哪一种」，再卡在「该选哪个价」，最后收到一句「非法出牌！」（真机截图里连点两次）。
+
+**改法**：玩家只选牌，牌型由引擎按固定优先级挑 —— 出完再验，验不过就说清原因（P14-B 已铺好）。
+
+| 位置 | 改动 |
+|---|---|
+| `GameManager.auto_play(idx, cards)` | 依次 `validate_play` 预检候选，第一个 `code >= 0` 的才 `play_cards`；全败则把「化合物那条原因」写回 `last_reject_reason` |
+| `GameManager.auto_play_preview(idx, cards)` | **只读**孪生：`{code, pattern, custom_valences, reason}`，给测试 / 按钮状态用 |
+| `GameManager._auto_play_candidates(cards)` | 候选表：有机物 → 单质 → 化合物（统一价 → 混合价）→ 顺序（规则开启）→ 族炸 |
+| `GameUI._update_action_panel()`（step 0） | 新增 `直接出牌 ⚡`，旧的 `出牌(选牌型)` 原样保留（教程文案 `TutorialController/TutorialUI` 不动） |
+| `GameUI._on_auto_play()` | 取 `_sel_cards()` → `auto_play()` → `_handle_result()`（成功走原有飞牌 / 顺序弹窗，失败带原因） |
+| `tests/verify_auto_play.gd` | **新增（23 条）**：六种牌的命中牌型（CH₄ / H₂ / Na+Cl / N+P / Li+Na / Fe+Co+Ni）、预览只读 + 幂等、全败时原因非空、真出牌后手牌 -2 且日志写「氯化钠」、界面按钮存在且能出、非法组合点它不动牌且弹提示 |
+
+**为什么化合物优先于顺序 / 族炸**：同族元素往往也能配成化合物（N+P = PN、B+P），而化合物是「有化学意义」
+的那一种，也更容易接住桌面 —— 与 P13「牌型二义性以打出记录为准」同一条思路。
+**为什么保留旧三步**：教程第零关按 `出牌(选牌型)` 组织引导，两条路径并存，各自都不打折。
+
+**验收**：38 套测试全绿（38 + `verify_touch_flag --touch-ui` = 39 次运行）；`verify_action_panel_fit`
+（开赛 2 钮 → 现 3 钮仍贴底 644）与 `verify_tutorial*` 均不受影响。
+
 

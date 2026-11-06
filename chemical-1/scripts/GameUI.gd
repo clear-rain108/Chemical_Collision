@@ -3869,6 +3869,11 @@ func _update_action_panel() -> void:
 		return
 
 	if step_mode == 0:
+		# 先出后验（P14-C）：选好牌 → 点「直接出牌 ⚡」，引擎按固定优先级自己挑牌型
+		# （有机物 → 单质 → 化合物 → 顺序 → 族炸），第一个合法候选才落子。
+		# 老的三步流程（出牌(选牌型) → 单质/化合物/顺序/族炸）原样保留，
+		# 教程文案（TutorialController / TutorialUI 里的「出牌(选牌型)」）不用改。
+		action_panel.add_child(_mkb("直接出牌 ⚡", _on_auto_play, selected_indices.is_empty()))
 		action_panel.add_child(_mkb("出牌(选牌型)", _on_step_next, selected_indices.is_empty()))
 		var hand_limit = game_manager.get_hand_limit()
 		if cp.get_hand_count() >= hand_limit:
@@ -5811,6 +5816,23 @@ func _apply_card_selection(index: int) -> void:
 	_update_hand_buttons()
 	_update_action_panel()
 	_update_card_info_label()
+
+# 「直接出牌 ⚡」= 先出后验（P14-C）：玩家只负责选牌，牌型交给引擎按固定优先级挑。
+# 与旧的「出牌(选牌型)」并存 —— 老玩家 / 教程仍走三步，新玩家一键出。
+# 失败时不做界面预判，直接把引擎写的 last_reject_reason 拼进提示（P14-B 已修好这条链路）。
+func _on_auto_play() -> void:
+	if game_manager == null:
+		return
+	var cp = game_manager.get_current_player()
+	if cp == null or cp.is_ai:
+		return
+	var cards := _sel_cards()
+	if cards.is_empty():
+		_show_info("请先选择要打出的牌")
+		return
+	_clear_hint()
+	var result: int = game_manager.auto_play(game_manager.get_current_player_index(), cards)
+	_handle_result(result)
 
 func _on_step_next() -> void:
 	_clear_hint()

@@ -257,6 +257,8 @@ PlayerManager.PlayerInfo
 ```
 init_game(total, ai) → bool   （牌库 = generate_deck(get_allowed_symbols())，元素限制时只含前 20 号 + 勾选扩展）
 validate_play(idx, cards, cv, intended) → int   （**只读**：只判定不改局面，UI / 提示 / AI 预检用）
+auto_play_preview(idx, cards) → Dictionary        （**只读**：先出后验的预览 {code, pattern, custom_valences, reason}）
+auto_play(idx, cards) → int                       （先出后验：候选 有机→单质→化合物→顺序→族炸，首个合法才落子）
 _evaluate_play(idx, cards, cv, intended) → int  （唯一规则源：0 合法 / 1 合法且是顺序 / 负数非法）
   ├─ 元素限制：开关开启且含越界元素 → -8（is_element_allowed 兜底）
   ├─ detect_pattern → 族炸/非族炸判定（结果写进 last_evaluated_pattern）
@@ -643,6 +645,23 @@ _update_hand_buttons()    → ① _selected_cards(cp)：遍历 selected_indices�
 
 `Σ` 的 `tooltip` 写明定义（Σ(张数 × 所选价)），`Label.name = "ValenceSumLabel"` 便于测试直接取。
 `tests/verify_valence_panel.gd`（19 条）锁死：Σ 数值与配色 / H×2 提示 / 拒绝原因文本 / 自动配平真能打出 / 配平时不显示该按钮。
+
+### 先出后验「直接出牌 ⚡」（P14-C）
+
+老流程是三步：`出牌(选牌型)` → 单质 / 化合物 / 顺序 / 族炸 → （化合物还要逐元素选价）。
+新手常在「该选哪一种」卡住，选错就是一句「非法出牌！」。P14-C 在 `step_mode == 0` 加了一条
+**先出后验**的路径：玩家只负责选牌，牌型交给引擎挑。
+
+| 项 | 实现 |
+|---|---|
+| 入口 | `_mkb("直接出牌 ⚡", _on_auto_play, selected_indices.is_empty())`，与旧的 `出牌(选牌型)` **并存**（教程文案不用改） |
+| 引擎 | `GameManager.auto_play(idx, cards)`：`auto_play_preview` 逐条 `validate_play` 预检，第一个合法候选才 `play_cards` |
+| 候选顺序 | 有机物 → 单质 → 化合物（统一价 → 混合价）→ 顺序（需开规则）→ 族炸。化合物排在族炸/顺序前：同族元素常也能配成化合物（N+P、B+P），那才是有化学意义的打法 |
+| 失败 | 不做界面预判，直接把 `last_reject_reason` 拼进提示（化合物那条优先，比「不能出族炸」有用） |
+| 只读 | `auto_play_preview()` 只写诊断字段，测试 / 埋点随便调 |
+
+`tests/verify_auto_play.gd`（23 条）锁死优先级（CH₄→有机物 / H₂→单质 / Na+Cl→化合物 / N+P→化合物优先于族炸 /
+Li+Na→族炸 / Fe+Co+Ni→顺序）、预览只读与幂等、被拒时手牌不变且原因非空、界面入口真能出牌。
 
 ### 游戏页工具按钮（提示 / 帮助 / 退出，P11）
 
