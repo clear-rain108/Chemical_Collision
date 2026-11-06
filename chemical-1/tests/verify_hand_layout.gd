@@ -670,21 +670,25 @@ func _test_valence_fit(scene) -> void:
 	_check(w_full <= 75.0, "Cl 全宽卡价态不溢出（实测 %.1f ≤ 75）" % w_full)
 	_check(val.clip_text, "价态 Label 打开 clip_text 兜底（任何数据都不画出卡边）")
 
-	# 2) 紧凑档：可用宽 = 44 - 10 = 34，且只留两端价
+	# 2) 紧凑档：可用宽 = 44 - 10 = 34，且只留两端价（P14-A：不再带 "…"）
 	scene.call("_apply_card_compact", btn, true)
 	var w_compact: float = _measure_valence(scene, val)
 	_check(w_compact <= 34.0, "Cl 紧凑档价态不溢出（实测 %.1f ≤ 34，当前 \"%s\"）" % [w_compact, val.text])
-	_check(val.text == "-1 +7…", "紧凑档只留两端价（实际 \"%s\"）" % val.text)
+	_check(val.text == "-1 +7", "紧凑档只留两端价（实际 \"%s\"）" % val.text)
+	_check(val.get_theme_font_size("font_size") >= 12,
+		"紧凑档价态不缩成糊字（实际 %d ≥ 12）" % val.get_theme_font_size("font_size"))
 
 	# 3) 双 / 单价元素不降级
 	_check(scene._format_valence_full([2, 3]) == "+2 +3", "双价元素仍显示全价（Fe → +2 +3）")
-	# 4) 两个价以内原样返回（不动数据顺序）；3 个以上才排序取首尾
-	_check(scene._format_valence_brief([1, -1]) == "+1 -1",
-		"brief 两价原样返回（H=[1,-1] → \"+1 -1\"，实际 \"%s\"）" % scene._format_valence_brief([1, -1]))
-	_check(scene._format_valence_brief([-1, 1, 3, 5, 7]) == "-1 +7…",
-		"brief 多价排序取首尾（Cl → \"-1 +7…\"，实际 \"%s\"）" % scene._format_valence_brief([-1, 1, 3, 5, 7]))
+	# 4) 两个价以内原样返回（不动数据顺序）；3 个以上才排序取首尾，且不再附加省略号
+	_check(scene._format_valence_pair([1, -1]) == "+1 -1",
+		"pair 两价原样返回（H=[1,-1] → \"+1 -1\"，实际 \"%s\"）" % scene._format_valence_pair([1, -1]))
+	_check(scene._format_valence_pair([-1, 1, 3, 5, 7]) == "-1 +7",
+		"pair 多价排序取首尾（Cl → \"-1 +7\"，实际 \"%s\"）" % scene._format_valence_pair([-1, 1, 3, 5, 7]))
+	_check(not scene._format_valence_pair([-1, 1, 3, 5, 7]).contains("…"),
+		"pair 多价不带省略号（P14-A 视觉回归）")
 	# 5) 帮助页图鉴与卡面同源（不再各写一套裁剪）
-	_check(scene.call("_help_valence_text", cl_card) == scene._format_valence_brief(cl_card.common_valence),
+	_check(scene.call("_help_valence_text", cl_card) == scene._format_valence_pair(cl_card.common_valence),
 		"帮助页图鉴价态与卡面同一套裁剪")
 	btn.queue_free()
 

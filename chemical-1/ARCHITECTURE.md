@@ -493,10 +493,12 @@ HelpPage (Control, full rect, visible=false)
 - **化合价文本必须按可用宽度收缩**：`card.common_valence` 最多 5 个价（Cl = `-1 +1 +3 +5 +7`），
   实测 13px 下 85px（正好等于整张卡宽）、触屏 15px 达 98px、紧凑档 label 只有 44 宽 ——
   而 `Label` 默认**不裁剪**，文字会直接画到卡片右边界之外（多价元素卡面溢出）。
-  `_fit_card_valence()` 分级收缩：**全价 → 去空格 → 逐档降字号（下限 `CARD_VAL_MIN_FS = 10`）
-  → 只留两端价 + 「…」**，末档 `clip_text = true` 兜底；实测文本宽写进 `meta("fit_w")`，
-  圆底价态 chip 与测试直接复用，不再各量一遍。帮助页图鉴（迷你卡 96 宽）走同一套
-  `_format_valence_brief()`，不再各维护一份裁剪规则。
+  `_fit_card_valence()` 分级收缩：**全价 → 去空格 → 字距降 1 档（13→12 / 触屏 15→14）
+  → 只留首末价（回原字号）**，末档 `clip_text = true` 兜底；实测文本宽写进 `meta("fit_w")`，
+  档位写进 `meta("val_mode")`（`full` / `tight` / `pair` / `clip`），圆底价态 chip 与测试直接复用。
+  **P14-A 起不再有「…」也不再降到 10px**（真机截图判为「不美观」）：卡面显示的价数可变、字号不变，
+  完整价表在悬停信息栏（`_card_summary_text`）、化合价面板逐价按钮、帮助页图鉴。
+  帮助页图鉴（迷你卡 96 宽）走同一套 `_format_valence_pair()`，不再各维护一份裁剪规则。
 - `Label.size` 会被字体最小高度撑大，但字形仍自顶部绘制 —— 判断是否压字要按**字号**算，不要按 `size` 算
 
 布局 `_layout_hand_cards()`：一行居中；张数超过"不重叠容量"后按

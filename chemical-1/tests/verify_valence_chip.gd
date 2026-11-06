@@ -72,6 +72,8 @@ func _check_all_elements(scene, compact: bool) -> void:
 	var tag: String = "紧凑档" if compact else "常规档"
 	var bad_align: Array = []
 	var bad_overflow: Array = []
+	var bad_ellipsis: Array = []
+	var bad_font: Array = []
 	var n: int = 0
 	for e in CardDatabaseScript.get_element_data():
 		var card = CardDataScript.new(e[0], e[1], e[2], e[3], e[4], e[5], e[6], e[7], e[8], e[9], e[10], e[11], e[12])
@@ -92,6 +94,13 @@ func _check_all_elements(scene, compact: bool) -> void:
 		# 粉底必须留在卡内（卡宽 CARD_W=95）
 		if chip_rect.position.x < -0.5 or chip_rect.end.x > 95.5:
 			bad_overflow.append("%s chip=%s" % [card.symbol, str(chip_rect)])
+		# P14-A：卡面价态永不带省略号（旧实现 "-1 +7…" 被真机截图判为「不美观」）
+		if val.text.contains("…"):
+			bad_ellipsis.append("%s \"%s\"" % [card.symbol, val.text])
+		# P14-A：字号只有 13/12 两档（触屏 15/14），不得再出现 10/11px 的糊字
+		var fs_now: int = val.get_theme_font_size("font_size")
+		if fs_now < 12:
+			bad_font.append("%s \"%s\" fs=%d" % [card.symbol, val.text, fs_now])
 		print("  [%s] %-3s \"%s\" fs=%d fit=%.1f chip=(%.1f,%.1f,%.1f,%.1f) text_w=%.1f align=%d" % [
 			tag, card.symbol, val.text, val.get_theme_font_size("font_size"),
 			float(val.get_meta("fit_w", 0.0)), chip.position.x, chip.position.y,
@@ -100,6 +109,8 @@ func _check_all_elements(scene, compact: bool) -> void:
 	_check(n >= 20, "%s：扫过 %d 种元素" % [tag, n])
 	_check(bad_align.is_empty(), "%s：粉底完整包住文字（错位 %d 张 %s）" % [tag, bad_align.size(), str(bad_align)])
 	_check(bad_overflow.is_empty(), "%s：粉底不出卡（越界 %d 张 %s）" % [tag, bad_overflow.size(), str(bad_overflow)])
+	_check(bad_ellipsis.is_empty(), "%s：价态不带省略号（%d 张 %s）" % [tag, bad_ellipsis.size(), str(bad_ellipsis)])
+	_check(bad_font.is_empty(), "%s：价态字号 ≥12（%d 张 %s）" % [tag, bad_font.size(), str(bad_font)])
 
 
 # 真实手牌（8 张 → 紧凑档）：逐张确认，并验证 compact 档文字起点靠左
@@ -125,6 +136,11 @@ func _check_live_hand(scene) -> void:
 			bad.append("%s \"%s\" text=%s chip=%s" % [b.get_meta("card").symbol, val.text, str(text_rect), str(chip_rect)])
 		if chip_rect.end.x > 95.5:
 			bad.append("%s 出卡 %s" % [b.get_meta("card").symbol, str(chip_rect)])
+		# P14-A：真实手牌（8 张 → 紧凑档）同样不许出现省略号 / 糊字
+		if val.text.contains("…"):
+			bad.append("%s 省略号 \"%s\"" % [b.get_meta("card").symbol, val.text])
+		if val.get_theme_font_size("font_size") < 12:
+			bad.append("%s 字号 %d" % [b.get_meta("card").symbol, val.get_theme_font_size("font_size")])
 	_check(bad.is_empty(), "真实手牌 8 张：每张粉底都包住文字且不出卡（异常 %d 项 %s）" % [bad.size(), str(bad)])
 
 

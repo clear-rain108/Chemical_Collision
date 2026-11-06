@@ -119,7 +119,9 @@ const HOVER_EXIT_GRACE := 14.0          # 手牌上沿容错带：抬起牌顶�
 # 实测：Cl "-1 +1 +3 +5 +7" 在 13px 下 85px（=整张卡宽），触屏 15px 达 98px；
 # 紧凑档 label 只有 44 宽 → 必须按可用宽度收缩，否则文字画到卡片外面。
 const CARD_VAL_PAD := 6                 # 价态文本在 label 内的左右留白（85 → 可用 79，44 → 38）
-const CARD_VAL_MIN_FS := 10             # 自适应收缩的最小字号（紧凑档 Cl 需要落到这一档）
+# 收缩下限：旧值 10 会把「+4+2-4」这类 3 价元素压成糊字（截图反馈「不美观」）。
+# P14-A 起统一策略：宁可退到「首末价」也不降字号 —— 卡面显示的价数可变，字号不变。
+const CARD_VAL_MIN_FS := 11
 
 # 拖拽重排（P7）
 const DRAG_THRESHOLD := 6.0             # 移动超过该距离才算拖拽（否则仍按点击处理）
@@ -1833,13 +1835,13 @@ func _make_help_mini_card(card, show_valence: bool = false) -> PanelContainer:
 	return panel
 
 
-# 常见化合价文本：与手牌卡面同一套裁剪规则（放不下只留两端价 + …，Cl → -1 +7…）
+# 常见化合价文本：与手牌卡面同一套裁剪规则（放不下只留两端价，Cl → -1 +7）
 # 迷你卡只有 96 宽，Cl 的 5 个价全写会撑破卡片；原先是「前 2 个 + …」的独立实现，
-# 与卡面 _fit_card_valence 不一致，现统一走 _format_valence_brief。
+# 与卡面 _fit_card_valence 不一致，现统一走 _format_valence_pair。
 func _help_valence_text(card) -> String:
 	if card == null:
 		return "—"
-	return _format_valence_brief(card.common_valence)
+	return _format_valence_pair(card.common_valence)
 
 
 # 图鉴专用符号色：原配色里稀有气体是 (0.95,0.95,0.95)，
@@ -5244,23 +5246,37 @@ func _format_valence_tight(vals: Array) -> String:
 	return s
 
 
-# 放不下时只留「最低价 + 最高价」+「…」：Cl 在化合物里最常用的就是 -1 / +7。
-# 中间的 +1/+3/+5 不丢：悬停信息栏 _card_summary_text 仍显示全价，化合价选择面板是逐价按钮。
+# 放不下全价时只留「最低价 + 最高价」，**不再加省略号**（P14-A）：
+#   "-1 +7…" 里的 "…" 既占宽度、又像渲染残缺（真机截图反馈「不美观」），
+#   而 "首价 末价" 本身就是「区间」语义，读起来是「-1 到 +7」，不省略也不误导。
+# 中间的 +1/+3/+5 不丢：悬停信息栏 _card_summary_text 仍显示全价，化合价选择面板是逐价按钮，
+#   帮助页图鉴的迷你卡下方也有一行完整说明。
 # 两个价以内原样返回（不动数据顺序，H 仍是 "+1 -1"，与历史显示一致）；
 # 3 个以上才排序取首尾（数据顺序不保证升序，H 的数据就是 [1, -1]）。
-func _format_valence_brief(vals: Array) -> String:
+func _format_valence_pair(vals: Array) -> String:
 	if vals.is_empty():
 		return "—"
 	if vals.size() <= 2:
 		return _format_valence_full(vals)
-	var sorted_vals: Array = vals.duplicate()
-	sorted_vals.sort()
-	return "%s %s…" % [_valence_token(sorted_vals[0]), _valence_token(sorted_vals[-1])]
+	var sorted_vals: Array = _sorted_valences(vals)
+	return "%s %s" % [_valence_token(sorted_vals[0]), _valence_token(sorted_vals[-1])]
 
 
-# 分级收缩：全价 → 去空格 → 逐档降字号（≥CARD_VAL_MIN_FS）→ 两端价 + …
-# 末档落定后 clip_text=true 兜底：任何数据 / 字体下都不会再画出卡片右边界。
-# 实际文本宽写进 meta("fit_w")，圆底价态 chip（A1）与测试直接复用，不再各量一遍。
+func _sorted_valences(vals: Array) -> Array:
+	var out: Array = vals.duplicate()
+	out.sort()
+	return out
+
+
+# 分级收缩（P14-A 重写）：全价 → 去空格 → 字距降 1 档 → 首末价（回原字号）
+# 与旧实现的区别：
+#   · 旧实现最后一档是「首末价 + … 且字号压到 10px」，紧凑档 3 价元素（C/N/P/S/Br）
+#     显示成 10px 的 "+4+2-4"，糊在一起；5 价元素（Cl/I）变成 "-1 +7…" 截断。
+#   · 现在改为：字号最多降 1 档（13 → 12，触屏 15 → 14），再放不下就退「首末价」并**回升原字号**，
+#     所以同一排手牌里价态字号只有 12/13（触屏 14/15）两档，且永远不出现省略号。
+# 末档落定后 clip_text=true 兜底：任何数据 / 字体 / 极端窄行下都不会画出卡片右边界。
+# 实际文本宽写进 meta("fit_w")、档位写进 meta("val_mode")（full/tight/pair/clip），
+# 圆底价态 chip（A1）与测试直接复用，不再各量一遍。
 func _fit_card_valence(lbl: Label, card, max_w: float, base_fs: int) -> void:
 	if lbl == null:
 		return
@@ -5270,39 +5286,56 @@ func _fit_card_valence(lbl: Label, card, max_w: float, base_fs: int) -> void:
 		lbl.text = "N/A"
 		lbl.add_theme_font_size_override("font_size", base_fs)
 		lbl.set_meta("fit_w", 0.0)
+		lbl.set_meta("val_mode", "none")
 		_sync_valence_chip(lbl)
 		return
 	var font: Font = lbl.get_theme_font("font")
-	# 触屏档把收缩下限一起抬 1 档（10 → 11）：手机上 10px 已经读不清，
-	# 宽度不够时宁可退到「两端价 + …」，也不要缩成一团糊字。
+	# 触屏档把收缩下限一起抬 1 档（11 → 12）：手机上 11px 已经读不清，
+	# 宽度不够时宁可退到「首末价」，也不要缩成一团糊字。
 	var min_fs: int = mini(_touch_fs(CARD_VAL_MIN_FS, 1), base_fs)
 	var txt_full: String = _format_valence_full(vals)
 	var txt_tight: String = _format_valence_tight(vals)
+	var txt_pair: String = _format_valence_pair(vals)
 	var best_text := ""
 	var best_fs := 0
+	var best_mode := ""
 	if _valence_fits(font, txt_full, base_fs, max_w):
-		# 最常见的情况：单 / 双价元素原样显示（+2、-3 +3 +5、+2 +3）
+		# 最常见的情况：单 / 双价元素原样显示（+2、+1 -1、+2 +3）
 		best_text = txt_full
 		best_fs = base_fs
+		best_mode = "full"
 	elif _valence_fits(font, txt_tight, base_fs, max_w):
-		# 5 个价以上：去掉空格就够（Cl 13px 全价 85 → 72）
+		# 3~5 个价、常规档：去掉空格就够（Cl 13px 全价 85 → 72）
 		best_text = txt_tight
 		best_fs = base_fs
+		best_mode = "tight"
 	else:
+		# 紧凑档 / 触屏放大档：字距（tight）只降 1 档；再放不下就退「首末价」并**回升原字号**
 		var fs: int = base_fs - 1
-		while fs >= min_fs:
-			if _valence_fits(font, txt_tight, fs, max_w):
-				best_text = txt_tight
-				best_fs = fs
-				break
-			fs -= 1
+		if fs >= min_fs and _valence_fits(font, txt_tight, fs, max_w):
+			best_text = txt_tight
+			best_fs = fs
+			best_mode = "tight"
 		if best_text == "":
-			# 紧凑档 / 触屏放大档：连去空格都放不下 → 只留两端价
-			best_text = _format_valence_brief(vals)
+			# 信息少了，字号就不该再小：首末价从原字号开始试，必要时才降到 min_fs
+			fs = base_fs
+			while fs >= min_fs:
+				if _valence_fits(font, txt_pair, fs, max_w):
+					best_text = txt_pair
+					best_fs = fs
+					best_mode = "pair"
+					break
+				fs -= 1
+		if best_text == "":
+			# 极端窄行（44px 行宽 + 触屏字号）：连「首末价」都放不下 → 只留首价并 clip
+			var sorted_vals: Array = _sorted_valences(vals)
+			best_text = _valence_token(sorted_vals[0])
 			best_fs = min_fs
+			best_mode = "clip"
 	lbl.text = best_text
 	lbl.add_theme_font_size_override("font_size", best_fs)
 	lbl.set_meta("fit_w", minf(_valence_width(font, best_text, best_fs), max_w))
+	lbl.set_meta("val_mode", best_mode)
 	_sync_valence_chip(lbl)
 
 
