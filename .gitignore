@@ -14,3 +14,8 @@ export_credentials.cfg
 .mono/
 data_*/
 mono_crash.*.json
+
+# 导出产物：不进仓库。
+# 桌面版 + Android 包统一放在 D:\Export_Godot_Pack（android_export\ 下有 debug/release 的 apk），
+# 仓库里的 build/ 只是每次导出的临时落点，已清空并忽略。
+build/

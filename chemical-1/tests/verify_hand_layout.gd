@@ -49,6 +49,7 @@ func _run():
 	_test_layers(scene)
 	_test_tutorial_layout(scene)
 	_test_warning_toast(scene)
+	_test_info_label_budget(scene)
 	_test_style_factory(scene)
 	_test_valence_fit(scene)
 	_test_valence_chip(scene)
@@ -576,6 +577,41 @@ func _test_warning_toast(scene) -> void:
 
 	scene.call("_hide_warning_toast")
 	_check(not box.visible, "开局/收尾时警告 toast 可隐藏")
+
+
+# ---- 左上状态栏：只放常驻状态、4 行硬上限，一次性消息统一走 toast（P14-E）----
+# 历史 bug：_show_info() 把「牌不够大！/ Σ…」拼在状态后面，第 5 行溢出到 y=152 的
+# 「桌面: …」上，真机截图里就是那团压住的灰字。
+func _test_info_label_budget(scene) -> void:
+	var info: Label = scene.info_label
+	_check(info != null, "InfoLabel 已绑定（左上状态栏）")
+	if info == null:
+		return
+	_check(info.max_lines_visible == scene.INFO_LABEL_MAX_LINES,
+		"状态栏设了 %d 行上限（实际 %d）" % [scene.INFO_LABEL_MAX_LINES, info.max_lines_visible])
+	_check(info.clip_text, "状态栏开启 clip_text（超长也不越界）")
+
+	var table_lbl = scene.table_label
+	if table_lbl != null:
+		var info_bottom: float = info.position.y + info.size.y
+		_check(info_bottom <= table_lbl.position.y,
+			"状态栏底边 %.1f 不越过「桌面: …」顶边 %.1f" % [info_bottom, table_lbl.position.y])
+
+	var before_text: String = info.text
+	var before_lines: int = info.get_line_count()
+	var long_msg := "牌不够大！\n原子序数和 16 大于桌面 9（数值越小牌越大）"
+	scene.call("_show_info", long_msg)
+	_check(not info.text.contains("牌不够大"),
+		"拒绝原因不再挤进状态栏（%s）" % info.text.replace("\n", " / "))
+	_check(info.get_line_count() == before_lines,
+		"调用 _show_info 前后状态栏行数不变（%d）" % before_lines)
+	_check(info.get_line_count() <= scene.INFO_LABEL_MAX_LINES,
+		"状态栏行数不超上限（%d <= %d）" % [info.get_line_count(), scene.INFO_LABEL_MAX_LINES])
+	_check(info.text.contains("●"), "状态栏仍显示常驻牌权链（%s）" % info.text.replace("\n", " / "))
+	_check(before_text != "" or info.text != "", "状态栏非空")
+	var lbl = scene.get("_warning_label")
+	_check(lbl != null and String(lbl.text).contains("牌不够大"),
+		"同一条消息改由右栏 toast 承担（%s）" % (String(lbl.text).replace("\n", " / ") if lbl else "无"))
 
 
 # ---- 视觉规范工厂：卡牌 / 按钮 / 提示框共用同一套圆角 · 描边 · 阴影 ----

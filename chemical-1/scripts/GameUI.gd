@@ -263,6 +263,12 @@ const DEAL_IN_STAGGER := 0.06                            # 多张新牌依次入
 const TOAST_DURATION := 2.5
 const WARNING_TOAST_RECT := Rect2(824, 62, 312, 116)
 
+# ---- 左上状态栏（InfoLabel）行数上限 ----
+# InfoLabel 是 (20,62)-(480,150)：14px 字只放得下 4 行，再往下就是 y=152 的「桌面: …」。
+# 它只负责常驻状态（玩家链 / AI 手牌 / 补充规则 / 方向）；一次性消息一律走右栏 toast，
+# 两边同时显示还会撞行（P14-E）。
+const INFO_LABEL_MAX_LINES := 4
+
 # 三个层容器（GamePage 的直接子节点，_ensure_layers() 幂等创建）
 var content_layer: Control = null
 var overlay_layer: Control = null
@@ -391,6 +397,11 @@ func _setup_pages() -> void:
 	if game_page:
 		hand_container = game_page.get_node_or_null("HandContainer")
 		info_label = game_page.get_node_or_null("InfoLabel")
+		# 状态栏几何只有 4 行（y=62~150，14px 字）；历史 bug：_show_info() 把拒绝原因拼在后面，
+		# 第 5 行开始溢出到 y=152 的「桌面: …」上（P14-E 真机截图）。引擎级兜底，别再溢出。
+		if info_label:
+			info_label.max_lines_visible = INFO_LABEL_MAX_LINES
+			info_label.clip_text = true
 		table_label = game_page.get_node_or_null("TableLabel")
 		log_label = game_page.get_node_or_null("LogLabel")
 		_ensure_log_panel()
@@ -6150,6 +6161,10 @@ func _handle_result(result: int) -> void:
 	elif result == -8: msg = "该元素不在本局牌库中（已开启『元素限制』：前 20 号元素 + 自选扩展）"
 	_show_info(msg)
 	_on_back()
+	# 兜底（P14-E）：toast 2.5 秒就自动消失，把同一条拒绝原因留在手牌下方的信息栏
+	# （CardInfoLabel 是 804×48、autowrap，两行放得下），下一次操作刷新时自动回到「提示: …」。
+	if card_info_label:
+		card_info_label.text = msg
 
 
 # ============================================================
@@ -6238,8 +6253,12 @@ func _step_reset() -> void:
 	compound_selections.clear()
 
 func _show_info(text: String) -> void:
+	# 状态栏只刷新「常驻状态」（牌权链 / AI 手牌 / 补充规则 / 方向），不再把消息拼在后面。
+	# 为什么（P14-E）：InfoLabel 高 88px 只够 4 行，_format_player_status() 本身就要 3~4 行，
+	# 再拼一行拒绝原因就顶出边界、压在 y=152 的「桌面: …」上（真机截图里那团灰字）。
+	# 消息的唯一出口是右栏 toast —— 本来两个地方就在显示同一句话，属于重复。
 	if info_label and game_manager:
-		info_label.text = _format_player_status() + "\n" + text
+		info_label.text = _format_player_status()
 	# 同时显示居中的大号提示框（出牌不合理等错误提示醒目可见）
 	_show_center_warning(text)
 

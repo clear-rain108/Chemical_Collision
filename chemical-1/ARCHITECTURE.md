@@ -657,11 +657,24 @@ _update_hand_buttons()    → ① _selected_cards(cp)：遍历 selected_indices�
 | 入口 | `_mkb("直接出牌 ⚡", _on_auto_play, selected_indices.is_empty())`，与旧的 `出牌(选牌型)` **并存**（教程文案不用改） |
 | 引擎 | `GameManager.auto_play(idx, cards)`：`auto_play_preview` 逐条 `validate_play` 预检，第一个合法候选才 `play_cards` |
 | 候选顺序 | 有机物 → 单质 → 化合物（统一价 → 混合价）→ 顺序（需开规则）→ 族炸。化合物排在族炸/顺序前：同族元素常也能配成化合物（N+P、B+P），那才是有化学意义的打法 |
-| 失败 | 不做界面预判，直接把 `last_reject_reason` 拼进提示（化合物那条优先，比「不能出族炸」有用） |
+| 失败（P14-E 修） | 不做界面预判，但原因必须按「这组牌本来是什么」报，见下表 |
 | 只读 | `auto_play_preview()` 只写诊断字段，测试 / 埋点随便调 |
 
-`tests/verify_auto_play.gd`（23 条）锁死优先级（CH₄→有机物 / H₂→单质 / Na+Cl→化合物 / N+P→化合物优先于族炸 /
-Li+Na→族炸 / Fe+Co+Ni→顺序）、预览只读与幂等、被拒时手牌不变且原因非空、界面入口真能出牌。
+**全败时的原因优先级**（`auto_play_preview()`，P14-E）：
+
+| 序 | 取哪条 | 典型输出 |
+|---|---|---|
+| 1 | `detect_pattern(cards, false, false)` 认定的**真实牌型**那条候选 | 桌面 `F(9)` + 手牌 `O(8)` →「牌不够大！ / 原子序数和 8 大于桌面 1（数值越小牌越大）」 |
+| 2 | 化合物候选（`COMPOUND`，统一价或混合价） | `H+H+C+N` →「这组牌配不出任何已知化合物的化学式（原子比例不匹配）」；配得出化学式但价配不平则给「化合价配不平：Σ = −1（需 0）」 |
+| 3 | 按真实牌型再 `validate_play(…, {}, actual)` 复核一次（真实牌型没有对应候选时，如顺序规则关掉的 26/27/28） | 该次 `intended_pattern == detect`，**绝不会**再吐出「牌型不一致」 |
+| 4 | 兜底：第一条候选（有机物 / 单质）的原因 | 「这组牌不构成任何合法牌型（…）」 |
+
+老实现取的是**最后一个**候选（族炸）的原因，于是 `F` 桌面 + `S` 手牌这种「只是牌不够大」被报成
+「所选牌型与这组牌的实际牌型不一致」—— 玩家走「直接出牌」时根本没选过牌型，这句话毫无意义。
+
+`tests/verify_auto_play.gd`（41 条）锁死优先级（CH₄→有机物 / H₂→单质 / Na+Cl→化合物 / N+P→化合物优先于族炸 /
+Li+Na→族炸 / Fe+Co+Ni→顺序）、预览只读与幂等、被拒时手牌不变且原因非空、**被拒原因按真实牌型报**
+（含「牌不够大 / 原子序数和」且不含「不一致」；界面层点按钮后 `CardInfoLabel` 同步），以及界面入口真能出牌。
 
 ### 游戏页工具按钮（提示 / 帮助 / 退出，P11）
 
@@ -713,6 +726,13 @@ Godot 的 `CanvasItem` 排序是 **`z_index` 优先于树顺序**。`GamePage` �
   `LogLabel` 从 y=300 起、`TutorialLabel` 从 y=186 起、`InfoLabel` 只到 x=480 → 不与任何静态节点相交。
   `_show_center_warning()` 单例复用同一个 `Panel`：连续报错只更新文本并用 `_warning_seq` 作废旧计时器，
   不会叠框也不会被上一条提前熄灭；`_init_game()` / `_on_start_tutorial()` 调 `_hide_warning_toast()` 清场。
+
+- **`InfoLabel` 只放常驻状态**（P14-E）：节点是 `(20,62)-(480,150)`，14px 字正好 4 行，
+  再往下 2px 就是 `TableLabel`(y=152)。因此
+  - `_show_info()` **不再**把消息拼在 `_format_player_status()` 后面（老实现第 5 行起压到「桌面: …」上）；
+  - 引擎侧兜底：绑定时设 `max_lines_visible = INFO_LABEL_MAX_LINES`(4) + `clip_text = true`；
+  - 一次性消息的唯一出口是右栏 toast；拒绝原因另外写进 `CardInfoLabel`（804×48，两行放得下），
+    toast 2.5 秒消失后玩家仍看得到，下次刷新自动回到「提示: 可用牌型…」。
 
 - 三个层由 `_ensure_layers()` 幂等创建（`_setup_pages()` 内调用），都是 `GamePage` 的直接子节点、
   全屏 anchor、`mouse_filter = IGNORE`（层自身不拦截，事件仍落到子节点）。

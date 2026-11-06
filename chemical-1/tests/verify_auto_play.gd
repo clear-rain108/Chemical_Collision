@@ -5,6 +5,8 @@
 #   4) 全都非法时返回负数，并留下可读原因（不再只有「非法出牌！」）
 #   5) 真出牌：auto_play 落子后桌面牌型正确、那几张牌从手牌消失
 #   6) 界面入口：「直接出牌 ⚡」按钮存在，点了能出；非法组合会弹提示且不动手牌
+#   7) 全败时的原因（P14-E）：桌面 H(1) + 手牌 O(8) 必须报「牌不够大 / 原子序数和」，
+#      不能报「所选牌型与这组牌的实际牌型不一致」—— 玩家走「直接出牌」时并没选过牌型
 # 运行：Godot --headless --path . -s tests/verify_auto_play.gd
 extends SceneTree
 
@@ -88,6 +90,29 @@ func _take(gm, seat: int, syms: Array) -> Array:
 	return out
 
 
+# 造「跟牌」局面：桌面是一组单质（由 1 号位打出），当前轮到 0 号位且不是首出。
+# 直接写字段而不是真打一轮 —— 测试要的是「已知桌面 + 已知手牌」这个前提，不是牌局流程。
+func _set_table(gm, syms: Array) -> void:
+	gm.table_cards = _cards(syms)
+	gm.table_pattern = ELEMENT
+	gm.table_custom_valences = {}
+	gm.table_player_index = 1
+	gm.current_player_index = 0
+	gm.is_round_starter = false
+	gm.clan_bomb_chain_active = false
+
+
+# 清空桌面（回到首出）。界面用例改过桌面字段后必须复位，否则后面的用例会莫名其妙「牌型不匹配」。
+func _clear_table(gm) -> void:
+	gm.table_cards = []
+	gm.table_pattern = -1
+	gm.table_custom_valences = {}
+	gm.table_player_index = -1
+	gm.current_player_index = 0
+	gm.is_round_starter = true
+	gm.clan_bomb_chain_active = false
+
+
 func _run() -> void:
 	# ---------------- 1) 候选优先级（引擎层，只读预览）----------------
 	var gm = _new_gm()
@@ -154,6 +179,45 @@ func _run() -> void:
 	_check(gm3.players[0].get_hand_count() == before3, "被拒后手牌不变（%d）" % gm3.players[0].get_hand_count())
 	_check(gm3.get_last_reject_reason() != "", "被拒后 last_reject_reason 非空")
 
+	# ---------------- 4b) 全败原因：说「牌不够大」，不说「牌型不一致」（P14-E）----------------
+	# 复现真机截图：桌面是别人的单质 H(1)，手里只有 O(8)。old 实现取「最后一个候选（族炸）」
+	# 的原因，于是报「所选牌型与这组牌的实际牌型不一致（实际是：单质）」—— 玩家根本没选牌型。
+	var gm4 = _new_gm()
+	_set_table(gm4, ["H"])
+	var o_cards := _take(gm4, 0, ["O"])
+	var plan4: Dictionary = gm4.auto_play_preview(0, o_cards)
+	_check(int(plan4["code"]) == -2, "桌面 H(1) + 手牌 O(8)：预览返回 -2（实际 %d）" % int(plan4["code"]))
+	_check(str(plan4["reason"]).find("原子序数和") >= 0,
+		"原因是「原子序数和…」（%s）" % str(plan4["reason"]))
+	_check(str(plan4["reason"]).find("不一致") < 0,
+		"不再输出「所选牌型…不一致」（%s）" % str(plan4["reason"]))
+	var code4: int = gm4.auto_play(0, o_cards)
+	_check(code4 == -2, "auto_play 同样返回 -2（实际 %d）" % code4)
+	_check(gm4.get_last_reject_reason().find("原子序数和") >= 0,
+		"last_reject_reason 保留「原子序数和」：%s" % gm4.get_last_reject_reason())
+	_check(gm4.players[0].get_hand_count() == 11,
+		"被拒后手牌不动（%d）" % gm4.players[0].get_hand_count())
+
+	# 同一个桌面上换一张更小的牌（H=1 < O=8，数值越小牌越大）→ 直接出牌应当成功
+	var gm5 = _new_gm()
+	_set_table(gm5, ["O"])
+	var h_cards := _take(gm5, 0, ["H"])
+	_check(gm5.auto_play(0, h_cards) == 0, "桌面 O(8) + 手牌 H(1)：H 更大，出牌成功")
+	_check(gm5.get_table_pattern() == ELEMENT, "桌面被单质接管（实际 %d）" % gm5.get_table_pattern())
+	_check(gm5.players[0].get_hand_count() == 10,
+		"手牌减 1（%d）" % gm5.players[0].get_hand_count())
+
+	# 化合物求解器认不出的组合（多带一张 H）：要说「化学式 / 比例」，同样不能是「牌型不一致」
+	var gm6 = _new_gm()
+	var hhcn := _take(gm6, 0, ["H", "H", "C", "N"])
+	var plan6: Dictionary = gm6.auto_play_preview(0, hhcn)
+	_check(int(plan6["code"]) < 0, "H+H+C+N 被拒（实际 %d）" % int(plan6["code"]))
+	_check(str(plan6["reason"]).find("不一致") < 0,
+		"原因不说「牌型不一致」（%s）" % str(plan6["reason"]))
+	_check(str(plan6["reason"]).find("化学式") >= 0 or str(plan6["reason"]).find("比例") >= 0
+			or str(plan6["reason"]).find("Σ") >= 0,
+		"原因指向化学式 / 原子比例 / Σ（%s）" % str(plan6["reason"]))
+
 	# ---------------- 5) 界面入口 ----------------
 	var scene = load("res://Main.tscn").instantiate()
 	root.add_child(scene)
@@ -175,6 +239,38 @@ func _run() -> void:
 		_check(scene.game_manager.get_current_player().get_hand_count() == hand_now,
 			"N+Cl 点「直接出牌」不会动牌（%d）" % hand_now)
 		_check(_warn_text(scene) != "", "并弹出可读提示（「%s」）" % _warn_text(scene))
+
+	# 界面层复现截图那一幕：桌面 H(1)、手牌 O(8)，点「直接出牌 ⚡」
+	# 期望提示以「牌不够大！」开头并带原子序数和，而不是「非法出牌！/ 所选牌型不一致」（P14-E）
+	_set_hand(scene, ["O"])
+	var gm_ui = scene.game_manager
+	_set_table(gm_ui, ["H"])
+	scene._refresh_ui()
+	await process_frame
+	_select_all(scene)
+	await process_frame
+	var big_btn = _panel_button(scene, AUTO_BTN_PREFIX)
+	_check(big_btn != null, "桌面有牌时「直接出牌」依然可用（先出后验）")
+	if big_btn != null:
+		var hand_big: int = scene.game_manager.get_current_player().get_hand_count()
+		big_btn.emit_signal("pressed")
+		await process_frame
+		_check(scene.game_manager.get_current_player().get_hand_count() == hand_big,
+			"打不过时不动牌（%d）" % hand_big)
+		var warn_big := _warn_text(scene)
+		_check(warn_big.begins_with("牌不够大！"),
+			"提示以「牌不够大！」开头（%s）" % warn_big.replace("\n", " / "))
+		_check(warn_big.find("不一致") < 0,
+			"提示里没有「所选牌型…不一致」（%s）" % warn_big.replace("\n", " / "))
+		_check(warn_big.find("原子序数和") >= 0,
+			"提示带上了原子序数和（%s）" % warn_big.replace("\n", " / "))
+		_check(String(scene.card_info_label.text).find("牌不够大") >= 0,
+			"原因同时留在手牌下方信息栏（%s）" % scene.card_info_label.text.replace("\n", " / "))
+
+	# 复位桌面：上面的跟牌局残留会让下面「Na+Cl」被判成「牌型不匹配」
+	_clear_table(gm_ui)
+	scene._refresh_ui()
+	await process_frame
 
 	_set_hand(scene, ["Na", "Cl"])
 	await process_frame

@@ -1224,4 +1224,32 @@ Godot_v4.7.2-stable_win64.exe --path . --touch-ui
 **验收**：38 套测试全绿（38 + `verify_touch_flag --touch-ui` = 39 次运行）；`verify_action_panel_fit`
 （开赛 2 钮 → 现 3 钮仍贴底 644）与 `verify_tutorial*` 均不受影响。
 
+### 14.5 P14-E：拒绝原因说人话 + `InfoLabel` 不再压到桌面
+
+**问题（真机截图两处）**：
+
+1. 桌面 `F(9)`、手牌 `S(16)`，点「直接出牌 ⚡」得到「所选牌型与这组牌的实际牌型不一致（实际是：单质）」。
+   玩家走的是先出后验，**压根没选过牌型**；真正原因是「16 > 9，牌不够大」。
+   根因：`auto_play_preview()` 全败时取的是 `_auto_play_candidates()` 的**最后一条**（族炸）写回的
+   `last_reject_reason`，而族炸那条必然先撞「牌型不一致」，于是把 `-2` 的正确原因覆盖掉了。
+2. `InfoLabel` 是 `(20,62)-(480,150)`，14px 字正好 4 行，`TableLabel` 顶边在 y=152；
+   `_show_info()` 却把消息拼在 `_format_player_status()` 后面 → 第 5 行起直接压在「桌面: …」上。
+
+**改法**：
+
+| 位置 | 改动 |
+|---|---|
+| `GameManager.auto_play_preview()` | 全败原因改按优先级挑：**真实牌型那条候选 → 化合物那条 → 按真实牌型再 `validate_play` 复核 → 第一条兜底**。第 3 条是关键：`intended_pattern == detect`，结构上不可能再吐出「牌型不一致」 |
+| `GameUI.INFO_LABEL_MAX_LINES` | 新增常量 `4`；绑定时 `info_label.max_lines_visible = 4` + `clip_text = true`（引擎级兜底，超行直接裁掉） |
+| `GameUI._show_info()` | **只刷常驻状态**（`_format_player_status()`），消息一律交给右栏 toast，不再污染状态栏 |
+| `GameUI._handle_result()` | 被拒时把同一条 `msg` 镜像进 `CardInfoLabel`（804×48，两行放得下）：toast 2.5 秒消失后原因仍在，下次 `_refresh_ui()` 自动回「提示: 可用牌型…」 |
+| `tests/verify_auto_play.gd` | 23 → **41 条**；新增 `_set_table` / `_clear_table`：桌面 `H(1)` + 手牌 `O(8)` → `code == -2` 且原因含「原子序数和」、**不含**「不一致」；`auto_play` 同样 -2 且手牌不动；桌面 `O(8)` + 手牌 `H(1)` 出牌成功；`H+H+C+N` 指向「化学式 / 比例 / Σ」；界面层点「直接出牌」后 toast 以「牌不够大！」开头且 `CardInfoLabel` 同步 |
+| `tests/verify_hand_layout.gd` | 新增 `_test_info_label_budget()`：`max_lines_visible == 4`、`clip_text == true`、状态栏底边不越过 `TableLabel` 顶边、`_show_info(长消息)` 后文本里没有消息片段且行数不变 / 不超上限、常驻牌权链仍在、右栏 toast 照样弹出 |
+
+**踩坑**：`play_cards` 按 `uid` 删牌，`_set_table` 造桌面时不能复用同一批 `CardData` 实例（否则两张牌 uid 相同，只删掉一张）；
+另外界面用例之间残留的桌面会让后续用例被判「牌型不匹配」，所以每个动桌面的用例前后都要 `_clear_table()`。
+
+**验收**：38 套测试全绿（38 + `verify_touch_flag --touch-ui` = 39 次运行）；`verify_auto_play` 41 条全过、
+`verify_hand_layout`（含新增 10 条预算断言）全过；`verify_log_panel` / `verify_tutorial_layout` / `verify_action_panel_fit` 不受影响。
+
 

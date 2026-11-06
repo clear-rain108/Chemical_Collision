@@ -249,25 +249,63 @@ func auto_play(player_index: int, cards: Array) -> int:
 
 # 只读预览（不落子、只写诊断字段）：UI 用它决定按钮状态，测试用它锁死候选顺序。
 # 返回 {"code": 同 play_cards, "pattern": 命中的牌型, "custom_valences": 该牌型要用的价,
-#      "reason": 全军覆没时的原因（优先化合物那条）}
+#      "reason": 全军覆没时的原因}
+#
+# 全败时的「原因」怎么挑（P14-E 修）：以前取的是**最后一个候选**（族炸）的 last_reject_reason，
+# 于是「桌面 F、手牌 S」这种明明只是牌不够大的出牌，会显示「所选牌型与这组牌的实际牌型
+# 不一致（实际是：单质）」—— 玩家走的是「直接出牌」，压根没选过牌型，这句话毫无意义。
+# 现在按「谁最解释得清」排优先级：
+#   1) 真实牌型那条候选 —— detect_pattern 认定的那种，-2 会带上原子序数和 / 张数 / 打平细分；
+#   2) 化合物那条 —— H+H+C+N 这类 detect 认不出的组合，只有化合物求解器能说清「比例对不上」；
+#   3) 按真实牌型再判一次（真实牌型没有对应候选时，如顺序规则关掉的 26/27/28）。
+#      这次 intended_pattern == detect 的结论，绝不会再吐出「牌型不一致」；
+#   4) 以上都没有 → 第一条候选兜底。
 func auto_play_preview(player_index: int, cards: Array) -> Dictionary:
 	var out := {"code": -1, "pattern": -1, "custom_valences": {}, "reason": ""}
 	if cards.is_empty():
 		out["reason"] = "请先选择要打出的牌"
 		return out
-	var compound_reason := ""
-	var last_code: int = -1
+	# 引擎眼里的「这组牌到底是什么」（与 _evaluate_play 里 detect 的口径一致：
+	# 不跳族炸、不偏爱顺序，因为玩家没指定牌型）
+	var actual: int = CardPatternsScript.detect_pattern(cards, false, false)
+	var first_code: int = 0
+	var first_reason: String = ""
+	var actual_code: int = 0
+	var actual_reason: String = ""
+	var compound_code: int = 0
+	var compound_reason: String = ""
 	for cand in _auto_play_candidates(cards):
-		last_code = validate_play(player_index, cards, cand["cv"], cand["pattern"])
-		if last_code >= 0:
-			out["code"] = last_code
-			out["pattern"] = cand["pattern"]
+		var code: int = validate_play(player_index, cards, cand["cv"], int(cand["pattern"]))
+		if code >= 0:
+			out["code"] = code
+			out["pattern"] = int(cand["pattern"])
 			out["custom_valences"] = cand["cv"]
 			return out
+		if first_reason == "":
+			first_code = code
+			first_reason = last_reject_reason
+		if actual >= 0 and int(cand["pattern"]) == actual and actual_reason == "":
+			actual_code = code
+			actual_reason = last_reject_reason
 		if int(cand["pattern"]) == CardPatternsScript.CardPattern.COMPOUND and compound_reason == "":
+			compound_code = code
 			compound_reason = last_reject_reason
-	out["code"] = -1
-	out["reason"] = compound_reason if compound_reason != "" else last_reject_reason
+
+	var use_code: int = first_code
+	var use_reason: String = first_reason
+	if actual_reason != "":
+		use_code = actual_code
+		use_reason = actual_reason
+	elif compound_reason != "":
+		use_code = compound_code
+		use_reason = compound_reason
+	elif actual >= 0:
+		var real_code: int = validate_play(player_index, cards, {}, actual)
+		if real_code < 0 and last_reject_reason != "":
+			use_code = real_code
+			use_reason = last_reject_reason
+	out["code"] = use_code
+	out["reason"] = use_reason
 	return out
 
 
