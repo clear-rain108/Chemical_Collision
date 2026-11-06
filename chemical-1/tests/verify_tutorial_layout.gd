@@ -63,6 +63,15 @@ func _find_label(parent: Node, text: String) -> Label:
 	return null
 
 
+func _find_button(parent: Node, text: String) -> Button:
+	if parent == null or not is_instance_valid(parent):
+		return null
+	for c in parent.get_children():
+		if c is Button and c.text == text:
+			return c
+	return null
+
+
 func _run() -> void:
 	scene = load("res://Main.tscn").instantiate()
 	root.add_child(scene)
@@ -229,6 +238,58 @@ func _run() -> void:
 			"开场提示文字右边界不出画布（%.1f）" % (box_lbl.position.x + box_lbl.size.x))
 	box.queue_free()
 	await process_frame
+
+	# ============================================================
+	# 八、引导阶段必须有出口（P15-A）：跳过引导 / 返回关卡
+	# 遮罩是 MOUSE_FILTER_STOP 全屏铺满，没有出口时玩家只能把 6+3 步点完才能摸牌。
+	# ============================================================
+	scene.call("_on_start_tutorial", 0)
+	await process_frame
+	await process_frame
+	var ov = scene.level0_overlay
+	_check(ov != null and is_instance_valid(ov), "引导出口：Phase 1 overlay 存在")
+	_check(_find_button(ov, "跳过引导") != null, "Phase 1 有「跳过引导」按钮")
+	_check(_find_button(ov, "返回关卡") != null, "Phase 1 有「返回关卡」按钮")
+	_check(_find_button(ov, "下一步 →") != null, "Phase 1 第 1 步有「下一步 →」按钮")
+	scene.call("_level0_show_ui_step", scene.level0_ui_highlight_steps.size() - 1)
+	await process_frame
+	_check(_find_button(scene.level0_overlay, "继续 →") != null,
+		"Phase 1 最后一步按钮文案是「继续 →」")
+	_check(_find_button(scene.level0_overlay, "跳过引导") != null,
+		"Phase 1 最后一步仍带「跳过引导」出口")
+
+	# 跳过引导 → 直接进牌局练习（不是回到第 1 步，也不是卡在遮罩里）
+	var skip_btn := _find_button(scene.level0_overlay, "跳过引导")
+	skip_btn.emit_signal("pressed")
+	await process_frame
+	await process_frame
+	_check(scene.game_manager.tutorial_level0_phase == 3, "点「跳过引导」直接进 Phase 3（牌局练习）")
+	_check(scene.level0_overlay == null, "跳过引导后 overlay 已释放")
+	_check(scene.level0_rule_tip_label != null and is_instance_valid(scene.level0_rule_tip_label),
+		"跳过引导后规则提醒照常创建")
+	_check(scene.level0_ui_highlight_steps.is_empty(), "跳过引导后步骤数据已清理")
+
+	# Phase 2 同样有两个出口
+	scene.call("_on_start_tutorial", 0)
+	await process_frame
+	await process_frame
+	scene.call("_level0_start_phase2")
+	await process_frame
+	await process_frame
+	_check(_find_button(scene.level0_overlay, "跳过引导") != null, "Phase 2 有「跳过引导」按钮")
+	_check(_find_button(scene.level0_overlay, "返回关卡") != null, "Phase 2 有「返回关卡」按钮")
+	_check(_find_button(scene.level0_overlay, "下一步 →") != null, "Phase 2 第 1 步有「下一步 →」按钮")
+
+	# 返回关卡 → 回教学引导页（GamePage 必须藏起来，否则引导页被压在下面像点了没反应）
+	var back_btn := _find_button(scene.level0_overlay, "返回关卡")
+	back_btn.emit_signal("pressed")
+	await process_frame
+	await process_frame
+	var tut_page = scene.get_node_or_null("TutorialPage")
+	_check(tut_page != null and tut_page.visible, "点「返回关卡」回到教学引导页")
+	_check(not scene.game_page.visible, "返回关卡时游戏页已隐藏（引导页不会被压住）")
+	_check(scene.level0_overlay == null, "返回关卡后 overlay 已释放")
+	_check(scene.game_manager.phase == 2, "返回关卡后本局判为结束（AI 计时器不会再推进）")
 
 	_finish()
 

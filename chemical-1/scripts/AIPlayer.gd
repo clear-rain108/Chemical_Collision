@@ -41,27 +41,22 @@ static func auto_play(game_manager, ui_refresh: Callable) -> void:
 
 
 # ============================================================
-# 二、第0关 AI 策略（不抽牌，只做基础出牌）
+# 二、第0关 AI 策略（不抽牌，每回合只出 1 张单质）
 # ============================================================
+# P15-A：老实现先试「化合物对（2 张）」再试双原子，AI 8 张手牌 4 个回合就能清空；
+# 而第0关 AI 不抽牌（GameManager 的 ai_no_draw）+ 清空手牌即判胜，于是新手常常
+# 只出了 2~3 张牌就看到「本局结束」，练习被抢断。
+# 现在第0关 AI 每回合只出 1 张单质，接不上就跳过：
+#   1) AI 清空 8 张手牌最少要 8 个回合 → 玩家的练习回合从 4 提到 8；
+#   2) 玩家一旦打出化合物，AI 接不上只能跳过 → 练习过程不会被打断。
+# 注意：这是刻意放水 —— 第0关桌面出现化合物后 AI 基本不再出牌，不是 bug。
 static func _try_play_level0(game_manager, p, gm_idx: int) -> void:
-	for i in range(p.hand.size()):
-		for j in range(i + 1, p.hand.size()):
-			var pair = [p.hand[i], p.hand[j]]
-			# 卤族互化：默认禁止（与 play_cards 的 -7 一致），补充规则开启后放行
-			if not game_manager.halogen_exchange_allowed and _is_ai_halogen_pair(pair):
-				continue
-			var cv: Dictionary = _pair_valences(pair)
-			if not cv.is_empty() and game_manager.play_cards(gm_idx, pair, cv) == 0: return
-
-	for i in range(p.hand.size()):
-		var c = p.hand[i]
-		if c.symbol in CardPatternsScript.DIATOMIC_SYMBOLS:
-			for j in range(p.hand.size()):
-				if i != j and p.hand[j].symbol == c.symbol:
-					var dp = [p.hand[i], p.hand[j]]
-					if game_manager.play_cards(gm_idx, dp) == 0: return
-					break
-
+	# 手牌只剩 1 张就收手：第零关 AI 永不清空手牌 → 玩家一定是获胜者（练习不会被打断）。
+	# 不会因此死锁：全员跳过会走 GameManager._start_new_round()（清桌面 + 下一位自由出牌），
+	# 玩家总能拿到「桌面为空、任意单牌都能出」的机会。
+	if p.get_hand_count() <= 1:
+		game_manager.player_pass(gm_idx)
+		return
 	for c in p.hand:
 		if game_manager.play_cards(gm_idx, [c]) == 0: return
 

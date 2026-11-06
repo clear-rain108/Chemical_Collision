@@ -174,7 +174,7 @@ func _update_tutorial_level0_guidance() -> void:
 	match tutorial_level0_phase:
 		1: tutorial_guidance = ""
 		2: tutorial_guidance = ""
-		3: tutorial_guidance = "【牌局中】先练单质和化合物：选牌 →「出牌(选牌型)」→ 选类型。\n族炸留到第二关再学（这里不提示，需要时也能打）。AI默认只出单质和化合物。"
+		3: tutorial_guidance = "【牌局中】先练单质和化合物：选牌 →「出牌(选牌型)」→ 选类型。\n族炸留到第二关再学（这里不提示，需要时也能打）。AI 每回合只出 1 张单质，不会抢在你前面打完。"
 
 
 func check_tutorial_progress(pattern: int, player_is_human: bool) -> void:

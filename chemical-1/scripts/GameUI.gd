@@ -288,7 +288,6 @@ var _page_fade_tween: Tween = null
 # 第零关覆盖层 (Phase 1: UI介绍, Phase 2: 流程说明)
 # ============================================================
 var level0_overlay: Control = null
-var level0_active: bool = false
 var level0_step: int = 0
 var level0_ui_highlight_steps: Array = []
 var level0_flow_steps: Array = []
@@ -2603,7 +2602,6 @@ func _init_game(total: int = 4, ai: int = 3) -> void:
 # ============================================================
 func _level0_start_phase1() -> void:
 	game_manager.set_tutorial_level0_phase(1)
-	level0_active = true
 	level0_step = 0
 	level0_ui_highlight_steps = _level0_ui_steps()
 	_level0_show_ui_step(0)
@@ -2661,7 +2659,6 @@ func _level0_ui_steps() -> Array:
 			"size": _tool_row_hl_rect().size,
 		},
 	]
-	_level0_show_ui_step(0)
 
 
 func _level0_show_ui_step(idx: int) -> void:
@@ -2743,22 +2740,26 @@ func _level0_show_ui_step(idx: int) -> void:
 	tip_desc.size = Vector2(tbw - 48, 150)
 	level0_overlay.add_child(tip_desc)
 
+	# 步骤计数挪到右上角：提示框底部整行留给三个出口按钮
 	var step_indicator = Label.new()
 	step_indicator.text = "%d / %d" % [idx + 1, level0_ui_highlight_steps.size()]
 	step_indicator.add_theme_font_size_override("font_size", 13)
 	step_indicator.add_theme_color_override("font_color", Color(0.3, 0.3, 0.3, 1))
-	step_indicator.position = Vector2(tbx + tbw - 100, tby + tbh - 26)
-	step_indicator.size = Vector2(80, 20)
+	step_indicator.position = Vector2(tbx + tbw - 96, tby + 16)
+	step_indicator.size = Vector2(72, 20)
 	level0_overlay.add_child(step_indicator)
 
-	var next_btn = Button.new()
-	next_btn.text = "下一步 →" if idx < level0_ui_highlight_steps.size() - 1 else "继续 →"
-	next_btn.custom_minimum_size = Vector2(150, 42)
-	next_btn.add_theme_font_size_override("font_size", 16)
-	next_btn.position = Vector2(tbx + 24, tby + tbh - 56)
-	next_btn.size = Vector2(150, 42)
-	next_btn.pressed.connect(_level0_ui_next_step)
-	level0_overlay.add_child(next_btn)
+	# 三个出口（P15-A）：老实现只有「下一步」，而遮罩是 MOUSE_FILTER_STOP 全屏铺满，
+	# 玩家必须把 6 步点完才能摸牌，想换关卡只能杀进程。
+	var guide_h: float = float(_touch_btn_h(42))
+	var guide_y: float = float(tby) + 206.0
+	var next_text := "下一步 →" if idx < level0_ui_highlight_steps.size() - 1 else "继续 →"
+	level0_overlay.add_child(_level0_guide_btn(
+		Vector2(tbx + 24, guide_y), Vector2(130, guide_h), next_text, _level0_ui_next_step))
+	level0_overlay.add_child(_level0_guide_btn(
+		Vector2(tbx + 166, guide_y), Vector2(130, guide_h), "跳过引导", _level0_skip_guide))
+	level0_overlay.add_child(_level0_guide_btn(
+		Vector2(tbx + 308, guide_y), Vector2(120, guide_h), "返回关卡", _level0_exit_guide))
 
 
 func _level0_make_outline_rect(pos: Vector2, rect_size: Vector2, color: Color, width: int) -> Control:
@@ -2792,6 +2793,45 @@ func _level0_make_outline_rect(pos: Vector2, rect_size: Vector2, color: Color, w
 func _level0_ui_next_step() -> void:
 	level0_step += 1
 	_level0_show_ui_step(level0_step)
+
+
+# 引导阶段的通用出口按钮（Phase 1 提示框底部 / Phase 2 对话框底部共用）：
+# 位置尺寸由调用方给（两处对话框的行高与列宽不同），字号统一走触屏档
+func _level0_guide_btn(pos: Vector2, btn_size: Vector2, text: String, cb: Callable) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = btn_size
+	b.add_theme_font_size_override("font_size", _touch_fs(15, 2))
+	b.position = pos
+	b.size = btn_size
+	b.pressed.connect(cb)
+	return b
+
+
+# 「跳过引导」：Phase 1 / Phase 2 都一步跳到牌局练习（开场提示与规则提醒照常给）。
+# 遮罩是 MOUSE_FILTER_STOP 全屏，不给这条出口玩家就只能把 6+3 步点完才能摸牌。
+func _level0_skip_guide() -> void:
+	if game_manager == null:
+		return
+	_level0_start_phase3()
+
+
+# 「返回关卡」：引导中途退出教学 → 回教学引导页重选关卡。
+# _on_show_tutorial_page() 只处理「从开始页 / 结算页过来」的可见性，
+# 这里必须自己把 GamePage 藏掉，否则引导页会被压在游戏页下面（点了像没反应）。
+func _level0_exit_guide() -> void:
+	if level0_overlay:
+		level0_overlay.queue_free()
+		level0_overlay = null
+	level0_ui_highlight_steps = []
+	level0_flow_steps = []
+	_level0_clear_rule_tips()
+	if game_manager:
+		game_manager.phase = 2   # 本局作废：别让残留的 AI 计时器在后台继续推进
+	if game_page:
+		game_page.visible = false
+	_on_show_tutorial_page()
 
 
 func _level0_ensure_overlay() -> void:
@@ -2851,14 +2891,14 @@ func _level0_show_flow_step(idx: int) -> void:
 	var dialog_bg = ColorRect.new()
 	dialog_bg.color = Color(0.95, 0.95, 1, 0.97)
 	dialog_bg.position = Vector2(100, 250)
-	dialog_bg.size = Vector2(900, 180)
+	dialog_bg.size = Vector2(900, 190)
 	level0_overlay.add_child(dialog_bg)
 
-	var dialog_border = _level0_make_outline_rect(Vector2(100, 250), Vector2(900, 180), Color(0.3, 0.5, 0.8, 1), 3)
+	var dialog_border = _level0_make_outline_rect(Vector2(100, 250), Vector2(900, 190), Color(0.3, 0.5, 0.8, 1), 3)
 	level0_overlay.add_child(dialog_border)
 
 	var title = Label.new()
-	title.text = "游戏流程介绍 %d/3" % (idx + 1)
+	title.text = "游戏流程介绍 %d/%d" % [idx + 1, level0_flow_steps.size()]
 	title.add_theme_font_size_override("font_size", 20)
 	title.add_theme_color_override("font_color", Color(0, 0, 0, 1))
 	title.position = Vector2(130, 260)
@@ -2875,15 +2915,15 @@ func _level0_show_flow_step(idx: int) -> void:
 	content.size = Vector2(840, 80)
 	level0_overlay.add_child(content)
 
+	# 底部三个出口：下一步 / 跳过引导 / 返回关卡（与 Phase 1 同一套按钮与语义）
 	var btn_text = "下一步 →" if idx < level0_flow_steps.size() - 1 else "开始对局！"
-	var next_btn = Button.new()
-	next_btn.text = btn_text
-	next_btn.custom_minimum_size = Vector2(180, 45)
-	next_btn.add_theme_font_size_override("font_size", 18)
-	next_btn.position = Vector2(450, 370)
-	next_btn.size = Vector2(180, 45)
-	next_btn.pressed.connect(_level0_flow_next_step)
-	level0_overlay.add_child(next_btn)
+	var flow_btn_h := float(_touch_btn_h(45))
+	level0_overlay.add_child(_level0_guide_btn(
+		Vector2(316, 382), Vector2(150, flow_btn_h), btn_text, _level0_flow_next_step))
+	level0_overlay.add_child(_level0_guide_btn(
+		Vector2(478, 382), Vector2(150, flow_btn_h), "跳过引导", _level0_skip_guide))
+	level0_overlay.add_child(_level0_guide_btn(
+		Vector2(640, 382), Vector2(150, flow_btn_h), "返回关卡", _level0_exit_guide))
 
 
 func _level0_flow_next_step() -> void:
@@ -2901,12 +2941,13 @@ func _level0_start_phase3() -> void:
 		level0_overlay.queue_free()
 		level0_overlay = null
 
-	level0_active = false
+	level0_ui_highlight_steps = []
+	level0_flow_steps = []
 	_refresh_ui()
 
 	_level0_create_rule_tips()
 
-	var intro_tip = _level0_make_tip_box("对局开始！请尝试出牌吧。\nAI默认只出单质和化合物。", 3.0)
+	var intro_tip = _level0_make_tip_box("对局开始！请尝试出牌吧。\n本关 AI 每回合只出 1 张单质，不会抢在你前面打完。", 3.0)
 	_layer(2).add_child(intro_tip)
 
 

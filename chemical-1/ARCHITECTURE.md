@@ -307,10 +307,14 @@ _check_tutorial_progress(pattern, human) → 进度检查
 
 ```gdscript
 AIPlayer.auto_play(game_manager, ui_refresh)
-  ├─ 第0关：仅出基础牌，AI 不抽牌
+  ├─ 第0关：每回合只出 1 张单质（接不上就跳过），手牌剩 1 张即收手 —— AI 永不清空手牌
   ├─ 族炸链：冷却→跳过 / 否则出更大族炸
   └─ 常规：族炸→化合物 O(n²)（`halogen_exchange_allowed` 关闭时跳过纯卤素对）→双原子→单质→pass
 ```
+
+> **第0关刻意放水（见 §12.8）**：第0关 AI 不抽牌（`ai_no_draw`），老策略「化合物对(2 张)→双原子→单质」
+> 4 个回合就能清空 8 张手牌，新手常在只出 2~3 张牌时就看到「本局结束」。现在 `_try_play_level0()`
+> 每回合只出 1 张单质，且 `get_hand_count() <= 1` 时直接跳过 —— 玩家必然是获胜方。
 
 > 化合物化合价**不再由 AI 自算**（旧实现「正价取 max / 负价取 min」已删），统一调用
 > `CompoundSolver.get_valence_pairs()` —— 与提示按钮同一个取价出口；人类面板仍列
@@ -1155,7 +1159,32 @@ godot --headless --path . --script tests/verify_action_panel_fit.gd        # 出
 `tests/verify_tutorial_layout.gd`（6 个提示框 rect 全在 1152×648 内、Label 宽度不被撑大、
 规则提醒与日志互斥、四类退出路径后提醒被释放）。
 
+### 12.8 第零关「AI 抢跑」与引导无出口（v15.0）
+
+新手走完第零关 Phase 1 / Phase 2 后进入牌局练习，两条体验断点：
+
+| 现象 | 根因 | 修法 |
+|---|---|---|
+| 玩家只出了 2~3 张牌就弹「本局结束」，AI 先打完 | `_try_play_level0()` 老策略先试**化合物对（2 张）**再试双原子，AI 8 张手牌 4 个回合就清空；而第0关 `ai_no_draw = true`、清空手牌即判胜 | 第0关 AI **每回合只出 1 张单质**、接不上就 `player_pass()`；再加一条 `get_hand_count() <= 1 → pass`（AI 永不清空手牌 ⇒ 玩家必胜）。不会死锁：全员跳过会走 `_start_new_round()`（清桌面 + 下一位自由出牌） |
+| Phase 1 / Phase 2 遮罩是 `MOUSE_FILTER_STOP` 全屏，只有一个「下一步」 | 9 步必须点完才能摸牌，想换关卡只能杀进程 | 两个阶段都补 **「跳过引导」（→ 直接进 Phase 3）+「返回关卡」（→ 教学引导页）**；Phase 1 的步骤计数从底部挪到提示框右上角，底部整行留给三颗按钮（`_level0_guide_btn()` 统一构造，Phase 2 对话框 180→190 高腾出按钮行） |
+
+实测对照（headless 20 局，玩家用 `HintAdvisor.suggest()` 代替「会玩的新手」）：
+
+| 策略 | AI 胜 | 玩家胜 | 玩家平均出手次数 | AI 平均出牌张数 | 平均回合 |
+|---|---|---|---|---|---|
+| 老（化合物对→双原子→单质） | 17/20 | 3/20 | 4.0（最少 1） | 13.2 | 22.9 |
+| 新（1 张单质 + 剩 1 张收手） | **0/20** | 20/20 | **9.9**（最少 3） | 11.1 | 44.7 |
+
+顺带清理（同批）：`_level0_ui_steps()` 末尾不可达的 `_level0_show_ui_step(0)`、
+无人读写的 `level0_active` 死变量、Phase 2 标题硬编码 `"%d/3"` → `"%d/%d"`。
+「返回关卡」必须自己 `game_page.visible = false` —— `_on_show_tutorial_page()` 只处理
+「从开始页 / 结算页过来」的可见性，否则引导页被压在 GamePage 下面（点了像没反应）。
+
+回归：`tests/verify_tutorial_layout.gd` 追加 9 条 —— 两阶段各有「跳过引导 / 返回关卡」、
+Phase 1 末步文案是「继续 →」、点「跳过引导」直接进 Phase 3 且 overlay 释放 / 规则提醒照常创建 /
+步骤数据清理、点「返回关卡」回到引导页且 GamePage 隐藏 / 本局 `phase = 2`。
+
 ---
 
-**文档版本**: 14.9  
+**文档版本**: 15.0  
 **最后更新**: 2026-11-06
