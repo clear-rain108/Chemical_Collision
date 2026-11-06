@@ -212,6 +212,7 @@ const LOG_BODY_GAP := 6         # 标题条与正文之间的间距
 const LOG_CONTENT_MIN_H := 40   # 正文最小高度（只有 1 行时也不塌成一条缝）
 const LOG_CONTENT_MAX_H := 280  # 正文最大高度（日志 6 行 / 规则提醒 10 行都够）
 const LOG_W := 312              # 右栏面板宽度（面板 = LOG_W + LOG_PANEL_PAD = 322）
+const RIGHT_PANEL_HL_PAD := 4   # 教程第零关「其他细节（右面板）」高亮框相对面板的外扩量
 const BORDER_W := 1             # 普通元素描边
 const BORDER_W_ACTIVE := 2      # 选中 / 焦点 / 警告描边
 const BORDER_NEUTRAL := Color(0.63, 0.66, 0.71, 1.0)    # #A1A8B5
@@ -2644,10 +2645,12 @@ func _level0_ui_steps() -> Array:
 		},
 		{
 			"title": "其他细节（右面板）",
-			"desc": "这是【其他细节-右面板】\n包括游戏日志、牌库剩余数、手牌上限和教程引导文本，帮助你了解当前对局动态",
+			"desc": "这是【其他细节-右面板】\n游戏日志逐条记录每一手牌（谁出了什么、轮到谁）；第零关练习阶段这里换成「规则提醒」，写着当前该记住的出牌规则\n点标题条可折叠 / 展开",
 			"target": "log_label",
-			"pos": Vector2(750, 10),
-			"size": Vector2(400, 350),
+			# 高亮框 = 右栏面板的实况矩形（见 _right_panel_hl_rect()）：
+			# 折叠 / 日志条数 / 规则提醒占用都会改面板大小，写死矩形必然画歪
+			"pos": _right_panel_hl_rect().position,
+			"size": _right_panel_hl_rect().size,
 		},
 		{
 			"title": "其他细节（按钮区）",
@@ -2670,6 +2673,12 @@ func _level0_show_ui_step(idx: int) -> void:
 
 	var step_data = level0_ui_highlight_steps[idx]
 	level0_step = idx
+	# 右栏面板的几何会随「折叠 / 日志条数 / 规则提醒是否占用」变化，建 steps 时的坐标是快照，
+	# 直接画会框住一片空白 → 展示时按节点实况刷新（_refresh_ui() 刚跑过，_layout_log_panel() 已算好几何）
+	if step_data.get("target", "") == "log_label":
+		var rp: Rect2 = _right_panel_hl_rect()
+		step_data["pos"] = rp.position
+		step_data["size"] = rp.size
 	_level0_ensure_overlay()
 
 	for child in level0_overlay.get_children():
@@ -4030,6 +4039,26 @@ func _action_panel_rows() -> int:
 func _action_panel_hl_rect() -> Rect2:
 	var h := _action_btn_h()
 	return Rect2(Vector2(ACTION_PANEL_LEFT, ACTION_PANEL_BOTTOM - h), Vector2(ACTION_PANEL_W, h))
+
+
+# 教程第零关「其他细节（右面板）」的高亮矩形：右栏几何由 _layout_log_panel() / _layout_rule_tips()
+# 决定（折叠、日志条数、规则提醒是否占用都会变），所以读节点实况再外扩 4px。
+# 老实现写死 (750,10) 400×350 —— 框住的是状态栏下方一整片空白，日志面板反而只有下半截在框里。
+func _right_panel_hl_rect() -> Rect2:
+	var node: Control = null
+	if level0_rule_tip_bg != null and is_instance_valid(level0_rule_tip_bg) and level0_rule_tip_bg.visible:
+		node = level0_rule_tip_bg
+	elif _log_panel != null and is_instance_valid(_log_panel) and _log_panel.visible:
+		node = _log_panel
+	if node == null or node.size.x <= 0.0:
+		# 兜底（正常时序到不了：_ensure_log_panel() 在 _ready 里就建好了）：设计位置 + 折叠态高度
+		var home: Vector2 = Vector2(824, 300)
+		if log_label != null and is_instance_valid(log_label):
+			home = log_label.get_meta("home", home)
+		return Rect2(Vector2(home.x, home.y - LOG_PANEL_PAD),
+				Vector2(LOG_W + LOG_PANEL_PAD, LOG_PANEL_PAD * 2.0 + LOG_TITLE_H))
+	var pad: float = float(RIGHT_PANEL_HL_PAD)
+	return Rect2(node.position - Vector2(pad, pad), node.size + Vector2(pad, pad) * 2.0)
 
 
 func _mkb(text: String, cb: Callable, dis: bool) -> Button:

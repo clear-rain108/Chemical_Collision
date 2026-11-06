@@ -291,5 +291,55 @@ func _run() -> void:
 	_check(scene.level0_overlay == null, "返回关卡后 overlay 已释放")
 	_check(scene.game_manager.phase == 2, "返回关卡后本局判为结束（AI 计时器不会再推进）")
 
+	# ============================================================
+	# 九、第 5 步「其他细节（右面板）」高亮框必须贴着右栏面板
+	#   老实现写死 (750,10) 400×350：框住状态栏下方一片空白，日志面板只有下半截在框里
+	# ============================================================
+	scene.call("_on_start_tutorial", 0)
+	await process_frame
+	await process_frame
+	scene.call("_level0_show_ui_step", 4)
+	await process_frame
+	await process_frame
+	var step5: Dictionary = scene.level0_ui_highlight_steps[4]
+	_check(step5.get("target", "") == "log_label", "第 5 步目标是右栏日志面板")
+	var log_panel = scene._log_panel
+	_check(log_panel != null and is_instance_valid(log_panel), "右栏日志底板 LogPanel 存在")
+	if log_panel != null and is_instance_valid(log_panel):
+		var hl := Rect2(step5["pos"], step5["size"])
+		var pr := Rect2(log_panel.position, log_panel.size)
+		print("  右面板高亮框 = %s / LogPanel = %s" % [str(hl), str(pr)])
+		_check(hl.encloses(pr), "高亮框完整包住日志面板")
+		var pad: float = float(scene.RIGHT_PANEL_HL_PAD)
+		_check(absf(hl.position.x - (pr.position.x - pad)) < TOL
+				and absf(hl.position.y - (pr.position.y - pad)) < TOL
+				and absf(hl.size.x - (pr.size.x + pad * 2.0)) < TOL
+				and absf(hl.size.y - (pr.size.y + pad * 2.0)) < TOL,
+			"高亮框 = 面板外扩 %dpx（不再是写死的大矩形）" % int(pad))
+		_check(hl.position.y > 250.0,
+			"高亮框不再从状态栏下方开始（y=%.1f，老实现是 10）" % hl.position.y)
+		_check(hl.size.y < 300.0,
+			"高亮框高度贴合面板（%.1f < 300，老实现 350）" % hl.size.y)
+		_check(hl.end.x <= CANVAS.x + TOL and hl.end.y <= CANVAS.y + TOL,
+			"高亮框在画布内：%s" % str(hl))
+		# overlay 里的描边框必须按同一矩形画（否则「数据对了、画出来还是歪的」）
+		var outline: Control = null
+		var tip_rect := Rect2()
+		for c in scene.level0_overlay.get_children():
+			if not (c is Control):
+				continue
+			var ctl := c as Control
+			if ctl.anchor_right != 0.0 or ctl.anchor_bottom != 0.0:
+				continue
+			if ctl.get_child_count() == 4 and ctl.size == hl.size and ctl.position == hl.position:
+				outline = ctl
+			if c is ColorRect and (c as ColorRect).color.is_equal_approx(Color(1, 1, 0.85, 0.95)):
+				tip_rect = Rect2(ctl.position, ctl.size)
+		_check(outline != null, "overlay 里的高亮框按同一矩形绘制")
+		_check(tip_rect.size != Vector2.ZERO and not tip_rect.intersects(hl),
+			"提示框（左侧）与右面板高亮框不重叠")
+		_check(not Rect2(Vector2(20, 60), Vector2(460, 88)).intersects(hl),
+			"高亮框不再压到「玩家顺序和手牌数」那块（第 1 步的标注区）")
+
 	_finish()
 

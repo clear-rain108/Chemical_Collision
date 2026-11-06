@@ -736,7 +736,7 @@ Godot 的 `CanvasItem` 排序是 **`z_index` 优先于树顺序**。`GamePage` �
   - `_show_info()` **不再**把消息拼在 `_format_player_status()` 后面（老实现第 5 行起压到「桌面: …」上）；
   - 引擎侧兜底：绑定时设 `max_lines_visible = INFO_LABEL_MAX_LINES`(4) + `clip_text = true`；
   - 一次性消息的唯一出口是右栏 toast；拒绝原因另外写进 `CardInfoLabel`（804×48，两行放得下），
-    toast 2.5 秒消失后玩家仍看得到，下次刷新自动回到「提示: 可用牌型…」。
+	toast 2.5 秒消失后玩家仍看得到，下次刷新自动回到「提示: 可用牌型…」。
 
 - 三个层由 `_ensure_layers()` 幂等创建（`_setup_pages()` 内调用），都是 `GamePage` 的直接子节点、
   全屏 anchor、`mouse_filter = IGNORE`（层自身不拦截，事件仍落到子节点）。
@@ -1167,6 +1167,7 @@ godot --headless --path . --script tests/verify_action_panel_fit.gd        # 出
 |---|---|---|
 | 玩家只出了 2~3 张牌就弹「本局结束」，AI 先打完 | `_try_play_level0()` 老策略先试**化合物对（2 张）**再试双原子，AI 8 张手牌 4 个回合就清空；而第0关 `ai_no_draw = true`、清空手牌即判胜 | 第0关 AI **每回合只出 1 张单质**、接不上就 `player_pass()`；再加一条 `get_hand_count() <= 1 → pass`（AI 永不清空手牌 ⇒ 玩家必胜）。不会死锁：全员跳过会走 `_start_new_round()`（清桌面 + 下一位自由出牌） |
 | Phase 1 / Phase 2 遮罩是 `MOUSE_FILTER_STOP` 全屏，只有一个「下一步」 | 9 步必须点完才能摸牌，想换关卡只能杀进程 | 两个阶段都补 **「跳过引导」（→ 直接进 Phase 3）+「返回关卡」（→ 教学引导页）**；Phase 1 的步骤计数从底部挪到提示框右上角，底部整行留给三颗按钮（`_level0_guide_btn()` 统一构造，Phase 2 对话框 180→190 高腾出按钮行） |
+| 第 5 步「其他细节（右面板）」的高亮框框住的是**一大片空白** | `_level0_ui_steps()` 里写死 `(750, 10) 400×350`，而右栏日志底板实际是 `(824, 290) 322×H`（H 还随日志条数 / 折叠 / 规则提醒占用变化），框只盖住面板下半截 | 新增 `_right_panel_hl_rect()`：读 `Level0RuleTipsBg` / `LogPanel` 的**实况矩形**再外扩 `RIGHT_PANEL_HL_PAD = 4`；`_level0_show_ui_step()` 展示时再刷一次（建 steps 时的快照会过期）。该步文案也从「牌库剩余数、手牌上限」（那是顶部状态栏，第 1 步才覆盖）改成实际讲日志 / 规则提醒 |
 
 实测对照（headless 20 局，玩家用 `HintAdvisor.suggest()` 代替「会玩的新手」）：
 
@@ -1180,9 +1181,10 @@ godot --headless --path . --script tests/verify_action_panel_fit.gd        # 出
 「返回关卡」必须自己 `game_page.visible = false` —— `_on_show_tutorial_page()` 只处理
 「从开始页 / 结算页过来」的可见性，否则引导页被压在 GamePage 下面（点了像没反应）。
 
-回归：`tests/verify_tutorial_layout.gd` 追加 9 条 —— 两阶段各有「跳过引导 / 返回关卡」、
-Phase 1 末步文案是「继续 →」、点「跳过引导」直接进 Phase 3 且 overlay 释放 / 规则提醒照常创建 /
-步骤数据清理、点「返回关卡」回到引导页且 GamePage 隐藏 / 本局 `phase = 2`。
+回归：`tests/verify_tutorial_layout.gd`（73 → 92 条）—— Section 八 的 9 条管出口
+（两阶段都有「跳过引导 / 返回关卡」、末步文案「继续 →」、跳过直接进 Phase 3、返回回引导页且
+GamePage 隐藏 / `phase = 2`）；Section 九 再补 10 条管右面板高亮框：= 日志面板外扩 4px
+（`y > 250`、`h < 300`、overlay 按同一矩形绘制、不压提示框与第 1 步标注区）。
 
 ---
 
