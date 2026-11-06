@@ -27,6 +27,26 @@ func _check(cond: bool, msg: String) -> void:
 		print("FAIL: " + msg)
 
 
+# 开关必须完整落在 SettingsCard 内，且不与「补充规则」摘要行相交
+# （触控档会把 32 高的按钮补到 48 并上移 8px → 下沿 169 vs 摘要 170，只有 1px 余量，必须锁死）
+func _toggle_inside_card(scene) -> bool:
+	var card = scene.start_page.get_node_or_null("SettingsCard")
+	if card == null:
+		return false
+	var tg = card.get_node_or_null("TouchUIToggle")
+	if tg == null:
+		return false
+	var t := Rect2(tg.position, tg.size)
+	# 坐标空间：tg.position 相对 card（Panel 不是容器，子节点 position 即本地坐标），
+	# 所以卡片的包围盒要用 (0,0) 起算，不能拿 card.position（那是相对 start_page 的）
+	if not Rect2(Vector2.ZERO, card.size).encloses(t):
+		return false
+	var sum = card.get_node_or_null("SuppRulesSummary")
+	if sum != null and t.intersects(Rect2(sum.position, sum.size)):
+		return false
+	return true
+
+
 # 造一张 Na 卡读符号字号：卡面所有字号都走 _touch_fs()，触控档 +2。
 # 自己造卡而不是读 hand_buttons —— AI 回合会换牌，读到的可能是另一张。
 func _make_card_symbol_fs(scene) -> int:
@@ -75,6 +95,7 @@ func _run() -> void:
 	# 手牌字号：自己造一张卡测（不依赖 AI 回合里的手牌变化）
 	var base_sym_fs: int = _make_card_symbol_fs(scene)
 	_check(is_equal_approx(base_hint_h, scene.TOOL_BTN_H), "桌面档工具行高 = %d（实际 %.1f）" % [scene.TOOL_BTN_H, base_hint_h])
+	_check(_toggle_inside_card(scene), "桌面档：开关完整落在设置卡内且不压「补充规则」摘要")
 
 	# ---- 打开 ----
 	scene.set_touch_ui(true)
@@ -86,6 +107,7 @@ func _run() -> void:
 		"工具行高变 %d（实际 %.1f）" % [scene.TOUCH_TOOL_BTN_H, scene.hint_button.size.y])
 	_check(is_equal_approx(scene.hint_button.position.y, float(scene.TOUCH_TOOL_BTN_TOP)),
 		"工具行顶边变 %d（实际 %.1f）" % [scene.TOUCH_TOOL_BTN_TOP, scene.hint_button.position.y])
+	_check(_toggle_inside_card(scene), "触控档：开关放大到 48 高后仍不压摘要行")
 	_check(is_equal_approx(exit_btn.size.y, float(scene.TOUCH_BTN_MIN_H)),
 		"开始页小按钮补到 %d 高（实际 %.1f）" % [scene.TOUCH_BTN_MIN_H, exit_btn.size.y])
 	var touch_exit_fs: int = exit_btn.get_theme_font_size("font_size")
@@ -109,6 +131,7 @@ func _run() -> void:
 	for _w in range(2):
 		await process_frame
 	_check(not scene.is_touch_ui(), "set_touch_ui(false) 后回到桌面档")
+	_check(_toggle_inside_card(scene), "还原后开关仍在卡内且不压摘要行")
 	_check(not tg.button_pressed and String(tg.text).find("关") >= 0, "开关同步为「关」")
 	_check(is_equal_approx(scene.hint_button.size.y, base_hint_h),
 		"工具行高还原 %.1f（实际 %.1f）" % [base_hint_h, scene.hint_button.size.y])

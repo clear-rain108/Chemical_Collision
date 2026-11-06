@@ -999,7 +999,8 @@ static func resolve_touch_profile(is_mobile: bool, args: Array) -> bool:
 
 **还原顺序的坑（实测两次才过）**：必须先写 `custom_minimum_size` → 再写字号 → 最后写 `size`。
 反过来 `size` 会被「当前」最小尺寸反复夹住：先停在 48（旧 cms），再停在 42（旧字号撑出的最小高），
-看起来就像开关没生效。回归：`tests/verify_touch_toggle.gd`（24 断言，含「开→关」逐项还原与幂等）。
+看起来就像开关没生效。回归：`tests/verify_touch_toggle.gd`（27 断言，含「开→关」逐项还原、幂等、
+以及开关始终落在设置卡内且不压「补充规则」摘要 —— 触控档 48 高时只剩 1px 余量）。
 
 > 未做持久化：项目里没有 `ConfigFile` / `user://` 存档，开关只在本次运行内有效。
 > 手机上平台判定本来就默认触控档，所以实际只影响桌面调试。
