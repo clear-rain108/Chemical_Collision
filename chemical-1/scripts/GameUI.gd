@@ -5533,6 +5533,14 @@ func _update_valence_buttons() -> void:
 			for v in card.common_valence:
 				action_panel.add_child(_mkb("%s (%+d)" % [sym, v], _on_select_valence.bind(sym, v), false))
 
+	# ---- 一键配平（P14-B）----
+	# 玩家不用再逐个猜价：求解器给出可行解（且引擎已确认 ratio_ok）就直接打出去。
+	# 只在「还没选完」或「选完了但 Σ ≠ 0」时出现 —— 已经配平的组合不再多一颗按钮打扰。
+	var sel_sum: int = _selection_charge_sum()
+	var uniform_cv := _uniform_valence_for_selection()
+	if not uniform_cv.is_empty() and (not all_assigned or sel_sum != 0):
+		action_panel.add_child(_mkb("自动配平 ▶", _on_confirm_auto_valence.bind(uniform_cv), false))
+
 	if not all_assigned:
 		action_panel.add_child(_mkb("返回", _on_back, false))
 	else:
@@ -5542,23 +5550,61 @@ func _update_valence_buttons() -> void:
 		var lbl = Label.new()
 		lbl.text = info
 		action_panel.add_child(lbl)
+		# 总电荷 Σ（P14-B）：按「张数」累加，玩家唯一能自查的量。
+		# 真机截图里 H,H,C,N 被拒就是因为 2×(-1)+4+(-3) = -1 —— 以前界面根本不显示这个数。
+		var sum_lbl = Label.new()
+		sum_lbl.name = "ValenceSumLabel"
+		# 0 不写成 "+0"：配平时直接给一个正向反馈，比 "Σ = +0（需 0）" 好读
+		sum_lbl.text = "Σ = 0（已配平 ✓）" if sel_sum == 0 else "Σ = %+d（需 0）" % sel_sum
+		sum_lbl.tooltip_text = "总电荷 = Σ(每种元素的张数 × 所选化合价)，等于 0 才能配平"
+		sum_lbl.add_theme_font_size_override("font_size", _touch_fs(14, 2))
+		sum_lbl.add_theme_color_override("font_color",
+			Color(0.13, 0.45, 0.18, 1.0) if sel_sum == 0 else Color(0.76, 0.16, 0.13, 1.0))
+		action_panel.add_child(sum_lbl)
 		action_panel.add_child(_mkb("确认打出", _on_confirm_compound, false))
 		action_panel.add_child(_mkb("重选化合价", _on_reset_valence, false))
 		action_panel.add_child(_mkb("返回", _on_back, false))
 
 
+# 当前选中的卡牌：复用 _selected_cards(cp)（P7 已有实现，优先取按钮 meta，
+# 拖拽重排后索引对不上也不会取错牌）
+func _sel_cards() -> Array:
+	if game_manager == null:
+		return []
+	return _selected_cards(game_manager.get_current_player())
+
+
+# 面板所选化合价的「总电荷 Σ」：按张数累加（2 张 H 就是 2 份价），
+# 与 _on_confirm_compound() 的判定口径一致 —— 界面显示与引擎判定不再各算一套。
+func _selection_charge_sum() -> int:
+	var total: int = 0
+	for card in _sel_cards():
+		for sel in compound_selections:
+			if sel.symbol == card.symbol:
+				total += int(sel.valence)
+				break
+	return total
+
+
+# 统一价态可行解（每元素一个价）。有解且引擎确认比例 OK → 才给「自动配平 ▶」按钮。
+# 与 _mixed_valence_for_selection() 互斥：统一解优先，混合解只在统一无解时出现。
+func _uniform_valence_for_selection() -> Dictionary:
+	var cards := _sel_cards()
+	if cards.size() < 2:
+		return {}
+	var cv: Dictionary = CompoundSolverScript.get_uniform_valence_pairs(cards)
+	if cv.is_empty():
+		return {}
+	var fi = CompoundSolverScript.get_compound_formula(cards, cv)
+	if fi.is_empty() or not bool(fi.get("ratio_ok", false)):
+		return {}
+	return cv
+
+
 # 当前选中的牌组：统一价态无解、混合价态有解 → 返回混合价字典；否则 {}
 # （返回的字典直接喂给 play_cards，形如 {"Fe": [3, 3, 2], "O": -2}）
 func _mixed_valence_for_selection() -> Dictionary:
-	if game_manager == null:
-		return {}
-	var cp = game_manager.get_current_player()
-	if cp == null:
-		return {}
-	var cards: Array = []
-	for idx in selected_indices:
-		if idx >= 0 and idx < cp.hand.size():
-			cards.append(cp.hand[idx])
+	var cards := _sel_cards()
 	if cards.size() < 2:
 		return {}
 	# 统一解已经能打 → 不提供混合入口（保持「主流解优先」）
@@ -5813,12 +5859,17 @@ func _on_confirm_compound() -> void:
 		_handle_result(result)
 		return
 
-	# 3+元素化合物：每种恰好1张 + 总电荷=0
+	# 3+元素化合物：每种恰好1张 + 总电荷=0（引擎同规则，见 GameManager._evaluate_play）
+	# P14-B：旧提示只写「仅支持 2 元素化合物（多元素需每种恰好 1 张且电荷平衡）」，
+	# 没说清是哪一条不满足 —— 真机截图里玩家选了 H,H,C,N，看提示完全不知道「多带了一张 H」。
 	var total_charge = 0
 	var all_one = true
+	var dup_syms: Array = []
 	for e in valence_list:
-		if e.avail != 1: all_one = false
-		total_charge += e.sign * e.v
+		total_charge += e.sign * e.v * e.avail   # 按张数累加：2 张 H 就是 2 份价
+		if e.avail != 1:
+			all_one = false
+			dup_syms.append("%s×%d" % [e.symbol, e.avail])
 	if all_one and total_charge == 0:
 		var ccards: Array = []
 		for _idx in selected_indices: ccards.append(cp.hand[_idx])
@@ -5826,7 +5877,11 @@ func _on_confirm_compound() -> void:
 		_handle_result(result)
 		return
 
-	_show_info("仅支持 2 元素化合物（多元素需每种恰好 1 张且电荷平衡）")
+	if not all_one:
+		_show_info("多元素化合物要求每种元素各 1 张：%s 多带了（当前 Σ = %+d，需 0）。\n可拆成两张牌分别出（如 H₂ + 另一种单质），或只带其中一张。" \
+			% ["、".join(dup_syms), total_charge])
+	else:
+		_show_info("化合价配不平：Σ = %+d（需 0）。正负价按张数相加必须为 0，例如 H(−1)+C(+4)+N(−3)=0。" % total_charge)
 
 func _on_reset_valence() -> void:
 	compound_selections.clear()
@@ -5836,15 +5891,20 @@ func _on_reset_valence() -> void:
 # 混合价态一键出牌（v4）：Fe₃O₄ 这类「同元素多价」的组合走这条路径。
 # cv 由 _mixed_valence_for_selection() 求出并校验过配平，这里只负责收集卡牌并交给引擎。
 func _on_confirm_mixed_valence(cv: Dictionary) -> void:
+	_play_selected_compound(cv)
+
+
+# 「自动配平 ▶」（P14-B）：统一价态可行解一键打出，走的是与混合价态完全相同的一条路径。
+# 有了它，玩家不必靠猜「到底该选哪个价」——被拒一次就点一下，引擎自己给答案。
+func _on_confirm_auto_valence(cv: Dictionary) -> void:
+	_play_selected_compound(cv)
+
+
+# 用给定的 {symbol: valence} 把当前选中的牌当化合物打出（统一 / 混合价态共用）
+func _play_selected_compound(cv: Dictionary) -> void:
 	if game_manager == null:
 		return
-	var cp = game_manager.get_current_player()
-	if cp == null:
-		return
-	var ccards: Array = []
-	for idx in selected_indices:
-		if idx >= 0 and idx < cp.hand.size():
-			ccards.append(cp.hand[idx])
+	var ccards := _sel_cards()
 	if ccards.size() < 2:
 		_show_info("请先选择要打出的化合物卡牌！")
 		return
@@ -5924,7 +5984,14 @@ func _handle_result(result: int) -> void:
 		_show_sequence_constraint_dialog()
 		return
 	var msg = "非法出牌！"
-	if result == -2:
+	if result == -1:
+		# 化合物配不平 / 牌型不成立：引擎把人话原因写在 last_reject_reason 里（P14-B）。
+		# 以前 -1 只有一句「非法出牌！」，玩家根本不知道是 Σ≠0 还是多带了一张牌。
+		if game_manager != null:
+			var why1: String = game_manager.get_last_reject_reason()
+			if why1 != "":
+				msg = "非法出牌！\n" + why1
+	elif result == -2:
 		# 引擎把 -2 的细分原因写在 last_reject_reason 里：
 		# 牌型被压制 / 族炸张数不够 / 原子序数和不够 / 与桌面打平
 		msg = "牌不够大！"

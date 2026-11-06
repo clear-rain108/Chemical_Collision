@@ -264,7 +264,7 @@ _evaluate_play(idx, cards, cv, intended) → int  （唯一规则源：0 合法 
   ├─ 顺序约束：仅 idx == sequence_constraint_target 时校验，牌型不符 → -6
   ├─ 族炸：冷却 / 免疫 / 接炸比较 → -3 / -4 / -2
   ├─ 非族炸：牌型匹配 → 比大小 → -4 / -2
-  └─ 化合物：式子为空 或 ratio_ok=false → -1（假化合物拦截）
+  └─ 化合物：式子为空 或 ratio_ok=false → -1（假化合物拦截，原因写进 last_reject_reason）
 play_cards(idx, cards, cv) → int   （先 _evaluate_play，<0 直接返回，通过后才落子）
   ├─ 移牌 + 写 table_*（含 table_custom_valences）→ 溢出化合物免疫
   ├─ 族炸：冷却置位 + 接炸链 + 牌权移交 → next_turn()
@@ -625,6 +625,24 @@ _update_hand_buttons()    → ① _selected_cards(cp)：遍历 selected_indices�
 
 > 手牌按钮**不走** `_mkb()`：它由 `_build_card_button()` 生成，悬停由 `_process` 轮询状态机驱动，
 > 不能接 `mouse_entered / mouse_exited`（会自激，见上一节）。
+
+### 化合价面板（`_update_valence_buttons()`，P14-B）
+
+选牌 → `step_mode = 2` 后，操作面板按「元素 → 价」逐层给按钮。P14-B 之前，玩家选完价点
+「确认打出」，被拒只看得到一句「非法出牌！」—— 因为 `-1`（配不平 / 多带一张）不写
+`last_reject_reason`，界面也从不显示总电荷。
+
+| 要素 | 实现 | 为什么 |
+|---|---|---|
+| 总电荷 `Σ` | `_selection_charge_sum()`：Σ(每张牌的所选价)。=0 → 绿字「Σ = 0（已配平 ✓）」，否则红字「Σ = −1（需 0）」 | Σ 是玩家唯一能自查的量；截图里 H,H,C,N 被拒正是因为 2×(−1)+4+(−3) = −1 |
+| 一键配平 | `_uniform_valence_for_selection()` → `CompoundSolver.get_uniform_valence_pairs()` + `ratio_ok` 复核 → 「自动配平 ▶」（`_on_confirm_auto_valence` → `_play_selected_compound`） | 不让玩家猜价。统一解优先、混合解（Fe₃O₄）仍走 `_mixed_valence_for_selection()`，两者互斥 |
+| 不打扰 | 已选完且 Σ=0 时不显示「自动配平」 | 多一颗按钮就多一次犹豫 |
+| 拒绝原因 | `GameManager._compound_reject_reason()`：有 cv 时按张数累加 → 「化合价配不平：Σ = −1（需 0）」；cv 为空 → 「这组牌配不出任何已知化合物的化学式」；`detect_pattern = -1` 与「牌型与意图不符」也各有原因 | 规则只有一份，解释跟着同一次判定走，UI 不再自己复读 |
+| 3+ 元素提示 | `_on_confirm_compound()` 直接点名 `H×2 多带了` 并给出 Σ | 「仅支持 2 元素化合物」没说清是哪一条不满足 |
+| UI 侧不再拦 | 3+ 元素配不平也允许点「确认打出」，由引擎给原因（`_handle_result(-1)` 拼上 `last_reject_reason`） | 界面判断与引擎判断分叉 → 「提示说能打、点了被拒」（P13 的老病） |
+
+`Σ` 的 `tooltip` 写明定义（Σ(张数 × 所选价)），`Label.name = "ValenceSumLabel"` 便于测试直接取。
+`tests/verify_valence_panel.gd`（19 条）锁死：Σ 数值与配色 / H×2 提示 / 拒绝原因文本 / 自动配平真能打出 / 配平时不显示该按钮。
 
 ### 游戏页工具按钮（提示 / 帮助 / 退出，P11）
 

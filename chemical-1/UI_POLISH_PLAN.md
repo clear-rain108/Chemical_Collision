@@ -1136,4 +1136,38 @@ Godot_v4.7.2-stable_win64.exe --path . --touch-ui
 **为什么不用 `autowrap_mode` / 放大卡面**：价态是「一行 + 短串」，折行会把 18px 高的 Label 变两行压到原子量；
 放大卡面会破坏与符号、中文名的层级。降级「显示几个价」是唯一不影响其它元素的自由度。
 
+### 14.2 P14-B：化合价面板显示 Σ + 一键配平 + 拒绝原因说人话
+
+**问题（真机截图）**：玩家选 2×H + C + N，面板只写 `H H C N`（连价都没标清），点「确认打出」→
+一个 Toast「非法出牌！」，再换一组价还是「非法出牌！」。玩家完全不知道自己**多带了一张 H**。
+
+三层原因叠在一起：
+
+| 层 | 缺什么 | 后果 |
+|---|---|---|
+| 界面 | 不显示总电荷 Σ | 玩家没有任何自查依据；`2×(−1)+4+(−3) = −1` 只能靠心算 |
+| 界面 | 3+ 元素提示只有「仅支持 2 元素化合物（多元素需每种恰好 1 张且电荷平衡）」 | 说了规则，没说「你哪里不满足」 |
+| 引擎 | `-1` 不写 `last_reject_reason` | `_handle_result(-1)` 只能给出裸的「非法出牌！」 |
+
+**改动**
+
+| 位置 | 改动 |
+|---|---|
+| `GameUI._update_valence_buttons()` | 选完价后追加 `ValenceSumLabel`：Σ=0 绿字「Σ = 0（已配平 ✓）」，否则红字「Σ = −1（需 0）」（触屏字号 +2，带 tooltip 说明定义） |
+| `GameUI._selection_charge_sum()` | Σ 按**张数**累加（2 张 H = 2 份价），与引擎同口径；不用「每元素一个价」的旧算法（旧算法在 3+ 元素分支里只加到 ±价，不看张数） |
+| `GameUI._uniform_valence_for_selection()` | 求解器给解 + `get_compound_formula(cv).ratio_ok` 复核 → 才认为可行 |
+| `GameUI._on_confirm_auto_valence()` | 新按钮「自动配平 ▶」：一键把可行解当化合物打出。与「混合价态自动配平 ▶」互斥（统一解优先），共用 `_play_selected_compound()` |
+| 按钮可见性 | 只在「还没选完」或「选完但 Σ ≠ 0」时出现 —— 已配平的组合不再多一颗按钮 |
+| `GameUI._on_confirm_compound()` | 3+ 元素失败提示改为点名式：「多元素化合物要求每种元素各 1 张：**H×2 多带了**（当前 Σ = −1，需 0）……」；`total_charge` 改为乘张数 |
+| `GameManager._evaluate_play()` | 化合物 `ratio_ok` 失败 → 写 `last_reject_reason`；`detect_pattern == -1` / 牌型与意图不符也各写一句 |
+| `GameManager._compound_reject_reason()` | 新增：有 cv → 「化合价配不平：Σ = −1（需 0）」；cv 为空 → 「这组牌配不出任何已知化合物的化学式」；混合价态 → 「混合价态配不平」 |
+| `GameUI._handle_result()` | 新增 `-1` 分支：把 `last_reject_reason` 拼在「非法出牌！」后面 |
+| `tests/verify_valence_panel.gd` | **新增（19 条）**：引擎原因文本（Σ = −1 / 配不出化学式）/ Σ 标签存在 + 数值 + 绿红配色 / `_selection_charge_sum()` 按张数 / 「配不平也能点确认，由引擎解释」/ H×2 点名 / 自动配平真把 H+C+N 打上桌 / 配平时不显示该按钮 |
+
+**为什么不直接禁止界面出牌、只做提示**：界面提前拦会和引擎规则分叉（P13 反复踩过）。
+现在界面的判断只用于**展示**（Σ、按钮显隐），最终裁决永远在 `_evaluate_play()`，拒绝解释也从同一次判定里取。
+
+**验收**：36 套测试全绿（36 + `verify_touch_flag --touch-ui` = 37 次运行）；
+`verify_valence_panel` 19 条全过；`verify_mixed_valence_ui` 9 条不受影响（Na+Cl 多出「自动配平 ▶」但仍无混合入口）。
+
 

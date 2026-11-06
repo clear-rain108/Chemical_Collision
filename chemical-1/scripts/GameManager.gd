@@ -251,6 +251,7 @@ func _evaluate_play(player_index: int, cards: Array, custom_valences: Dictionary
 	var prefer_sequence = (intended_pattern == CardPatternsScript.CardPattern.SEQUENCE)
 	var pattern = CardPatternsScript.detect_pattern(cards, skip_bomb, prefer_sequence)
 	if pattern == -1:
+		last_reject_reason = "这组牌不构成任何合法牌型（单质 / 化合物 / 顺序 / 族炸 / 有机物）"
 		return -1
 
 	# 若玩家明确选择了牌型，校验检测结果与意图一致
@@ -260,6 +261,8 @@ func _evaluate_play(player_index: int, cards: Array, custom_valences: Dictionary
 				and intended_pattern == CardPatternsScript.CardPattern.COMPOUND:
 			pass
 		else:
+			last_reject_reason = "所选牌型与这组牌的实际牌型不一致（实际是：%s）" \
+				% CardPatternsScript.get_pattern_name(pattern)
 			return -1
 
 	# -------- 卤族互化（仅化合物；族炸不受限）--------
@@ -325,10 +328,31 @@ func _evaluate_play(player_index: int, cards: Array, custom_valences: Dictionary
 	if pattern == CardPatternsScript.CardPattern.COMPOUND:
 		var fi = CompoundSolverScript.get_compound_formula(cards, custom_valences)
 		if fi.is_empty() or not fi.get("ratio_ok", false):
+			# P14-B：拒绝时写清原因（玩家唯一能自查的量是总电荷 Σ，见 _compound_reject_reason）
+			last_reject_reason = _compound_reject_reason(cards, custom_valences)
 			return -1  # 无法配平 / 比例不匹配
 
 	last_evaluated_pattern = pattern
 	return 1 if pattern == CardPatternsScript.CardPattern.SEQUENCE else 0
+
+
+# 化合物被拒的「人话」解释（P14-B）：UI 的 _handle_result(-1) 直接把它拼在「非法出牌！」后面。
+# 为什么需要：玩家选了化合价、点了「确认打出」，只看到一句「非法出牌！」——
+# 真机截图里 H,H,C,N 两次都被拒，玩家完全不知道自己只是多带了一张 H。
+# Σ 按「张数」累加（2 张 H 就是 2 份价），这才是玩家心里算的那个数。
+func _compound_reject_reason(cards: Array, custom_valences: Dictionary) -> String:
+	if custom_valences.is_empty() or custom_valences.has("_organic"):
+		return "这组牌配不出任何已知化合物的化学式（原子比例不匹配）"
+	var total: int = 0
+	for c in cards:
+		var v = custom_valences.get(c.symbol, 0)
+		if v is Array:
+			# 混合价态（Fe₃O₄ 之类）：本次配法无解，不是简单的 Σ 问题
+			return "混合价态配不平：这组牌没有可行的价态组合"
+		total += int(v)
+	if total != 0:
+		return "化合价配不平：Σ = %+d（需 0）" % total
+	return "原子比例与任何化学式都对不上（多元素化合物需每种元素各 1 张）"
 
 
 # 出牌：先只读判定，通过后才落子。
