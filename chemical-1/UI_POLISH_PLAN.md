@@ -1,7 +1,7 @@
 # UI 视觉打磨推进计划
 
-> **最后更新**: 2026-11-04  
-> **当前状态**: P1 / P1.x / P2 / P3 / P5 / P6 / P7 / P8 / P9 / P10 / P10.1 / P11 / P12 / P13 完成；移动端触屏 A1/B/C、A6-1（`--touch-ui` 桌面预览触控档）与 v14.5 第零关反馈修复已落地（见 ARCHITECTURE §12）。**未展开**：P4《美术升级方向》其余条目（核对结果见 §6）  
+> **最后更新**: 2026-11-06  
+> **当前状态**: P1 / P1.x / P2 / P3 / P5 / P6 / P7 / P8 / P9 / P10 / P10.1 / P11 / P12 / P13 完成；移动端触屏 A1/B/C、A6-1（`--touch-ui` 桌面预览触控档）、A6-2（出牌面板自动折行 + 触屏按钮 48）与 v14.5 第零关反馈修复已落地（见 ARCHITECTURE §12）。**未展开**：P4《美术升级方向》其余条目（核对结果见 §6）  
 > **相关文档**: [ARCHITECTURE.md](./ARCHITECTURE.md) 第 8 节「表现层 - GameUI.gd」
 
 ---
@@ -282,11 +282,11 @@ R4 容错带内外与横向越界），既有 `_test_case()` / `_test_hover_debo
 
 ## 5. 验证基线
 
-32 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
+35 个自动化测试（全部在 `--headless` 下运行，无 FAIL 即通过）：
 
 ```bat
 set GD=D:\Godot_v4.7.2-stable_win64.exe\Godot_v4.7.2-stable_win64_console.exe
-for %f in (ai_discard clan_bomb_cooling compound_chemistry constraint element_limit end_page halogen hand_layout hand_reorder hand_runtime hand_view help_page hint integration logger mixed_valence_ui motion net_foundation organic pattern_ambiguity refactor sequence sequence_lock sequence_table start_page tool_buttons touch_flag touch_ui tutorial tutorial_layout valence_chip valence_plan validate_play) do (
+for %f in (action_panel_fit ai_discard clan_bomb_cooling compound_chemistry constraint element_limit end_page halogen hand_layout hand_reorder hand_runtime hand_view help_page hint integration logger mixed_valence_ui motion net_foundation organic pattern_ambiguity refactor sequence sequence_lock sequence_table start_page tool_buttons touch_flag touch_ui tutorial tutorial_layout valence_chip valence_plan validate_play) do (
   %GD% --path . --headless --script res://tests/verify_%f.gd
 )
 ```
@@ -300,6 +300,7 @@ for %f in (ai_discard clan_bomb_cooling compound_chemistry constraint element_li
 | `verify_mixed_valence_ui` | **混合价态面板入口**（Na+Cl / N+Cl 不显示入口 / 3Fe+4O 显示「混合价态自动配平 ▶」+ 方案文本 Fe +3/+3/+2 / 点按钮真打出、桌面记录数组、日志「四氧化三铁」）（9 条） |
 | `verify_validate_play` | **只读判定 P13**（`validate_play` 与 `play_cards` 返回码逐例一致 / 判定不改手牌·桌面·日志·state_hash / 幂等 / `last_evaluated_pattern` 是牌型唯一真相（N+P 族炸 vs 化合物 PN）/ -1·-2·-3·-4·-6·-7·-8 七条拒绝路径 + 顺序 1 + 有机物 0 + Fe₃O₄ 混合价态）（76 条） |
 | `verify_touch_flag` | **触屏档案开关 A6-1**（`--touch-ui` / `--desktop-ui` 与平台特性的判定矩阵、后写者赢、`--touch-ui=1` 不误认 / 当前进程档案与参数一致 / 触控档几何真的切换 / 临时切档生效）（19 条，两种启动方式各跑一遍） |
+| `verify_action_panel_fit` | **出牌面板折行 A6-2**（桌面 / 触屏两档 × 2·6·7·10·21 个按钮：宽 1136、贴底 644、1 行 45/48 / 每颗按钮都落在 1152×648 内（老布局 Cl+I 最右 1640）/ 两两不重叠 / 自算行数 = 实际排版行数 / 真实入口：开赛 2 钮仍顶 599、Cl+I 的 10 钮 → 2 行且「返回」够得着）（76 条） |
 | `verify_pattern_ambiguity` | **牌型二义性**（`compare_cards` 支持显式牌型；桌面「看着像族炸」的化合物不再误拒下家合法化合物；族炸压制不误伤；`-2` 细分为打平 / 原子序数和不够 / 族炸张数不够 / 牌型压制；状态栏·桌面·全量状态统一取 `table_pattern`；提示与引擎同源）（42 条） |
 | `verify_hand_layout` | 手牌尺寸/居中/叠卡步长/紧凑牌面/悬停上浮/**防抖状态机**/**选中与悬停样式**/**悬停流畅化（R1–R4）**/**警告 toast 布局**/**样式工厂**（120+ 条） |
 | `verify_hand_reorder` | **手牌拖拽重排 P7**（自动排列回归锁 / move_card 边界 / 拖拽落库 / 按钮 card meta 对应 / 手动模式不打回按序 / 抽牌追加末尾 / 选中索引跟随对象 / 拖出区外取消 / 插入槽判定 / 顺序签名 / 按序恢复 / 补发 pressed 被吞 / 18 张布局）（44 条） |
@@ -320,7 +321,7 @@ for %f in (ai_discard clan_bomb_cooling compound_chemistry constraint element_li
 | `verify_ai_discard` | 手牌上限自动弃牌 |
 | `verify_compound_chemistry` | **化学规则 P12**（`get_valence_pairs` 价态裁决 / NCl·BrN·IN 拒绝 / NCl₃·NI₃·BCl₃·ClF 保留 / Fe 1 张 + Cl 2 张只认 Fe(+2)（v4 起自动解出）/ 引擎空式子与 `ratio_ok=false` 一律 -1 / 提示与 AI 同源）（40 条） |
 | `verify_sequence_lock` | **顺序约束只锁被指定玩家**（set 时按反转方向选 target / 非 target 出牌不受限 / 跳过与弃牌罚抽 2 张 / 族炸与接炸链不解除 / 覆盖与快照 / state_hash 含 target）（52 条） |
-| `verify_hand_view` / `verify_tool_buttons` / `verify_touch_ui` / `verify_tutorial_layout` / `verify_clan_bomb_cooling` / `verify_net_foundation` | 手牌视图 / 工具按钮几何与样式 / 触屏 A1·B·C（53 条，见 ARCHITECTURE §12.5）/ 教程提示框布局 / 族炸冷却 / 联机协议地基（54 条） |
+| `verify_hand_view` / `verify_tool_buttons` / `verify_touch_ui` / `verify_tutorial_layout` / `verify_clan_bomb_cooling` / `verify_net_foundation` | 手牌视图 / 工具按钮几何与样式 / 触屏 A1·B·C（65 条，见 ARCHITECTURE §12.6）/ 教程提示框布局 / 族炸冷却 / 联机协议地基（54 条） |
 | `verify_help_page` | **帮助中心 P5**（结构 / Tab 懒加载 / 2 列卡片 + 7 列图鉴 / 字号 ≥11 / 无空格对齐 / 29 种 182 张 / 旧页备份）（57 条） |
 
 > 已知非缺陷：测试进程退出时固定报 `572 ObjectDB instances were leaked at exit`，在 P3 之前的
@@ -1054,5 +1055,37 @@ Godot_v4.7.2-stable_win64.exe --path . --touch-ui
 
 **验收**：`verify_touch_flag` 在**带 / 不带** `--touch-ui` 两种启动方式下都全绿；
 32 套测试全绿、无脚本报错。
+
+### 13.9 A6-2：出牌面板自动折行 + 触屏按钮 48
+
+**问题（实测）**：`ActionPanel` 是 460 宽的单行 `HBoxContainer`，而 `HBoxContainer` 不受父级宽度约束 ——
+选项一多就向右无限扩张：
+
+| 局面 | 按钮数 | 面板宽 | 结果 |
+|---|---|---|---|
+| Fe + Cl + O | 9 | 1472 | 「Cl (+7)」「返回」在 1152 屏外 |
+| Cl + I | 10 | 1640 | 末尾 3 个（含「返回」）在屏外 → **玩家被卡在化合价步骤出不去** |
+| 触屏档 | 任意 | 58 高 @顶 599 | 下沿 657 > 648，底部出血 9px |
+
+两个决定：**① 折行（不做分页）② 触屏按钮 58 → 48**。
+
+| 项 | 改动 |
+|---|---|
+| `Main.tscn` | `ActionPanel` `HBoxContainer` → **`HFlowContainer`**，`offset_right 468 → 1144`、`grow_vertical = 0`；节点块挪到 `GamePage` 最后（否则折上去的行会被工具按钮盖住） |
+| 几何 | 新增 `ACTION_PANEL_LEFT/RIGHT/BOTTOM/BTN_H/BTN_W/BTN_W_NARROW/MAX_ROWS/REFIT_TRIES`：宽 1136、下沿 644、**贴底向上生长** |
+| `GameUI._fit_action_panel()` | 唯一几何出口：先数行数（`_action_panel_rows()` 复刻 FlowContainer 换行规则）→ 高度 = 行数×行高 + 行距 → `position.y = 644 - 高度`。**1 行时顶边仍是 599**，与改动前逐像素一致 |
+| 收窄档 | 行数会超 3 行时把按钮宽 160 → 132（一行 6 → 8 个），避免折到 `CardInfoLabel` 上 |
+| 最小尺寸夹持 | `FlowContainer` 的最小高度依赖当前宽度，换掉整批按钮时本帧还夹在**旧内容**高度上。故贴底用**实际 size**（永不越界）+ `call_deferred` 重算一次（上限 2 次，不死循环） |
+| 触屏按钮高 | `_mkb` 58 → **48**（≈32dp，仍 ≥ `TOUCH_BTN_MIN_H`）；`_action_btn_h()` 统一桌面 45 / 触屏 48 |
+| 教程高亮 | 第零关「出牌区」高亮框改用 `_action_panel_hl_rect()`（原来是硬编码 `(8,599) 460×45`），几何只有一处定义 |
+| `tests/verify_touch_ui.gd` | 58 → 48 断言；新增「面板下沿 644 / 1 行 48 / 顶 596 不压工具行」3 条 → 62 → 65 条 |
+| `tests/verify_action_panel_fit.gd` | **新增（76 条）**：两档 × 2·6·7·10·21 个按钮，逐颗断言在画布内 / 不重叠 / 行数自洽 + 真实入口（开赛 2 钮顶 599、Cl+I 的 10 钮 2 行且「返回」够得着） |
+
+**踩坑记录**：headless 下 `GamePage.visible == false`，而**不可见的 Container 根本不排版**
+（子节点全停在 `(0,0)`）—— 断言按钮矩形前必须先 `scene.game_page.visible = true`，
+否则会得到「所有按钮都重叠在左上角」的假失败。
+
+**验收**：35 套测试全绿（`verify_touch_flag` 两种启动方式各跑一遍）；
+`--touch-ui` 下 Cl + I 的 10 颗按钮 2 行、最右 988 ≤ 1144、「返回」可点。
 
 

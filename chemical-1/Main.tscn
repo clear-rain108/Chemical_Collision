@@ -102,13 +102,6 @@ offset_right = 820.0
 offset_bottom = 468.0
 mouse_filter = 2
 
-[node name="ActionPanel" type="HBoxContainer" parent="GamePage" unique_id=36028745]
-layout_mode = 0
-offset_left = 8.0
-offset_top = 599.0
-offset_right = 468.0
-offset_bottom = 644.0
-
 [node name="HintButton" type="Button" parent="GamePage" unique_id=1179826737]
 layout_mode = 0
 offset_left = 460.0
@@ -179,3 +172,12 @@ theme_override_colors/font_color = Color(0.22, 0.26, 0.32, 1)
 theme_override_font_sizes/font_size = 13
 text = "游戏日志:"
 autowrap_mode = 3
+
+[node name="ActionPanel" type="HFlowContainer" parent="GamePage" unique_id=36028745]
+layout_mode = 0
+offset_left = 8.0
+offset_top = 599.0
+offset_right = 1144.0
+offset_bottom = 644.0
+grow_vertical = 0
+

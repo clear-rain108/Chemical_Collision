@@ -1,7 +1,7 @@
 # 验证触屏档案（A1 + B + C）：桌面 23 套测试依赖 const 基准值，真机依赖 *_touch() 放大值，
 # 本套把两边一起钉住 —— 只要有人把「放大」写回 const，这里立刻红。
 #   A1 屏幕适配：project.godot 的 aspect=keep + default_clear_color（无代码可测，见文档）
-#   B  触控尺寸：工具行 48 / 间距 20 / 顶 542、出牌按钮 58、卡牌字号、页面按钮 ≥48
+#   B  触控尺寸：工具行 48 / 间距 20 / 顶 542、出牌按钮 48（+面板贴底折行）、卡牌字号、页面按钮 ≥48
 #   C  触控交互：命中 8px 缓冲、选中上浮、拖拽 10px 跟手 / 24px 确认（F2）、退出二次确认
 extends SceneTree
 
@@ -110,6 +110,17 @@ func _test_touch_geometry(scene) -> void:
 	_check(hint.position.y + hint.size.y <= action_top,
 		"触屏：工具行不压 ActionPanel（%s ≤ %s）" % [str(hint.position.y + hint.size.y), str(action_top)])
 
+	# A6-2：出牌面板贴底 644 + 1 行 48 → 顶 596（旧值 58 高时下沿 657 从画布下面出血 9px）
+	scene._update_action_panel()
+	scene._fit_action_panel()
+	var panel: Control = scene.action_panel
+	_check(_approx(panel.position.y + panel.size.y, scene.ACTION_PANEL_BOTTOM),
+		"触屏：出牌面板下沿贴 ACTION_PANEL_BOTTOM(644)（实际 %.0f）" % (panel.position.y + panel.size.y))
+	_check(_approx(panel.size.y, 48.0), "触屏：1 行面板高 = 48（实际 %.0f）" % panel.size.y)
+	_check(panel.position.y >= hint.position.y + hint.size.y,
+		"触屏：1 行面板顶 %.0f 在工具行底 %.0f 之下"
+			% [panel.position.y, hint.position.y + hint.size.y])
+
 	# 教程高亮框必须跟着放大，否则教程第零关的框只圈住半行
 	var hl: Rect2 = scene._tool_row_hl_rect()
 	_check(hl.encloses(Rect2(hint.position, hint.size)), "触屏：教程高亮框完整包住「显示提示」")
@@ -120,7 +131,8 @@ func _test_touch_geometry(scene) -> void:
 # ---------------- 3. 触控尺寸：字号 ----------------
 func _test_touch_typography(scene) -> void:
 	var b: Button = scene._mkb("测试", Callable(self, "_noop"), false)
-	_check(_approx(b.custom_minimum_size.y, 58.0), "触屏：出牌区按钮 45 → 58 高（≈39dp）")
+	_check(_approx(b.custom_minimum_size.y, 48.0),
+		"触屏：出牌区按钮 45 → 48 高（≈32dp，旧值 58 会从 648 画布下面出血 9px）")
 	_check(b.get_theme_font_size("font_size") == 18, "触屏：出牌区按钮字号 16 → 18")
 
 	# 重建手牌后看真实牌面字号（桌面基准：符号 21/28、中文名 12/14、原子序 12、价态 13、质量 9）

@@ -142,6 +142,7 @@ const TOUCH_DRAG_GHOST_ALPHA := 0.9
 #   32px 的工具行只有 21dp（Android 建议 ≥48dp），必须放大。
 var _touch_ui: bool = false             # 触屏档案开关（_ready 里按平台特性 / 命令行置位）
 var _quit_confirm_pending: bool = false # 触屏「退出游戏」二次确认（防误触直接跳结算页）
+var _ap_refit_left: int = 2             # A6-2：出牌面板被最小尺寸夹住时的剩余重算次数（防死循环）
 const TOUCH_BTN_MIN_H := 48             # 触控目标最小高度（≈32dp）
 const TOUCH_FS_BONUS := 2               # 页面按钮 / 标签字号通用加成
 const TOUCH_TOOL_BTN_H := 48            # 工具行：32 → 48（下沿 590，仍让 ActionPanel 9px）
@@ -2608,8 +2609,10 @@ func _level0_ui_steps() -> Array:
 			"title": "出牌区",
 			"desc": "这是【出牌区】\n选中手牌后在此选择牌型：单质/化合物/族炸，也可跳过或查看提示",
 			"target": "action_panel",
-			"pos": Vector2(8, 599),
-			"size": Vector2(460, 45),
+			# 高亮框 = 1 行面板矩形；几何只有一处定义（§九 ACTION_PANEL_*），
+			# 折行 / 触屏档都由 _action_panel_hl_rect() 跟随，改几何不会漏改这里
+			"pos": _action_panel_hl_rect().position,
+			"size": _action_panel_hl_rect().size,
 		},
 		{
 			"title": "其他细节（右面板）",
@@ -3813,15 +3816,38 @@ func _update_tutorial_label() -> void:
 # ============================================================
 # 九、操作面板（出牌步骤流）
 # ============================================================
+# A6-2：面板从「460 宽单行 HBox」改成「贴底 + 自动折行的 HFlowContainer」。
+# 老问题（实测）：HBoxContainer 不受父级宽度约束，选项一多就向右无限扩张 ——
+#   · Cl + I = 5+4 价 + 返回 = 10 个按钮 → 面板宽 1640，末尾 3 个（含「返回」）落在 x>1152 的屏幕外；
+#   · Fe + Cl + O = 9 个按钮 → 1472 宽，「Cl (+7)」「返回」同样点不到；
+#   · 触屏档按钮 58 高、面板顶 599 → 下沿 657 > 648 画布，底部出血 9px。
+# 现在：面板占满底部整条空白（x 8..1144），按宽度折行，行数向上累加；
+#       下沿固定 644，上沿 = 644 - 行数×行高 —— 1 行时与 P11 逐像素一致（顶 599）。
+# 几何唯一出口是 _fit_action_panel()：宽度先定，行数自己按 FlowContainer 的换行规则数，
+# 不依赖「容器排序后再量」的异步时序，同一帧内就能给出确定矩形（测试可直接断言）。
+const ACTION_PANEL_LEFT := 8.0
+const ACTION_PANEL_RIGHT := 1144.0          # 左右各留 8px（画布 1152）
+const ACTION_PANEL_BOTTOM := 644.0          # 下沿：648 画布留 4px
+const ACTION_PANEL_BTN_H := 45              # 桌面行高；触屏走 _touch_btn_h() → 48
+const ACTION_PANEL_BTN_W := 160             # _mkb 的默认按钮宽
+const ACTION_PANEL_BTN_W_NARROW := 132      # 行数会超过 MAX_ROWS 时收窄（一行 6 → 8 个）
+const ACTION_PANEL_MAX_ROWS := 3            # 上限：再高就会盖住 CardInfoLabel
+const ACTION_PANEL_REFIT_TRIES := 2         # 最小尺寸缓存没刷新时最多重算几次（保底，不死循环）
+const ACTION_PANEL_W := ACTION_PANEL_RIGHT - ACTION_PANEL_LEFT
+
+
 func _update_action_panel() -> void:
 	if not action_panel or not game_manager: return
 	for child in action_panel.get_children():
 		child.queue_free()
 	# 热座交接未认领前不给任何操作按钮：否则可以绕过遮罩直接点「跳过 / 出牌」
 	if _hotseat_handoff_pending():
+		_fit_action_panel()
 		return
 	var cp = game_manager.get_current_player()
-	if cp == null or cp.is_ai or game_manager.is_game_over(): return
+	if cp == null or cp.is_ai or game_manager.is_game_over():
+		_fit_action_panel()
+		return
 
 	if step_mode == 0:
 		action_panel.add_child(_mkb("出牌(选牌型)", _on_step_next, selected_indices.is_empty()))
@@ -3861,12 +3887,79 @@ func _update_action_panel() -> void:
 	elif step_mode == 3:
 		action_panel.add_child(_mkb("确认弃置", _on_pass, selected_indices.size() != 1))
 		action_panel.add_child(_mkb("取消", _on_back, false))
+	_fit_action_panel()
+
+
+# 面板行高：桌面 45，触屏 48（TOUCH_BTN_MIN_H，≈32dp；旧值 58 会让下沿出血 9px）
+func _action_btn_h() -> float:
+	return float(_touch_btn_h(ACTION_PANEL_BTN_H))
+
+
+# 面板「贴底 + 向上折行」的唯一几何出口。
+# 顺序：宽度先定 → 数行数（必要时收窄）→ 高度 = 行数×行高 + (行数-1)×行距 → 整块贴到 BOTTOM。
+# 之所以自己数行而不等容器排序：FlowContainer 的 sort 是 deferred 的，同一帧里读 size 还是旧值；
+# 这里按同一套换行规则（累加最小宽 + h_separation，超宽换行）先算出来，测试就能同步断言。
+func _fit_action_panel() -> void:
+	if action_panel == null or not is_instance_valid(action_panel):
+		return
+	var want_h := _action_panel_h()
+	action_panel.size = Vector2(ACTION_PANEL_W, want_h)
+	# 贴底用「实际尺寸」而不是 want_h：Container 的最小高度是缓存值（FlowContainer 的最小高度
+	# 取决于当前宽度），刚换掉一整批按钮时本帧还会夹在旧内容的高度上 —— 照样贴住 644，绝不出血。
+	action_panel.position = Vector2(ACTION_PANEL_LEFT, ACTION_PANEL_BOTTOM - action_panel.size.y)
+	action_panel.queue_sort()
+	# 被夹住就等一帧缓存刷新后再算一次（重试有上限，不会死循环）
+	if not is_equal_approx(action_panel.size.y, want_h) and _ap_refit_left > 0:
+		_ap_refit_left -= 1
+		_fit_action_panel.call_deferred()
+	else:
+		_ap_refit_left = ACTION_PANEL_REFIT_TRIES
+
+
+# 面板高度：行数 × 行高 + (行数-1) × 行距；行数超上限先收窄按钮再算
+func _action_panel_h() -> float:
+	var rows := _action_panel_rows()
+	if rows > ACTION_PANEL_MAX_ROWS:
+		# 极端局面（4 种元素 × 多价）：把按钮收窄，让面板不超过 3 行，
+		# 否则上沿会盖住 CardInfoLabel（478~526）甚至手牌。
+		# 注意 Button 的最小宽 = max(custom_minimum_size, 文字宽)，短文本（"Cl (+7)"）才收得动。
+		for c in action_panel.get_children():
+			if c is Button and not c.is_queued_for_deletion():
+				c.custom_minimum_size = Vector2(ACTION_PANEL_BTN_W_NARROW, c.custom_minimum_size.y)
+		rows = _action_panel_rows()
+	var v_sep := float(action_panel.get_theme_constant("v_separation"))
+	return _action_btn_h() * float(rows) + v_sep * float(maxi(rows - 1, 0))
+
+
+# 折行行数：与 FlowContainer::_resort 同一套规则（累加最小宽 + h_separation，放不下就换行）。
+# 必须跳过 queue_free() 掉的旧子节点 —— _update_action_panel 先 queue_free 再加新按钮，
+# 同一帧里新旧同时在树上，不跳过行数会算成两倍。
+func _action_panel_rows() -> int:
+	var sep := float(action_panel.get_theme_constant("h_separation"))
+	var rows := 1
+	var row_w := 0.0
+	for c in action_panel.get_children():
+		if not (c is Control) or c.is_queued_for_deletion() or not c.visible:
+			continue
+		var cw: float = (c as Control).get_combined_minimum_size().x
+		if row_w > 0.0 and row_w + sep + cw > ACTION_PANEL_W:
+			rows += 1
+			row_w = cw
+		else:
+			row_w = cw if row_w <= 0.0 else row_w + sep + cw
+	return rows
+
+
+# 1 行面板的设计矩形：教程第零关「出牌区」高亮框用它（触屏 48 高 → 顶边上移 3px）
+func _action_panel_hl_rect() -> Rect2:
+	var h := _action_btn_h()
+	return Rect2(Vector2(ACTION_PANEL_LEFT, ACTION_PANEL_BOTTOM - h), Vector2(ACTION_PANEL_W, h))
 
 
 func _mkb(text: String, cb: Callable, dis: bool) -> Button:
 	var b = Button.new()
 	b.text = text
-	b.custom_minimum_size = Vector2(160, 58 if _touch_ui else 45)   # 触屏 58 高 ≈ 39dp
+	b.custom_minimum_size = Vector2(ACTION_PANEL_BTN_W, _action_btn_h())   # 触屏 48 高 ≈ 32dp（旧 58 会出血）
 	b.add_theme_font_size_override("font_size", _touch_fs(16, 2))
 	b.add_theme_color_override("font_color", Color(1, 1, 1, 1))
 	b.disabled = dis

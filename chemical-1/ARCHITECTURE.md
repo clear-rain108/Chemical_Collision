@@ -960,7 +960,7 @@ static func resolve_touch_profile(is_mobile: bool, args: Array) -> bool:
 |----|------|------|------|
 | 工具行（提示 / 帮助 / 退出） | 32 高，gap 10，top 558 | **48 / 20 / 542** | 右界固定 820，左界 460 → 440；48 高仍夹在信息栏(底 526)与出牌区(顶 599)之间 |
 | 「按序 ⇅」 | 与工具行同行，左界 338 | 左界 308 | 跟着工具行左移 |
-| 出牌区按钮 `_mkb` | 45 高 / 字号 16 | **58 / 18** | 58 ≈ 39dp |
+| 出牌区按钮 `_mkb` | 45 高 / 字号 16 | **48 / 18** | 48 ≈ 32dp；下沿贴 644（旧值 58 会让面板下沿 657 从 648 画布下面出血 9px，见 §12.5） |
 | 卡牌字号（序/族/符号/名/价/质量） | 12 / 11 / 28 / 14 / 13 / 9 | **+2 / +2 / +4 / +3 / +2 / +3** | 统一走 `_touch_fs(base, bonus)` |
 | 开始页 / 帮助页 / 结算页 / 教学页按钮 | 各调用点手写 | 高度补到 ≥48，字号 +2 | `_apply_touch_sizing()` 构建后统一兜底 |
 
@@ -990,21 +990,74 @@ static func resolve_touch_profile(is_mobile: bool, args: Array) -> bool:
   否则刚选中的牌被悬停一次、松手就归位，选中提示消失。
 - 触屏档不接 `mouse_entered/exited` 缩放（会永远停在 1.05），改「按下 0.96 / 松手回 1.0」。
 
-### 12.5 测试与回归
+### 12.5 D 出牌面板折行（A6-2，`ActionPanel` → `HFlowContainer`）
+
+**测出来的老毛病**：`ActionPanel` 是个 460 宽的单行 `HBoxContainer`，而 `HBoxContainer` 不受父级宽度
+约束 —— 选项一多就向右无限扩张：
+
+| 局面 | 按钮数 | 老面板宽 | 结果 |
+|---|---|---|---|
+| 出牌 / 跳过 | 2 | 328 | 正常 |
+| Na + Cl | 7 | 1148 | 压线（右界 1156 > 1152） |
+| Fe + Cl + O | 9 | 1472 | 「Cl (+7)」「返回」在屏幕外，点不到 |
+| Cl + I | 10 | 1640 | 末尾 3 个（含「返回」）全在屏幕外 → **玩家被卡在化合价步骤里出不去** |
+| 触屏档 | 任意 | 45→58 高 | 面板顶 599 + 58 = 657 > 648，**底部出血 9px** |
+
+**改法**：`ActionPanel` 换成 `HFlowContainer`，几何只有一处定义（§九 `ACTION_PANEL_*`）：
+
+| 常量 | 值 | 说明 |
+|---|---|---|
+| `ACTION_PANEL_LEFT / RIGHT` | 8 / 1144 | 宽 1136，占满底部整条空白 |
+| `ACTION_PANEL_BOTTOM` | 644 | 下沿（648 画布留 4px）；面板**贴底、向上生长** |
+| `ACTION_PANEL_BTN_H` | 45 | 触屏走 `_touch_btn_h()` → 48 |
+| `ACTION_PANEL_BTN_W` | 160 | 一行 6 个（1136 / 164） |
+| `ACTION_PANEL_MAX_ROWS` | 3 | 超过就把按钮收窄到 132（一行 8 个），避免折到信息栏上 |
+| `ACTION_PANEL_REFIT_TRIES` | 2 | 最小尺寸缓存没刷新时的重算上限 |
+
+三个实现要点：
+
+1. **行数自己算，不等容器**：`Container.queue_sort()` 是 deferred 的，同一帧读 `size` 还是旧值，
+   测试无法同步断言。`_action_panel_rows()` 按 `FlowContainer::_resort` 同一套规则
+   （累加最小宽 + `h_separation`，超宽换行）先算出 `rows`，再令
+   `height = rows×行高 + (rows-1)×行距`，`position.y = 644 - height`。
+   1 行时顶边正好回到 **599**，与 A6-2 之前的布局逐像素一致。
+2. **必须跳过 `queue_free()` 的旧子节点**：`_update_action_panel()` 先 `queue_free` 旧按钮再加新的，
+   同一帧里新旧都在树上，不跳过行数会算成两倍。
+3. **最小高度是缓存值**：`FlowContainer` 的最小高度取决于当前宽度，刚换掉一整批按钮时会夹在
+   **旧内容**的高度上（例如从 21 个按钮切回 2 个，`size.y` 会被夹成 143）。
+   因此 `size` 被夹时**贴底改用实际尺寸**（永不越界），并 `call_deferred` 重算一次，
+   次数有上限不会死循环。
+
+**副作用（已确认无害）**：面板变成 1136×45 的透明容器后，其矩形内的空白点击落到面板自身
+（`mouse_filter` 默认 STOP），不再穿透到 GamePage —— 这才是贴底面板应有的行为。
+
+**已知取舍**：4 种元素 × 多价的极端局面（21 个候选）会占 3 行、上沿约 501，
+**遮住 `CardInfoLabel` 下沿约 25px**；该局面下玩家主要看面板上的价态按钮，
+若后续要更干净可改「分页」。
+
+回归：`tests/verify_action_panel_fit.gd`（76 条，见 §12.6）。
+
+### 12.6 测试与回归
 
 ```bash
 godot --headless --path . --script tests/verify_touch_ui.gd      # 桌面基准 vs 触控值（手动开关档案）
 godot --headless --path . --script tests/verify_touch_flag.gd    # 默认档（平台判定）
 godot --headless --path . --script tests/verify_touch_flag.gd --touch-ui   # 强制触控档（A6-1）
+godot --headless --path . --script tests/verify_action_panel_fit.gd        # 出牌面板折行（A6-2）
 ```
 
-53 项断言分 8 组：桌面基准 10、工具行几何 15、字号 8、命中缓冲 4、选中上浮 6、
-页面按钮 3、退出二次确认 5、**关档归零 2**。最后一组会把 `_touch_ui` 切回 `false`
+65 项断言分 9 组：桌面基准 10、工具行几何 15、字号 8、命中缓冲 4、选中上浮 6、
+页面按钮 3、退出二次确认 5、**出牌面板折行 3**（下沿贴 644 / 1 行 48 / 顶 596 不压工具行）、
+**关档归零 2**。最后一组会把 `_touch_ui` 切回 `false`
 并重跑 `_style_game_tool_buttons()`，确认触屏放大值没有漏进桌面路径。
 （v14.7 起又并入「拖拽两档」一组：起拖 / 确认阈值分离、12px 松手回退成点选、
 40px 松手真的重排、桌面基准断言追加 `_drag_arm_threshold() == 6`。）
 
-### 12.6 触屏实测反馈修复（v14.5）
+出牌面板折行另有独立套件 `tests/verify_action_panel_fit.gd`（76 条）：桌面 / 触屏两档 ×
+2 / 6 / 7 / 10 / 21 个按钮，逐颗断言「落在 1152×648 内 + 两两不重叠 + 行数与面板高自洽」，
+外加真实入口（开赛 2 钮仍顶 599、Cl + I 的 10 钮 → 2 行且「返回」够得着）。
+
+### 12.7 触屏实测反馈修复（v14.5）
 
 | 反馈 | 根因 | 修法 |
 |---|---|---|
@@ -1022,5 +1075,5 @@ godot --headless --path . --script tests/verify_touch_flag.gd --touch-ui   # 强
 
 ---
 
-**文档版本**: 14.7  
-**最后更新**: 2026-11-02
+**文档版本**: 14.9  
+**最后更新**: 2026-11-06
