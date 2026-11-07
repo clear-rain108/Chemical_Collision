@@ -233,6 +233,32 @@ func _test_reject_reasons() -> void:
 	var why_bomb: String = gm4.get_last_reject_reason()
 	_check(why_bomb.contains("张数"), "原因文案说明族炸张数不够（实际：%s）" % why_bomb)
 
+	# 4.6 原子序数和相同 → 比相对原子质量（越轻牌越大），文案不许再说「原子序数过大」
+	#     真机 Bug：桌面 C+Si（IVA 族炸，和 20，质量 40.097），玩家出 H+K
+	#     （IA 族炸，和 20，质量 40.106）→ 判负是对的，但提示写着
+	#     「原子序数和 20 大于桌面 20」—— 20 大于 20 自相矛盾，玩家完全看不懂。
+	var iv_zi := _cards(["C", "Si"])
+	var ia_hk := _cards(["H", "K"])
+	_check(CardPatternsScript.compare_cards(iv_zi, ia_hk, CLAN_BOMB, CLAN_BOMB) == 1,
+		"和相同比质量：C+Si(40.097) 大于 H+K(40.106)，越轻牌越大")
+	_check(CardPatternsScript.compare_cards(ia_hk, iv_zi, CLAN_BOMB, CLAN_BOMB) == -1,
+		"和相同比质量（反对称）：H+K 压不过 C+Si")
+
+	var gm5 = GameManagerScript.new()
+	gm5.init_game(4, 3)
+	_set_hand(gm5, 0, ["C", "Si"])
+	_set_hand(gm5, 1, ["H", "K"])
+	var r_iv = gm5.play_cards(0, _take(gm5, 0, ["C", "Si"]), {}, CLAN_BOMB)
+	_check(r_iv == 0, "布置：C+Si 族炸上桌（实际 %d）" % r_iv)
+	var r_ia = gm5.play_cards(1, _take(gm5, 1, ["H", "K"]), {}, CLAN_BOMB)
+	_check(r_ia == -2, "H+K 和相同但更重接不上（实际 %d）" % r_ia)
+	var why_mass: String = gm5.get_last_reject_reason()
+	_check(why_mass.contains("相对原子质量"),
+		"原因文案指明比的是相对原子质量（实际：%s）" % why_mass)
+	_check(not why_mass.contains("大于桌面 20"),
+		"原因文案不能再出现「原子序数和 20 大于桌面 20」这种自相矛盾（实际：%s）" % why_mass)
+
+
 
 # ============================================================
 # 五、提示：过滤条件与引擎同源

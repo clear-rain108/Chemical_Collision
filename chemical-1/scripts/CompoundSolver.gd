@@ -305,7 +305,13 @@ static func _assign_valences(cards: Array, custom_valences: Dictionary = {}) -> 
 					mp = v
 				elif v < 0 and v < mn:
 					mn = v
-			if card_data.element_type == CardDataScript.TYPE_METAL and mp > 0:
+			# 准金属（B [3] / Si [4]）与金属同口径：以最高正价作正价元素。
+			# 只认 TYPE_METAL 时准金属既不进 pos 也不进 neg，会从化学式与电荷里
+			# 凭空消失：[Si,H,H,Cl,Cl] 被算成「2HCl」（原子数 2 不是 5），
+			# 而 BCl₃ / SiO₂ 反倒配不出来。口径与 _valence_domains 保持一致。
+			var metal_like: bool = (card_data.element_type == CardDataScript.TYPE_METAL
+					or card_data.element_type == CardDataScript.TYPE_METALLOID)
+			if metal_like and mp > 0:
 				pos_list.append({
 					"symbol": sym, "valence": mp, "count": elem_counts[sym],
 					"electronegativity": card_data.electronegativity,
@@ -319,6 +325,11 @@ static func _assign_valences(cards: Array, custom_valences: Dictionary = {}) -> 
 					"name_cn": card_data.name_cn, "name_en": card_data.name_en,
 					"ox_state": mn,
 				})
+			else:
+				# 兜底：既没有正价可作金属、也没有负价 —— 绝不能静默丢弃，
+				# 否则这个元素会从化学式和电荷里消失（「2HCl」那类 bug）。
+				# 判「配不出」后上层会回落到价态搜索 / 给玩家明确的拒绝原因。
+				return {}
 
 	# 兜底：无金属正价时，识别非金属正价元素（酸/氢化物，如 HClO 中 H、Cl 为正价）
 	# 规则1：H 恒提升为正价 (+1)

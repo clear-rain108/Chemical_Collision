@@ -184,7 +184,7 @@ CardPatterns.detect_pattern(cards, skip_clan_bomb=false):
 |------|------|
 | 命名常量表 | OXYANION_MAP / OXYACID_FORMULAS / ACID_SALT_ANIONS / VARIABLE_METAL_CN_NAMES / NONMETAL_CN_NAMES / **SPECIAL_NAMES**（数据表驱动）|
 | is_compound | 化合物合法性检测 =「默认配平成功 或 统一价态搜索可配平 或 混合价态搜索可配平」，都要求电负性有序 |
-| _assign_valences | **唯一价态分配入口**：默认配平（金属取最高正价 / 非金属取最低负价 / 无金属时提升 H 与酸中心原子）；显式化合价走同一函数校验（int = 每张同价，Array = 每张各一价）。产出 `formula`（带系数，显示）/ `formula_base`（不带系数，命名）/ `formula_key`（ASCII 最简比，查表）/ `coefficient` / `peroxy` / `mixed` / `ratio_ok` —— **三口径不可混用** |
+| _assign_valences | **唯一价态分配入口**：默认配平（金属 + 准金属取最高正价 / 非金属取最低负价 / 无金属时提升 H 与酸中心原子）；既无正价又无负价的元素**直接返回 `{}`**（绝不允许静默丢弃，否则化学式会凭空少一个元素）；显式化合价走同一函数校验（int = 每张同价，Array = 每张各一价）。产出 `formula`（带系数，显示）/ `formula_base`（不带系数，命名）/ `formula_key`（ASCII 最简比，查表）/ `coefficient` / `peroxy` / `mixed` / `ratio_ok` —— **三口径不可混用** |
 | _valence_plan_of / _plan_is_mixed / _entry_charge | **化合价表达式规范化**（v4）：`int → [v,v,…]`、`Array → 降序规范化`；长度 ≠ 张数 / 含 0 / 同元素跨正负 → `[]`（非法）。`entry.charge` = 该元素全部副本的净电荷（混合价下 `count × valence` 不再成立，电荷平衡只认它）|
 | _search_valences / _valence_domains / _dfs_valences / _valence_assignment_ok | 默认配平失败时的**统一价态**搜索：2~3 种元素、按实际张数电荷平衡、正价元素电负性 ≤ 负价元素（NCl₃/BCl₃/ClF 由此识别，NCl/BrN/IN 被排除）。**价域（v4）**：金属 / 准金属取全部正价并降序（高价优先 → 主流解先命中，Fe₂O₃ 仍是 +3、FeO 自动退 +2），非金属保持数据顺序 |
 | _search_mixed_valences / _search_mixed_signs / _dfs_mixed_valences / _solve_last_valence / _valence_combos / _mixed_charge_reachable / _multiset_count | **混合价态搜索**（v4，Fe₃O₄）：同元素各副本可取不同价、必须同号；前 n-1 元素枚举多重集组合，末元素用有界 DP 反解；组合数 > `MIXED_NODE_CAP`(5000) 直接判无解（联机不卡帧）|
@@ -1217,6 +1217,28 @@ GamePage 隐藏 / `phase = 2`）；Section 九 再补 10 条管右面板高亮�
 顺带修掉的老 bug：`_try_get_oxy_name()` 拿**下标式**（`H₂SO₄`）去比 `OXYACID_FORMULAS`
 的 ASCII key（`H2SO4`），永远不相等 —— 含氧酸名一直没生效过。改用 `formula_key`；
 多元化合物 fallback 改用 `formula_base`（否则名字会带系数 `2NaBr`）。
+
+### 准金属配平丢元素（v17.0）
+
+`_assign_valences()` 的默认分支原先把 `TYPE_METAL` 当作唯一的「正价元素」类型，
+准金属（B 最高 +3 / Si +4）既不进 `pos_list` 也不进 `neg_list`，被**静默丢弃**：
+
+- `[Si,H,H,Cl,Cl]` → 只剩 H + Cl，凑成 `2HCl`（单分子 2 个原子，实际 5 张牌），
+  而且 `ratio_ok = true` → `_evaluate_play()` 直接放行，玩家看到的化学式是假的；
+- `BCl₃` / `SiCl₄` / `SiO₂` 反而配不出来，只能靠价态搜索兜底。
+
+同一文件的 `_valence_domains()` 用的是 `TYPE_METAL or TYPE_METALLOID`，
+两条路径口径不一致才是根因。现在默认分支也认准金属，并补 `else: return {}`
+兜底 ——「既不进 pos 也不进 neg」的元素一律判配不出，交给搜索 / 明确拒绝。
+
+**不变量**（`tests/verify_metalloid_compound.gd` 用一条断言守住整类回归）：
+化学式里的元素集合 == 输入牌面的元素集合。
+
+顺带修的口径 bug：`play_cards()` 拼日志时化学式与 IUPAC 名原来用玩家传参
+`custom_valences` 重算，而桌面显示用 `table_custom_valences`（引擎搜出的解）。
+`[H,H,O,O]` 过氧根因此会打出「2HO₂」而桌面显示「H₂O₂」。现在日志两处都读
+`table_custom_valences`，与桌面 / UI 完全同源。
+
 
 AI 侧（L4a）：`AIPlayer.AI_RATIO_COMPOUND` 打开后 2 元素按最简比凑牌（`2Na+2Br` 一次出 4 张），
 3+ 元素不参与（组合数 × 价态搜索会拖慢 AI 回合）。

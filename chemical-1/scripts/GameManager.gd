@@ -502,12 +502,15 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 	if pattern == CardPatternsScript.CardPattern.ELEMENT and elem_name != "":
 		log_msg += " " + elem_name
 	if pattern == CardPatternsScript.CardPattern.COMPOUND:
-		var fi = CompoundSolverScript.get_compound_formula(cards, custom_valences)
+		# 必须用引擎最终认定的价态（table_custom_valences = 出牌时补出的搜索解），
+		# 而不是玩家 / AI 传进来的 custom_valences：过氧根、准金属这类默认配平
+		# 覆盖不到的解只存在于前者里，用后者重算会打印出另一个化学式（H₂O₂ → 2HO₂）。
+		var fi = CompoundSolverScript.get_compound_formula(cards, table_custom_valences)
 		if not fi.is_empty():
 			var formula = fi.get("formula", "??")
 			log_msg += " " + formula
 			# 附加 IUPAC 中文命名
-			var comp_name = CompoundSolverScript.get_compound_name(cards, custom_valences)
+			var comp_name = CompoundSolverScript.get_compound_name(cards, table_custom_valences)
 			if comp_name != "":
 				log_msg += "（" + comp_name + "）"
 	if pattern == CardPatternsScript.CardPattern.ORGANIC:
@@ -619,15 +622,27 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 
 # ---- 比大小失败的具体原因（-2 的细分文案）----
 # 统一文案「牌不够大」会让玩家无法判断该换组合还是该换牌型：
-#   牌型被压制 / 族炸张数不够 / 原子序数和不够 / 与桌面打平
+#   牌型被压制 / 族炸张数不够 / 原子序数和不够 / 和相同但质量更大 / 与桌面打平
+#   平手判定是两级的（CardPatterns._compare_by_total_atomic）：
+#     ① 原子序数和：小的赢；② 和相同时比相对原子质量和：轻的赢。
+#   P15-E 修：②这一档以前也报「原子序数和 20 大于桌面 20」，自相矛盾
+#   —— 玩家看到 20 大于 20 完全不知道该改什么。
 func _compare_fail_reason(cards: Array, pattern: int, table: Array, table_pat: int, cmp: int) -> String:
 	var mine := _atomic_sum(cards)
 	var theirs := _atomic_sum(table)
+	var my_mass := _mass_sum(cards)
+	var their_mass := _mass_sum(table)
 	if cmp == 0:
-		return "与桌面打平（原子序数和同为 %d）；同类牌必须比桌面更小" % mine
+		return "与桌面打平（原子序数和同为 %d、相对原子质量和同为 %.2f）；同类牌必须比桌面更小" % [
+			mine, my_mass]
 	if pattern == table_pat:
 		if pattern == CardPatternsScript.CardPattern.CLAN_BOMB and cards.size() != table.size():
 			return "族炸张数不够（%d 张 vs 桌面 %d 张）" % [cards.size(), table.size()]
+		if mine == theirs:
+			# 原子序数和打平 → 判定其实落在相对原子质量上（越轻牌越大），
+			# 这时再说「原子序数过大」就是错的提示。
+			return "原子序数和同为 %d，再比相对原子质量：%.2f 大于桌面 %.2f（越轻牌越大）" % [
+				mine, my_mass, their_mass]
 		return "原子序数和 %d 大于桌面 %d（数值越小牌越大）" % [mine, theirs]
 	return "%s 压不过桌面的 %s（%d vs %d）" % [
 		CardPatternsScript.get_pattern_name(pattern).trim_suffix("！"),
@@ -640,6 +655,15 @@ func _atomic_sum(cards: Array) -> int:
 	var total := 0
 	for c in cards:
 		total += int(c.atomic_number)
+	return total
+
+
+# 相对原子质量和：原子序数和打平时用它分胜负（越轻牌越大），
+# 也用于把「为什么这手牌不够大」讲清楚。
+func _mass_sum(cards: Array) -> float:
+	var total := 0.0
+	for c in cards:
+		total += float(c.atomic_weight)
 	return total
 
 
