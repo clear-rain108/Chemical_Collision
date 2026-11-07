@@ -144,7 +144,7 @@ func _run() -> void:
 	_check(_panel_button(scene, AUTO_BTN_PREFIX) == null,
 		"已配平时不显示「自动配平」按钮（%s）" % _panel_text(scene))
 
-	# ---- 2) 面板 Σ：配不平组合 → 红字 + 点确认后提示「H×2 多带了」----
+	# ---- 2) 面板 Σ：配不平组合 → 红字 + 点确认后逐项点名（元素+价×张数）+ Σ ----
 	_set_hand(scene, ["H", "H", "C", "N"])
 	await process_frame
 	_select_all(scene)
@@ -167,8 +167,8 @@ func _run() -> void:
 		confirm_btn.emit_signal("pressed")
 		await process_frame
 		var wtxt := _warn_text(scene)
-		_check(wtxt.find("H×2") >= 0 and wtxt.find("多带了") >= 0,
-			"提示点名「H×2 多带了」（实际「%s」）" % wtxt)
+		_check(wtxt.find("H-1×2") >= 0 and wtxt.find("C+4×1") >= 0,
+			"提示逐项点名「元素+价×张数」（实际「%s」）" % wtxt)
 		_check(wtxt.find("Σ = -1") >= 0, "提示同时给出 Σ = -1（实际「%s」）" % wtxt)
 
 	# ---- 3) 「自动配平 ▶」：可行解直接打出 ----

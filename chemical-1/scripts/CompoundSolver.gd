@@ -110,6 +110,8 @@ const SPECIAL_NAMES = {
 	"Al2O3": "三氧化二铝", "SiO2": "二氧化硅",
 	# 碱金属 / 碱土金属 / 锌的氧化物
 	"Na2O": "氧化钠", "K2O": "氧化钾", "MgO": "氧化镁", "CaO": "氧化钙", "ZnO": "氧化锌",
+	# 过氧化物（O 取 −1、且必须成对 —— H₂O₂ / Na₂O₂ / K₂O₂ / CaO₂）
+	"H2O2": "过氧化氢", "Na2O2": "过氧化钠", "K2O2": "过氧化钾", "CaO2": "过氧化钙",
 }
 
 # 混合价态搜索的组合数上限（超过直接放弃：宁可这一手判非法，也不能在联机对局里卡帧）。
@@ -376,24 +378,57 @@ static func _assign_valences(cards: Array, custom_valences: Dictionary = {}) -> 
 	var total_pos = 0; var total_neg = 0
 	for e in pos_list: total_pos += _entry_charge(e)
 	for e in neg_list: total_neg += _entry_charge(e)
-	var ratio_ok = (total_pos == total_neg and total_pos > 0)
+	var ratio_ok = (absi(total_pos) == absi(total_neg) and total_pos != 0)
 
 	# 构建化学式（下标）与 formula_key（纯 ASCII 数字，SPECIAL_NAMES 的 key）
-	var formula = ""
+	# 按最简整数比约分：4H+2O 旧实现显示 H₄O₂，现在 2H₂O（系数在前、下标最简）；
+	# 2Na+2Br 旧实现显示 Na₂Br₂，现在 2NaBr。名字仍按最简式的组成命名（溴化钠）。
+	# 过氧根例外：O 全部取 −1 时不能用 gcd（H₂O₂ 的 H:O 是 1:1，gcd 会约成 HO），
+	# 改按「过氧根个数」约分：count(O)/2 就是分子个数（2H+2O → H₂O₂、4H+4O → 2H₂O₂）。
+	var peroxy := false
+	var g := 0
+	for e in neg_list:
+		if String(e.symbol) != "O":
+			continue
+		# 每个 O 的价态绝对值：1 → 过氧根（O 取 −1），2 → 正常氧化物。
+		# 不能直接比 ox_state：负价元素的 ox_state 存的是绝对值（1 而不是 −1）。
+		var o_count: int = maxi(1, int(e.count))
+		var unit_val: int = absi(_entry_charge(e)) / o_count
+		if unit_val == 1:
+			peroxy = true
+			g = maxi(1, o_count / 2)
+	if g < 1:
+		# 初值必须是 0：gcd(1, n) 恒为 1，用 1 起算等于根本没约分
+		g = 0
+		for e in pos_list:
+			g = _gcd(g, int(e.count))
+		for e in neg_list:
+			g = _gcd(g, int(e.count))
+		if g < 1:
+			g = 1
+
+	var formula_base = ""
 	var formula_key = ""
 	var mixed := false
 	for e in pos_list:
-		formula += e.symbol + ("" if e.count == 1 else _to_subscript(e.count))
-		formula_key += e.symbol + ("" if e.count == 1 else str(e.count))
+		var n_pos: int = int(e.count) / g
+		formula_base += e.symbol + ("" if n_pos == 1 else _to_subscript(n_pos))
+		formula_key += e.symbol + ("" if n_pos == 1 else str(n_pos))
 		if bool(e.get("mixed", false)): mixed = true
 	for e in neg_list:
-		formula += e.symbol + ("" if e.count == 1 else _to_subscript(e.count))
-		formula_key += e.symbol + ("" if e.count == 1 else str(e.count))
+		var n_neg: int = int(e.count) / g
+		formula_base += e.symbol + ("" if n_neg == 1 else _to_subscript(n_neg))
+		formula_key += e.symbol + ("" if n_neg == 1 else str(n_neg))
 		if bool(e.get("mixed", false)): mixed = true
+	# 系数：这组牌其实是 g 个相同的分子，g > 1 时写成 2H₂O / 2NaBr
+	var formula: String = (str(g) + formula_base) if g > 1 else formula_base
 
 	return {
 		"formula": formula,
+		"formula_base": formula_base,
 		"formula_key": formula_key,
+		"coefficient": g,
+		"peroxy": peroxy,
 		"mixed": mixed,
 		"ratio_ok": ratio_ok,
 		"total_positive": total_pos,
@@ -485,7 +520,9 @@ static func _search_valences(cards: Array) -> Dictionary:
 
 
 # 每元素的候选价域：[{symbol, count, card, values}]
-static func _valence_domains(cards: Array) -> Array:
+# allow_peroxide=false：不把 O 的 −1 放进价域。混合价态搜索（3 张 O 拆成 −2/−1/−1）
+# 用它 —— 过氧根是「整对 O 都取 −1」的统一解，不该由混合搜索拼出来。
+static func _valence_domains(cards: Array, allow_peroxide: bool = true) -> Array:
 	var elems: Array = []
 	var index: Dictionary = {}
 	for c in cards:
@@ -503,8 +540,11 @@ static func _valence_domains(cards: Array) -> Array:
 			vals.reverse()   # 降序：高价优先（常见化合物优先命中）
 		else:
 			for v in c.common_valence:
-				if v != 0:
-					vals.append(v)
+				if v == 0:
+					continue
+				if not allow_peroxide and String(c.symbol) == "O" and int(v) == -1:
+					continue
+				vals.append(v)
 		if vals.is_empty():
 			return []
 		index[c.symbol] = elems.size()
@@ -533,6 +573,13 @@ static func _valence_assignment_ok(elems: Array, chosen: Dictionary) -> bool:
 	var has_neg := false
 	for e in elems:
 		var v: int = int(chosen.get(e["symbol"], 0))
+		# 过氧根必须成对：O 取 −1 时张数须为偶数且 ≥2。
+		# H₂O₂ / Na₂O₂ / CaO₂ 成立；H₃O₃ / Na₂O₃ 这类不存在的组合在这里被挡掉，
+		# 不需要额外的「过氧化物白名单」。
+		if String(e["symbol"]) == "O" and v == -1:
+			var o_count: int = int(e["count"])
+			if o_count < 2 or o_count % 2 != 0:
+				return false
 		if v > 0:
 			has_pos = true
 			pos_elec = maxf(pos_elec, e["card"].electronegativity)
@@ -560,7 +607,8 @@ static func _valence_assignment_ok(elems: Array, chosen: Dictionary) -> bool:
 #      副本互换不产生新解，组合数从排列数级别的爆炸降到 C(n+k-1, n)；
 #   5) 组合数 > MIXED_NODE_CAP 直接放弃：联机对局宁可判非法，也不能卡帧。
 static func _search_mixed_valences(cards: Array) -> Dictionary:
-	var elems = _valence_domains(cards)
+	# 过氧根不进混合搜索：3 张 O 拆成 −2/−1/−1 会拼出「过氧化某」这种不存在的组合
+	var elems = _valence_domains(cards, false)
 	if elems.size() < 2 or elems.size() > 3:
 		return {}
 	var estimate := 1
@@ -814,13 +862,16 @@ static func get_compound_name(cards: Array, custom_valences: Dictionary = {}) ->
 	if pos_list.size() == 1 and neg_list.size() == 1:
 		return _name_binary_compound(pos_list[0], neg_list[0], pos_list[0].ox_state)
 	else:
-		# 多元化合物：直接用化学式 + 系统命名
-		return fi.get("formula", "")
+		# 多元化合物：直接用化学式 + 系统命名（formula_base：不带系数前缀，
+		# 否则 2NaBr 会被当成名字的一部分，出现「2NaBr」这种名字）
+		return fi.get("formula_base", fi.get("formula", ""))
 
 
 # 尝试匹配含氧酸/含氧酸盐名称
 static func _try_get_oxy_name(fi: Dictionary, pos_list: Array, neg_list: Array) -> String:
-	var formula = fi.get("formula", "")
+	# 含氧酸/含氧盐的比对表 key 是 ASCII（H2SO4 这种），必须用 formula_key；
+	# 旧实现拿下标式（H₂SO₄）去比，永远不相等 —— 含氧酸命名一直没生效过。
+	var formula = fi.get("formula_key", fi.get("formula", ""))
 
 	# 检查是否为纯含氧酸（只有 H + 非金属 + O）
 	if pos_list.size() == 1 and pos_list[0].symbol == "H":
@@ -973,4 +1024,29 @@ static func _gcd(a: int, b: int) -> int:
 		b = a % b
 		a = t
 	return a
+
+
+# 单分子原子数（B′ 溢出化合物的判定口径）。
+# 旧口径是「牌数 ≥ 人数」，可以被「两张小分子叠着打」刷到：
+# 2Na+2Br 是 4 张牌，但每个 NaBr 只有 2 个原子，和 4 人局的「溢出」毫无关系。
+# 优先用配平算出的分子个数 coefficient（过氧根也算得准：H₂O₂ → 4 个原子）；
+# 配不出化学式时退化为 gcd 口径（过氧根会偏小 → 宁可判不免疫，也不放水）。
+static func get_formula_atom_count(cards: Array) -> int:
+	if cards.is_empty():
+		return 0
+	var g := 0
+	var cv: Dictionary = get_uniform_valence_pairs(cards)
+	if not cv.is_empty():
+		var fi: Dictionary = get_compound_formula(cards, cv)
+		if not fi.is_empty() and bool(fi.get("ratio_ok", false)):
+			g = int(fi.get("coefficient", 0))
+	if g < 1:
+		var counts: Dictionary = {}
+		for c in cards:
+			counts[c.symbol] = int(counts.get(c.symbol, 0)) + 1
+		for sym in counts:
+			g = _gcd(g, int(counts[sym]))
+	if g < 1:
+		g = 1
+	return int(cards.size() / g)
 

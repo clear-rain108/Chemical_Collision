@@ -184,14 +184,19 @@ func _run() -> void:
 	for l in lbs:
 		texts.append(l.text)
 	_check("+1" in texts, "示例牌显示 Na 常见化合价 +1")
-	_check("-2" in texts, "示例牌显示 O 常见化合价 -2")
+	# O 现在有 −2 / −1 两个价（过氧根 H₂O₂ / CaO₂），迷你卡两个价放得下，一起显示
+	var has_o_deux := false
+	for t in texts:
+		if String(t).find("-2") >= 0:
+			has_o_deux = true
+	_check(has_o_deux, "示例牌显示 O 常见化合价 -2（含过氧根 -1）")
 
 	# 「看三张典型牌」是唯一一个 3 张并排的 HBoxContainer
 	var demo: Array = _demo_fourth_row(scene.help_bodies[1])
 	_check(demo.size() == 3, "示例行有 3 张迷你卡（实际 %d）" % demo.size())
 	# Cl 的 5 个价在迷你卡（96 宽）里放不下 → 与手牌卡面同一套裁剪：只留两端价（P14-A 起不带 "…"）
-	_check(demo == ["+1", "-2", "-1 +7"],
-		"示例卡第 4 行是化合价 Na=+1 / O=-2 / Cl=-1 +7（实际 %s）" % str(demo))
+	_check(demo == ["+1", "-2 -1", "-1 +7"],
+		"示例卡第 4 行是化合价 Na=+1 / O=-2 -1 / Cl=-1 +7（实际 %s）" % str(demo))
 	# 29 种元素网格仍要显示牌库张数
 	var grid_texts: Array = []
 	for panel in _find_all(scene.help_bodies[1], "PanelContainer"):

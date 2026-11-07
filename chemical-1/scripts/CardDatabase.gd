@@ -40,7 +40,7 @@ static func get_element_data() -> Array:
 		["B", "硼", "Boron", 5, CardDataScript.GROUP_IIIA, 2, CardDataScript.TYPE_METALLOID, CardDataScript.FORM_SOLID, 3, [3], 2.04, 10.811, "硬度仅次于金刚石"],
 		["C", "碳", "Carbon", 6, CardDataScript.GROUP_IVA, 2, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_SOLID, 4, [4, 2, -4], 2.55, 12.011, "生命的基础元素"],
 		["N", "氮", "Nitrogen", 7, CardDataScript.GROUP_VA, 2, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_GAS, 5, [-3, 3, 5], 3.04, 14.007, "大气中含量最多的气体"],
-		["O", "氧", "Oxygen", 8, CardDataScript.GROUP_VIA, 2, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_GAS, 6, [-2], 3.44, 15.999, "维持生命必需的气体"],
+		["O", "氧", "Oxygen", 8, CardDataScript.GROUP_VIA, 2, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_GAS, 6, [-2, -1], 3.44, 15.999, "维持生命必需的气体"],
 		["F", "氟", "Fluorine", 9, CardDataScript.GROUP_VIIA, 2, CardDataScript.TYPE_NONMETAL, CardDataScript.FORM_GAS, 7, [-1], 3.98, 18.998, "最活泼的非金属"],
 		["Ne", "氖", "Neon", 10, CardDataScript.GROUP_0, 2, CardDataScript.TYPE_NOBLE_GAS, CardDataScript.FORM_GAS, 8, [0], 0.0, 20.180, "霓虹灯中发光的气体"],
 		# === 第三周期 ===

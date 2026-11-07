@@ -60,6 +60,9 @@ var log_messages: Array:
 # 三、规则状态变量
 # ============================================================
 var compound_immune: bool = false          # 溢出化合物免疫族炸
+# 引擎自己「读出来」的化合价（_evaluate_play 里用价态搜索兜底时写入）。
+# 非空 = 这次出牌没让玩家选价，引擎自己解出来了，桌面要用这套价显示。
+var last_understood_valences: Dictionary = {}
 var clan_bomb_chain_active: bool = false   # 族炸接炸链激活
 var clan_bomb_owner: int = -1              # 接炸链引爆者索引
 var clan_bomb_disabled: bool = false       # 禁用族炸（第一关）
@@ -432,6 +435,19 @@ func _evaluate_play(player_index: int, cards: Array, custom_valences: Dictionary
 	# 旧实现「空式子就放行」会让 NCl / BrN / IN 这类假化合物混进桌面。
 	if pattern == CardPatternsScript.CardPattern.COMPOUND:
 		var fi = CompoundSolverScript.get_compound_formula(cards, custom_valences)
+		last_understood_valences = {}
+		# 默认配平只覆盖主流解（O 一律取 −2、非金属一律取最低负价）。
+		# H₂O₂ / CaO₂ 这类过氧根、NCl₃ / BCl₃ 这类「非金属作正价」只能靠价态搜索找到 ——
+		# 玩家 / AI 没显式选价时在这里补一次搜索解，否则这些牌永远打不出来。
+		if custom_valences.is_empty() and (fi.is_empty() or not fi.get("ratio_ok", false)):
+			var auto_cv: Dictionary = CompoundSolverScript.get_valence_pairs(cards)
+			if not auto_cv.is_empty():
+				var fi_auto = CompoundSolverScript.get_compound_formula(cards, auto_cv)
+				if not fi_auto.is_empty() and bool(fi_auto.get("ratio_ok", false)):
+					fi = fi_auto
+					# 回写给桌面：否则 table_custom_valences 是空的，
+					# 桌面小卡重新算化学式又会得到「2HO」而不是 H₂O₂。
+					last_understood_valences = auto_cv.duplicate()
 		if fi.is_empty() or not fi.get("ratio_ok", false):
 			# P14-B：拒绝时写清原因（玩家唯一能自查的量是总电荷 Σ，见 _compound_reject_reason）
 			last_reject_reason = _compound_reject_reason(cards, custom_valences)
@@ -457,7 +473,7 @@ func _compound_reject_reason(cards: Array, custom_valences: Dictionary) -> Strin
 		total += int(v)
 	if total != 0:
 		return "化合价配不平：Σ = %+d（需 0）" % total
-	return "原子比例与任何化学式都对不上（多元素化合物需每种元素各 1 张）"
+	return "原子比例与任何化学式都对不上（化学价态配不平）"
 
 
 # 出牌：先只读判定，通过后才落子。
@@ -471,7 +487,9 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 	# -------- 从手牌移除，更新桌面 --------
 	player.remove_cards(cards)
 	table_cards = cards.duplicate()
-	table_custom_valences = custom_valences.duplicate()
+	# 引擎自己解出的价态优先（过氧根 / 非金属作正价这些默认配平覆盖不到的解）
+	table_custom_valences = (last_understood_valences.duplicate()
+		if not last_understood_valences.is_empty() else custom_valences.duplicate())
 	table_pattern = pattern
 	table_player_index = player_index
 	compound_immune = false
@@ -569,9 +587,13 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 	# -------- 化合物：解除冷却 + 溢出检查 --------
 	if pattern == CardPatternsScript.CardPattern.COMPOUND:
 		player.clan_bomb_cooling = false
-		if cards.size() >= players.size():
+		# B′：溢出按「一个分子的原子数」判，不按「出了几张牌」判。
+		# 2Na+2Br 是 4 张牌但每分子只有 2 个原子，不该免疫族炸；
+		# P₂O₅（7 个原子）、Fe₃O₄（7 个原子）这类大分子才免疫。
+		var atom_count: int = CompoundSolverScript.get_formula_atom_count(cards)
+		if atom_count >= players.size():
 			compound_immune = true
-			log_messages.append("⚠ 溢出化合物！牌数≥%d人，免疫族炸" % players.size())
+			log_messages.append("⚠ 溢出化合物！单分子 %d 个原子≥%d人，免疫族炸" % [atom_count, players.size()])
 
 	# -------- 非族炸/非顺序出牌完成：重置状态 --------
 	clan_bomb_chain_active = false

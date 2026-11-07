@@ -259,12 +259,77 @@ func _test_ai() -> void:
 	_check(gm3.get_table_pattern() == CardPatternsScript.CardPattern.COMPOUND,
 		"AI 手牌 Na+Cl 仍会合成 NaCl（桌面牌型 %d）" % gm3.get_table_pattern())
 
+# ---- 多原子化合物 / 化学式约分（P15-B）----
+# 旧实现 2Na+2Br 显示 Na₂Br₂、4H+2O 显示 H₄O₂ —— 既不是最简比，也不是真实分子式。
+# 现在按最简整数比约分，系数写在前面：2NaBr / 2H₂O；
+# 过氧根单独按「O 的个数/2」约分（H₂O₂ 的 H:O 是 1:1，用 gcd 会被约成 HO）。
+func _test_multiatom() -> void:
+	var cases := [
+		{"hand": ["Na", "Na", "Br", "Br"], "formula": "2NaBr", "key": "NaBr", "coef": 2},
+		{"hand": ["H", "H", "H", "H", "O", "O"], "formula": "2H₂O", "key": "H2O", "coef": 2},
+		{"hand": ["Mg", "Mg", "Mg", "O", "O", "O"], "formula": "3MgO", "key": "MgO", "coef": 3},
+		{"hand": ["Fe", "Fe", "Fe", "O", "O", "O", "O"], "formula": "Fe₃O₄", "key": "Fe3O4", "coef": 1},
+	]
+	for c in cases:
+		var cards := _cards(c["hand"])
+		var fi: Dictionary = CompoundSolverScript.get_compound_formula(cards, {})
+		if fi.is_empty():
+			_check(false, "%s 应能配平（实际给不出化学式）" % str(c["hand"]))
+			continue
+		_check(String(fi.get("formula", "")) == String(c["formula"]),
+			"%s → %s（实际 %s）" % [str(c["hand"]), c["formula"], fi.get("formula", "")])
+		_check(String(fi.get("formula_key", "")) == String(c["key"]),
+			"%s 的 formula_key = %s（实际 %s）" % [str(c["hand"]), c["key"], fi.get("formula_key", "")])
+		_check(int(fi.get("coefficient", 0)) == int(c["coef"]),
+			"%s 的系数 = %d（实际 %d）" % [str(c["hand"]), c["coef"], int(fi.get("coefficient", 0))])
+
+	# ---- 过氧根（L1/L2）：O 取 −1，且必须成对 ----
+	var h2o2 := _cards(["H", "H", "O", "O"])
+	var cv_h2o2: Dictionary = CompoundSolverScript.get_uniform_valence_pairs(h2o2)
+	_check(int(cv_h2o2.get("O", 0)) == -1, "H+H+O+O 解出 O(-1)（实际 %s）" % str(cv_h2o2))
+	var fi_h2o2: Dictionary = CompoundSolverScript.get_compound_formula(h2o2, cv_h2o2)
+	_check(String(fi_h2o2.get("formula", "")) == "H₂O₂",
+		"H+H+O+O → H₂O₂（实际 %s）" % fi_h2o2.get("formula", ""))
+	_check(bool(fi_h2o2.get("peroxy", false)), "H₂O₂ 标记 peroxy = true")
+	var name_h2o2: String = CompoundSolverScript.get_compound_name(h2o2, cv_h2o2)
+	_check(name_h2o2 == "过氧化氢", "H₂O₂ 命名为过氧化氢（实际「%s」）" % name_h2o2)
+
+	# Ca+2O → CaO₂；Ca+O 仍必须是 CaO（不能被过氧化物抢走）
+	var cao2 := _cards(["Ca", "O", "O"])
+	var cv_cao2: Dictionary = CompoundSolverScript.get_uniform_valence_pairs(cao2)
+	var fi_cao2: Dictionary = CompoundSolverScript.get_compound_formula(cao2, cv_cao2)
+	_check(String(fi_cao2.get("formula", "")) == "CaO₂",
+		"Ca+2O → CaO₂（实际 %s）" % fi_cao2.get("formula", ""))
+	var cao := _cards(["Ca", "O"])
+	var cv_cao: Dictionary = CompoundSolverScript.get_uniform_valence_pairs(cao)
+	var fi_cao: Dictionary = CompoundSolverScript.get_compound_formula(cao, cv_cao)
+	_check(String(fi_cao.get("formula", "")) == "CaO",
+		"Ca+O → CaO 而不是 CaO₂（实际 %s）" % fi_cao.get("formula", ""))
+
+	# 成对约束：3 张 O 全取 −1 必须非法（H₃O₃ / Na₂O₃ 都不存在）
+	var odd_ozone: Array = [{"symbol": "O", "count": 3, "card": _card("O")}]
+	_check(not CompoundSolverScript._valence_assignment_ok(odd_ozone, {"O": -1}),
+		"O 取 -1 时 3 张非法（过氧根必须成对）")
+
+	# ---- 溢出判定口径（B′）：按「单分子原子数」，不按「出了几张牌」----
+	_check(CompoundSolverScript.get_formula_atom_count(_cards(["Na", "Na", "Br", "Br"])) == 2,
+		"2Na+2Br 单分子 2 个原子（实际 %d）"
+		% CompoundSolverScript.get_formula_atom_count(_cards(["Na", "Na", "Br", "Br"])))
+	_check(CompoundSolverScript.get_formula_atom_count(_cards(["H", "H", "O", "O"])) == 4,
+		"H₂O₂ 单分子 4 个原子（实际 %d）"
+		% CompoundSolverScript.get_formula_atom_count(_cards(["H", "H", "O", "O"])))
+	_check(CompoundSolverScript.get_formula_atom_count(_cards(["P", "P", "O", "O", "O", "O", "O"])) == 7,
+		"P₂O₅ 单分子 7 个原子（实际 %d）"
+		% CompoundSolverScript.get_formula_atom_count(_cards(["P", "P", "O", "O", "O", "O", "O"])))
+
+
 
 func _run() -> void:
 	_test_solver()
 	_test_engine()
 	_test_hint()
 	_test_ai()
+	_test_multiatom()
 	_finish()
 
 

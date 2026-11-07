@@ -800,11 +800,11 @@ func _start_page_decor() -> void:
 	marks.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	var specs := [
-		{"t": "H2O", "p": Vector2(34, 60), "fs": 76},
-		{"t": "CO2", "p": Vector2(880, 34), "fs": 64},
+		{"t": "H₂O", "p": Vector2(34, 60), "fs": 76},
+		{"t": "CO₂", "p": Vector2(880, 34), "fs": 64},
 		{"t": "NaCl", "p": Vector2(96, 520), "fs": 54},
-		{"t": "CH4", "p": Vector2(946, 540), "fs": 58},
-		{"t": "O2", "p": Vector2(520, 596), "fs": 44},
+		{"t": "CH₄", "p": Vector2(946, 540), "fs": 58},
+		{"t": "O₂", "p": Vector2(520, 596), "fs": 44},
 	]
 	for s in specs:
 		var lb := Label.new()
@@ -1996,10 +1996,10 @@ func _build_end_page() -> void:
 		end_page.remove_child(c)
 		c.queue_free()
 	_page_backdrop(end_page, "EndBg", [
-		{"t": "H2O", "p": Vector2(30, 470), "fs": 72},
-		{"t": "CO2", "p": Vector2(884, 60), "fs": 56},
+		{"t": "H₂O", "p": Vector2(30, 470), "fs": 72},
+		{"t": "CO₂", "p": Vector2(884, 60), "fs": 56},
 		{"t": "NaCl", "p": Vector2(58, 40), "fs": 48},
-		{"t": "O2", "p": Vector2(1000, 520), "fs": 44},
+		{"t": "O₂", "p": Vector2(1000, 520), "fs": 44},
 	], [
 		{"s": "H", "p": Vector2(56, 300), "a": -0.13},
 		{"s": "O", "p": Vector2(986, 330), "a": 0.12},
@@ -2221,9 +2221,9 @@ func _build_tutorial_page() -> void:
 		page.remove_child(c)
 		c.queue_free()
 	_page_backdrop(page, "TutorialBg", [
-		{"t": "H2O", "p": Vector2(36, 430), "fs": 68},
-		{"t": "CO2", "p": Vector2(896, 70), "fs": 54},
-		{"t": "CH4", "p": Vector2(1000, 500), "fs": 46},
+		{"t": "H₂O", "p": Vector2(36, 430), "fs": 68},
+		{"t": "CO₂", "p": Vector2(896, 70), "fs": 54},
+		{"t": "CH₄", "p": Vector2(1000, 500), "fs": 46},
 	], [
 		{"s": "Cl", "p": Vector2(64, 96), "a": -0.12},
 		{"s": "Na", "p": Vector2(984, 300), "a": 0.13},
@@ -6079,29 +6079,27 @@ func _on_confirm_compound() -> void:
 		_handle_result(result)
 		return
 
-	# 3+元素化合物：每种恰好1张 + 总电荷=0（引擎同规则，见 GameManager._evaluate_play）
-	# P14-B：旧提示只写「仅支持 2 元素化合物（多元素需每种恰好 1 张且电荷平衡）」，
-	# 没说清是哪一条不满足 —— 真机截图里玩家选了 H,H,C,N，看提示完全不知道「多带了一张 H」。
+	# 3+ 元素化合物：总电荷 Σ = 0 即可（不再要求「每种恰好 1 张」）。
+	# 引擎侧同口径（_search_valences 支持 2~3 元素、按张数加权），所以
+	# H×2 + S + O×4 能直接出 H₂SO₄，H×2 + O×2 能出 H₂O₂，Ca + O×2 能出 CaO₂。
+	# P14-B：失败提示要说清是哪一项不对 —— 真机截图里玩家选了 H,H,C,N，
+	# 旧提示只说「仅支持 2 元素化合物」，完全不知道问题在哪。
 	var total_charge = 0
-	var all_one = true
-	var dup_syms: Array = []
 	for e in valence_list:
 		total_charge += e.sign * e.v * e.avail   # 按张数累加：2 张 H 就是 2 份价
-		if e.avail != 1:
-			all_one = false
-			dup_syms.append("%s×%d" % [e.symbol, e.avail])
-	if all_one and total_charge == 0:
+	if total_charge == 0:
 		var ccards: Array = []
 		for _idx in selected_indices: ccards.append(cp.hand[_idx])
 		var result = game_manager.play_cards(gm_idx, ccards, custom_valences, CardPatternsScript.CardPattern.COMPOUND)
 		_handle_result(result)
 		return
 
-	if not all_one:
-		_show_info("多元素化合物要求每种元素各 1 张：%s 多带了（当前 Σ = %+d，需 0）。\n可拆成两张牌分别出（如 H₂ + 另一种单质），或只带其中一张。" \
-			% ["、".join(dup_syms), total_charge])
-	else:
-		_show_info("化合价配不平：Σ = %+d（需 0）。正负价按张数相加必须为 0，例如 H(−1)+C(+4)+N(−3)=0。" % total_charge)
+	# 逐项列出「价 × 张数」，玩家一眼能看出哪个元素多带了 / 少带了
+	var parts: Array = []
+	for e in valence_list:
+		parts.append("%s%+d×%d" % [e.symbol, e.sign * e.v, e.avail])
+	_show_info("化合价配不平：%s → Σ = %+d（需 0）。\n正负价按张数相乘相加必须为 0，例如 H(−1)×2+C(+4)+N(−3)=0。" \
+		% [" + ".join(parts), total_charge])
 
 func _on_reset_valence() -> void:
 	compound_selections.clear()

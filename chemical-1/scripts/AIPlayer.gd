@@ -8,6 +8,10 @@ extends RefCounted
 const CardPatternsScript = preload("res://scripts/CardPatterns.gd")
 const CompoundSolverScript = preload("res://scripts/CompoundSolver.gd")
 
+# L4a：AI 是否尝试「按最简比一次出多个分子」的化合物（2Na+2Br → 2NaBr）。
+# 关掉就退回「只用 2 张牌对」的老策略（对局节奏更慢，但更容易复现旧局）。
+const AI_RATIO_COMPOUND := true
+
 # ============================================================
 # 一、主入口：当前 AI 自动操作
 # ============================================================
@@ -109,6 +113,32 @@ static func _try_play(game_manager, p, gm_idx: int) -> void:
 			var cv: Dictionary = _pair_valences(pair)
 			if not cv.is_empty() and game_manager.play_cards(gm_idx, pair, cv) == 0: return
 
+	# L4a：一次出多个分子（2Na+2Br → 2NaBr、4H+2O → 2H₂O）。
+	# 放在 2 张牌对之后：能用 2 张解决就不多甩牌，只有手牌够配方时才一次清掉 4~6 张。
+	# 只做 2 元素 —— 3+ 元素的组合数 × 价态搜索会明显拖慢 AI 回合。
+	if AI_RATIO_COMPOUND:
+		var tried_ratio: Dictionary = {}
+		for i in range(p.hand.size()):
+			for j in range(i + 1, p.hand.size()):
+				var ra = p.hand[i]
+				var rb = p.hand[j]
+				if ra.symbol == rb.symbol:
+					continue
+				var rkey: String = ra.symbol + "|" + rb.symbol if ra.symbol < rb.symbol \
+						else rb.symbol + "|" + ra.symbol
+				if tried_ratio.has(rkey):
+					continue
+				tried_ratio[rkey] = true
+				if not game_manager.halogen_exchange_allowed and _is_ai_halogen_pair([ra, rb]):
+					continue
+				var rcv: Dictionary = _pair_valences([ra, rb])
+				if rcv.is_empty():
+					continue
+				var rcards: Array = _ratio_cards(p.hand, ra, rb, rcv)
+				if rcards.is_empty():
+					continue
+				if game_manager.play_cards(gm_idx, rcards, rcv) == 0: return
+
 	for i in range(p.hand.size()):
 		var c = p.hand[i]
 		if c.symbol in CardPatternsScript.DIATOMIC_SYMBOLS:
@@ -172,6 +202,59 @@ static func _group_by_group(hand: Array) -> Dictionary:
 # 假化合物（NCl / BrN / IN）在这里直接得到 {}，AI 不会再尝试打出。
 static func _pair_valences(pair: Array) -> Dictionary:
 	return CompoundSolverScript.get_valence_pairs(pair)
+
+
+# L4a：按「最简整数比」从手牌收集一次出牌所需的卡牌（仅 2 元素）。
+# 返回空数组 = 不走这条路（手牌不够凑第二个分子 / 比例算不出 / 与 2 张牌对等价）。
+static func _ratio_cards(hand: Array, a, b, cv: Dictionary) -> Array:
+	var unit: Dictionary = _ratio_unit_counts(a, b, cv)
+	if unit.is_empty():
+		return []
+	var need_a: int = int(unit.get(a.symbol, 0))
+	var need_b: int = int(unit.get(b.symbol, 0))
+	if need_a < 1 or need_b < 1:
+		return []
+	var avail_a := 0
+	var avail_b := 0
+	for c in hand:
+		if c.symbol == a.symbol: avail_a += 1
+		elif c.symbol == b.symbol: avail_b += 1
+	# 能凑几个完整分子；只凑得出 1 个时交给「2 张牌对」路径，这里只做 ≥2 个
+	var k: int = mini(avail_a / need_a, avail_b / need_b)
+	if k < 2:
+		return []
+	var want_a: int = need_a * k
+	var want_b: int = need_b * k
+	var out: Array = []
+	var got_a := 0
+	var got_b := 0
+	for c in hand:
+		if c.symbol == a.symbol and got_a < want_a:
+			out.append(c)
+			got_a += 1
+		elif c.symbol == b.symbol and got_b < want_b:
+			out.append(c)
+			got_b += 1
+	if got_a < want_a or got_b < want_b:
+		return []
+	return out
+
+
+# 单分子里 A、B 各需几张（最简整数比）。cv 必须是「每元素一个整数价」；
+# 混合价（Array）不参与多分子化合 —— 价态分配要按张数逐张算，AI 侧不做这个猜测。
+static func _ratio_unit_counts(a, b, cv: Dictionary) -> Dictionary:
+	var va = cv.get(a.symbol, 0)
+	var vb = cv.get(b.symbol, 0)
+	if va is Array or vb is Array:
+		return {}
+	var ia := int(va)
+	var ib := int(vb)
+	if ia == 0 or ib == 0 or (ia > 0) == (ib > 0):
+		return {}
+	var g: int = CompoundSolverScript._gcd(absi(ia), absi(ib))
+	if g < 1:
+		return {}
+	return {a.symbol: absi(ib) / g, b.symbol: absi(ia) / g}
 
 
 # 纯卤族对（F+Cl / F+Br / Cl+Br …）——只用于「化合物」尝试路径。

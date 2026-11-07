@@ -1,6 +1,6 @@
 # 化学碰撞 — 程序架构与实现文档
 
-> **版本**: 14.7  
+> **版本**: 15.1  
 > **日期**: 2026-11-04  
 > **引擎**: Godot 4.x / GDScript
 
@@ -184,13 +184,14 @@ CardPatterns.detect_pattern(cards, skip_clan_bomb=false):
 |------|------|
 | 命名常量表 | OXYANION_MAP / OXYACID_FORMULAS / ACID_SALT_ANIONS / VARIABLE_METAL_CN_NAMES / NONMETAL_CN_NAMES / **SPECIAL_NAMES**（数据表驱动）|
 | is_compound | 化合物合法性检测 =「默认配平成功 或 统一价态搜索可配平 或 混合价态搜索可配平」，都要求电负性有序 |
-| _assign_valences | **唯一价态分配入口**：默认配平（金属取最高正价 / 非金属取最低负价 / 无金属时提升 H 与酸中心原子）；显式化合价走同一函数校验（int = 每张同价，Array = 每张各一价）。产出 `formula` / `formula_key` / `mixed` / `ratio_ok` |
+| _assign_valences | **唯一价态分配入口**：默认配平（金属取最高正价 / 非金属取最低负价 / 无金属时提升 H 与酸中心原子）；显式化合价走同一函数校验（int = 每张同价，Array = 每张各一价）。产出 `formula`（带系数，显示）/ `formula_base`（不带系数，命名）/ `formula_key`（ASCII 最简比，查表）/ `coefficient` / `peroxy` / `mixed` / `ratio_ok` —— **三口径不可混用** |
 | _valence_plan_of / _plan_is_mixed / _entry_charge | **化合价表达式规范化**（v4）：`int → [v,v,…]`、`Array → 降序规范化`；长度 ≠ 张数 / 含 0 / 同元素跨正负 → `[]`（非法）。`entry.charge` = 该元素全部副本的净电荷（混合价下 `count × valence` 不再成立，电荷平衡只认它）|
 | _search_valences / _valence_domains / _dfs_valences / _valence_assignment_ok | 默认配平失败时的**统一价态**搜索：2~3 种元素、按实际张数电荷平衡、正价元素电负性 ≤ 负价元素（NCl₃/BCl₃/ClF 由此识别，NCl/BrN/IN 被排除）。**价域（v4）**：金属 / 准金属取全部正价并降序（高价优先 → 主流解先命中，Fe₂O₃ 仍是 +3、FeO 自动退 +2），非金属保持数据顺序 |
 | _search_mixed_valences / _search_mixed_signs / _dfs_mixed_valences / _solve_last_valence / _valence_combos / _mixed_charge_reachable / _multiset_count | **混合价态搜索**（v4，Fe₃O₄）：同元素各副本可取不同价、必须同号；前 n-1 元素枚举多重集组合，末元素用有界 DP 反解；组合数 > `MIXED_NODE_CAP`(5000) 直接判无解（联机不卡帧）|
 | get_valence_pairs / get_uniform_valence_pairs / get_mixed_valence_pairs / _cv_from_formula | AI / 提示共用的价态出口：默认配平 → 统一搜索 → 混合搜索（统一解永远优先）；面板用 `get_uniform…` 判断要不要显示「混合价态自动配平」入口 |
-| get_compound_formula | 配平 + 化学式生成（`ratio_ok=false` 即视为打不出）|
-| get_compound_name / _try_get_oxy_name | IUPAC 命名（含氧酸/含氧酸盐/酸式盐）；先查 `SPECIAL_NAMES`（按 `formula_key`，只影响显示），混合价态查不到表就只显示化学式 |
+| get_compound_formula | 配平 + 化学式生成（`ratio_ok=false` 即视为打不出）。化学式按**最简整数比**约分、系数写前面：`2Na+2Br` → `2NaBr`、`4H+2O` → `2H₂O`；过氧根例外（O 取 −1 时按 `count(O)/2` 约分，否则 `H₂O₂` 会被 gcd 约成 `HO`）|
+| get_formula_atom_count | **单分子原子数**（溢出判定口径 B′）：`cards.size() / coefficient`，配不出式子时退化 gcd。`2Na+2Br` → 2、`P₂O₅` → 7、`H₂O₂` → 4 |
+| get_compound_name / _try_get_oxy_name | IUPAC 命名（含氧酸/含氧酸盐/酸式盐）；先查 `SPECIAL_NAMES`（按 `formula_key`，只影响显示），混合价态查不到表就只显示化学式。多元化合物 fallback 用 `formula_base`（否则名字会带上系数 `2NaBr`）|
 
 | is_organic / get_organic_name | 有机物识别与命名（CH4/C2H6/C3H8 及单一卤代物）|
 | _to_subscript / _gcd | 化学式下标渲染 / 配平辅助 |
@@ -240,7 +241,8 @@ PlayerManager.PlayerInfo
 | tutorial_level | 0=自由模式, 1=第一关, 2=第二关 |
 | tutorial_step | 当前教程步骤 |
 | turn_count | 本局累计换手次数（`next_turn()` 每次推进 +1，`init_game` / `init_tutorial` 归零）；结束页「总回合」的唯一来源 |
-| compound_immune | 溢出化合物免疫族炸 |
+| compound_immune | 溢出化合物免疫族炸（按 `get_formula_atom_count(cards) >= 玩家数` 判，见 §12.9） |
+| last_understood_valences | 引擎自己补搜出来的价（`_evaluate_play` 写入）；非空时 `play_cards()` 用它覆盖 `table_custom_valences`，让桌面按真实价显示过氧根等解 |
 | organic_rules_enabled | 补充规则：有机物胜利（开始页 `OrganicCheckBox` 写入） |
 | sequence_rules_enabled | 补充规则：顺序牌型（开始页 `SequenceCheckBox` 写入） |
 | halogen_exchange_allowed | 补充规则：允许卤族互化（默认 `false`；只放开 COMPOUND，族炸始终合法） |
@@ -309,7 +311,8 @@ _check_tutorial_progress(pattern, human) → 进度检查
 AIPlayer.auto_play(game_manager, ui_refresh)
   ├─ 第0关：每回合只出 1 张单质（接不上就跳过），手牌剩 1 张即收手 —— AI 永不清空手牌
   ├─ 族炸链：冷却→跳过 / 否则出更大族炸
-  └─ 常规：族炸→化合物 O(n²)（`halogen_exchange_allowed` 关闭时跳过纯卤素对）→双原子→单质→pass
+  └─ 常规：族炸→化合物对 O(n²)（`halogen_exchange_allowed` 关闭时跳过纯卤素对）
+        →化合物多分子（L4a：2 元素按最简比凑牌，`AI_RATIO_COMPOUND`）→双原子→单质→pass
 ```
 
 > **第0关刻意放水（见 §12.8）**：第0关 AI 不抽牌（`ai_no_draw`），老策略「化合物对(2 张)→双原子→单质」
@@ -321,9 +324,10 @@ AIPlayer.auto_play(game_manager, ui_refresh)
 > `common_valence` 全价，但三条路径最终都由 `play_cards()` 的 `_assign_valences` 裁决，
 > 因此 AI 不会提出引擎拒绝的假化合物（NCl / BrN / IN）。
 >
-> **覆盖差异（已知，非 bug）**：AI / 提示目前只枚举「2 张牌」的化合物配对，
-> 所以混合价态（Fe₃O₄＝3Fe+4O）只有人类能打 —— 两元素各 1 张时不可能出现混合价。
-> 这类组合走人类面板顶部的「混合价态自动配平」按钮（`_mixed_valence_for_selection()`）。
+> **覆盖差异（已知，非 bug）**：AI 的化合物只枚举「2 元素」配对 ——
+> 混合价态（Fe₃O₄＝3Fe+4O）与 3+ 元素化合物（H₂SO₄）只有人类能打。
+> 混合价态走人类面板顶部的「混合价态自动配平」按钮（`_mixed_valence_for_selection()`）。
+> L4a（§12.9）让 AI 能一次出多个分子（2Na+2Br → 2NaBr），但仍限 2 元素。
 
 
 ### 7.4 TutorialController.gd（教程控制）
@@ -644,7 +648,7 @@ _update_hand_buttons()    → ① _selected_cards(cp)：遍历 selected_indices�
 | 一键配平 | `_uniform_valence_for_selection()` → `CompoundSolver.get_uniform_valence_pairs()` + `ratio_ok` 复核 → 「自动配平 ▶」（`_on_confirm_auto_valence` → `_play_selected_compound`） | 不让玩家猜价。统一解优先、混合解（Fe₃O₄）仍走 `_mixed_valence_for_selection()`，两者互斥 |
 | 不打扰 | 已选完且 Σ=0 时不显示「自动配平」 | 多一颗按钮就多一次犹豫 |
 | 拒绝原因 | `GameManager._compound_reject_reason()`：有 cv 时按张数累加 → 「化合价配不平：Σ = −1（需 0）」；cv 为空 → 「这组牌配不出任何已知化合物的化学式」；`detect_pattern = -1` 与「牌型与意图不符」也各有原因 | 规则只有一份，解释跟着同一次判定走，UI 不再自己复读 |
-| 3+ 元素提示 | `_on_confirm_compound()` 直接点名 `H×2 多带了` 并给出 Σ | 「仅支持 2 元素化合物」没说清是哪一条不满足 |
+| 3+ 元素提示 | `_on_confirm_compound()` 不再要求「每种各 1 张」，只认 Σ = 0；配不平时逐项点名 `H-1×2 + C+4×1 + N-3×1 → Σ = −1（需 0）` | 「仅支持 2 元素化合物」没说清是哪一条不满足；放开多张后 2×H + S + 4×O 也能直接出 H₂SO₄ |
 | UI 侧不再拦 | 3+ 元素配不平也允许点「确认打出」，由引擎给原因（`_handle_result(-1)` 拼上 `last_reject_reason`） | 界面判断与引擎判断分叉 → 「提示说能打、点了被拒」（P13 的老病） |
 
 `Σ` 的 `tooltip` 写明定义（Σ(张数 × 所选价)），`Label.name = "ValenceSumLabel"` 便于测试直接取。
@@ -1186,7 +1190,45 @@ godot --headless --path . --script tests/verify_action_panel_fit.gd        # 出
 GamePage 隐藏 / `phase = 2`）；Section 九 再补 10 条管右面板高亮框：= 日志面板外扩 4px
 （`y > 250`、`h < 300`、overlay 按同一矩形绘制、不压提示框与第 1 步标注区）。
 
+### 12.9 溢出判定改「单分子原子数」与多原子化合物（P15-B）
+
+三张真机截图带出三条问题，一并收口：
+
+| 现象 | 根因 | 修法 |
+|---|---|---|
+| 打 `2Na+2Br` 显示 `Na₂Br₂`、`4H+2O` 显示 `H₄O₂` | `_assign_valences` 直接按张数拼下标，**根本没有约分这一步**（`_gcd` 零调用） | 拼式子前先算 `g`：普通组合取全部张数的 gcd → `2NaBr` / `2H₂O`；过氧根另算（见下）。同时拆出 `formula_base`（命名）/ `formula_key`（查表）/ `coefficient`（分子个数）三个口径 |
+| 溢出化合物「凑够 4 张就免疫族炸」，2 张 Na 配 2 张 Br 也能免 | 口径是「出了几张牌」 | 改按**单分子原子数**：`get_formula_atom_count()` = `cards.size() / coefficient`。`NaBr` = 2、`P₂O₅` = 7、`H₂O₂` = 4；`play_cards()` 用它比人数 |
+| 3+ 元素面板只允许「每种各 1 张」 | `_on_confirm_compound()` 里 `all_one` 前置条件 | 去掉 `all_one`，只认 Σ = 0；失败提示改逐项点名 `H-1×2 + C+4×1 + N-3×1 → Σ = -1（需 0）` |
+
+过氧根（L1/L2）额外两件事：
+
+- **价态来源**：`O.common_valence` 由 `[-2]` 扩为 `[-2, -1]`。判定靠价态而不是张数比 ——
+  否则 `CaO`（1 张 O）会被误判成过氧化物。`_valence_assignment_ok()` 再加一条
+  「O 取 −1 时张数须偶数且 ≥2」，`H₃O₃` / `Na₂O₃` 自动非法。
+- **不能按 gcd 约分**：`H₂O₂` 的 H:O = 1:1，gcd 会把它约成 `HO`。O 全取 −1 时改按
+  `count(O)/2`（分子个数）约分并置 `peroxy = true`；`_search_mixed_valences()` 传
+  `_valence_domains(cards, false)`，不允许混合搜索把 3 张 O 拆成 −2/−1/−1。
+
+默认配平一律让 O 取 −2，所以 `H₂O₂` / `CaO₂`（以及 `NCl₃` / `BCl₃` 这类「非金属作正价」）
+只能靠价态搜索。`_evaluate_play()` 在玩家 / AI 没显式选价时补一次 `get_valence_pairs()`，
+命中则把解写进 `last_understood_valences`，`play_cards()` 用它覆盖 `table_custom_valences` ——
+否则桌面小卡重新算式子会显示成 `2HO`。
+
+顺带修掉的老 bug：`_try_get_oxy_name()` 拿**下标式**（`H₂SO₄`）去比 `OXYACID_FORMULAS`
+的 ASCII key（`H2SO4`），永远不相等 —— 含氧酸名一直没生效过。改用 `formula_key`；
+多元化合物 fallback 改用 `formula_base`（否则名字会带系数 `2NaBr`）。
+
+AI 侧（L4a）：`AIPlayer.AI_RATIO_COMPOUND` 打开后 2 元素按最简比凑牌（`2Na+2Br` 一次出 4 张），
+3+ 元素不参与（组合数 × 价态搜索会拖慢 AI 回合）。
+
+回归：`tests/verify_compound_chemistry.gd`（+25 条：约分 / 过氧根 / 原子数）、
+新增 `tests/verify_overflow_compound.gd`（17 条：4 张 NaBr 不免疫、P₂O₅ / Fe₃O₄ / H₂O₂ 免疫、
+免疫后族炸返回 −4 且手牌不变）、`tests/verify_valence_panel.gd`（提示改逐项点名）、
+`tests/verify_start_page.gd`（示例卡 O 显示 `-2 -1`）。
+
 ---
 
-**文档版本**: 15.0  
-**最后更新**: 2026-11-06
+---
+
+**文档版本**: 15.1  
+**最后更新**: 2026-11-07
