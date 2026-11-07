@@ -300,7 +300,6 @@ static func _assign_valences(cards: Array, custom_valences: Dictionary = {}) -> 
 			var card_data = elem_cards.get(sym)
 			if card_data == null: continue
 			var mp = 0; var mn = 0
-			var best_v_pos = 0; var best_v_neg = 0
 			for v in card_data.common_valence:
 				if v > 0 and v > mp:
 					mp = v
@@ -393,9 +392,13 @@ static func _assign_valences(cards: Array, custom_valences: Dictionary = {}) -> 
 		# 每个 O 的价态绝对值：1 → 过氧根（O 取 −1），2 → 正常氧化物。
 		# 不能直接比 ox_state：负价元素的 ox_state 存的是绝对值（1 而不是 −1）。
 		var o_count: int = maxi(1, int(e.count))
+		# 下面两处是**有意的整数除法**：价态/张数、O 数/2 落在整数上才有意义
+		# （不整除说明这组牌根本不是过氧根，丢弃小数部分正是想要的判定）。
+		@warning_ignore("integer_division")
 		var unit_val: int = absi(_entry_charge(e)) / o_count
 		if unit_val == 1:
 			peroxy = true
+			@warning_ignore("integer_division")
 			g = maxi(1, o_count / 2)
 	if g < 1:
 		# 初值必须是 0：gcd(1, n) 恒为 1，用 1 起算等于根本没约分
@@ -411,11 +414,13 @@ static func _assign_valences(cards: Array, custom_valences: Dictionary = {}) -> 
 	var formula_key = ""
 	var mixed := false
 	for e in pos_list:
+		@warning_ignore("integer_division")
 		var n_pos: int = int(e.count) / g
 		formula_base += e.symbol + ("" if n_pos == 1 else _to_subscript(n_pos))
 		formula_key += e.symbol + ("" if n_pos == 1 else str(n_pos))
 		if bool(e.get("mixed", false)): mixed = true
 	for e in neg_list:
+		@warning_ignore("integer_division")
 		var n_neg: int = int(e.count) / g
 		formula_base += e.symbol + ("" if n_neg == 1 else _to_subscript(n_neg))
 		formula_key += e.symbol + ("" if n_neg == 1 else str(n_neg))
@@ -458,15 +463,15 @@ static func _valence_plan_of(raw, count: int) -> Array:
 	if raw is Array:
 		if raw.size() != count:
 			return []
-		var sign := 0
+		var sign_val := 0
 		for v in raw:
 			var iv := int(v)
 			if iv == 0:
 				return []
 			var s := 1 if iv > 0 else -1
-			if sign != 0 and s != sign:
+			if sign_val != 0 and s != sign_val:
 				return []
-			sign = s
+			sign_val = s
 			plan.append(iv)
 		plan.sort()
 		plan.reverse()
@@ -782,6 +787,8 @@ static func _multiset_count(total: int, kinds: int) -> int:
 	var k: int = mini(total, kinds - 1)
 	var result := 1
 	for i in range(k):
+		# 组合数递推：每步 (n-i) 都能被 (i+1) 整除，整数除法是精确的，不用浮点。
+		@warning_ignore("integer_division")
 		result = result * (n - i) / (i + 1)
 	return result
 
@@ -883,12 +890,7 @@ static func _try_get_oxy_name(fi: Dictionary, pos_list: Array, neg_list: Array) 
 
 	# 检查是否为含氧酸盐或酸式盐
 	if pos_list.size() >= 1:
-		# 构建阴离子标识符
-		var anion_combo = ""
-		for e in neg_list:
-			anion_combo += e.symbol + str(e.count)
-
-		# 检查标准含氧阴离子
+		# 检查标准含氧阴离子（匹配直接用 neg_list，不需要拼字符串）
 		for oxy_key in OXYANION_MAP:
 			# 简化匹配：按符号顺序拼接
 			if _match_anion_combo(neg_list, oxy_key):
@@ -1048,5 +1050,7 @@ static func get_formula_atom_count(cards: Array) -> int:
 			g = _gcd(g, int(counts[sym]))
 	if g < 1:
 		g = 1
-	return int(cards.size() / g)
+	# 单分子原子数 = 牌数 / 分子个数，是有意的整数除法（配平后必然整除）
+	@warning_ignore("integer_division")
+	return cards.size() / g
 

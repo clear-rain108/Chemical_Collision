@@ -220,6 +220,7 @@ static func _ratio_cards(hand: Array, a, b, cv: Dictionary) -> Array:
 		if c.symbol == a.symbol: avail_a += 1
 		elif c.symbol == b.symbol: avail_b += 1
 	# 能凑几个完整分子；只凑得出 1 个时交给「2 张牌对」路径，这里只做 ≥2 个
+	@warning_ignore("integer_division")
 	var k: int = mini(avail_a / need_a, avail_b / need_b)
 	if k < 2:
 		return []
@@ -254,6 +255,8 @@ static func _ratio_unit_counts(a, b, cv: Dictionary) -> Dictionary:
 	var g: int = CompoundSolverScript._gcd(absi(ia), absi(ib))
 	if g < 1:
 		return {}
+	# 最简整数比：absi(ib)/g 与 absi(ia)/g 整除，整数除法即可
+	@warning_ignore("integer_division")
 	return {a.symbol: absi(ib) / g, b.symbol: absi(ia) / g}
 
 
