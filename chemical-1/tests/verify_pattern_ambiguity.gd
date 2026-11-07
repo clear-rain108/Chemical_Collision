@@ -203,6 +203,36 @@ func _test_reject_reasons() -> void:
 	var why_count: String = gm3.get_last_reject_reason()
 	_check(why_count.contains("张数"), "原因文案说明族炸张数不够（实际：%s）" % why_count)
 
+	# 4.4 族炸张数多者大 + 反对称（真机 Bug：4 张 IA 族炸被 3 张 VIII 族接走）
+	#     旧实现是 `if cards_a.size() >= 3: return 1`，compare(a,b) / compare(b,a) 都返回 1；
+	#     引擎判「能不能接」用 compare(新牌, 桌面) > 0 → 任何 3 张以上的族炸都能压任何张数。
+	var big4 := _cards(["H", "Li", "Na", "K"])   # 4 张 IA，原子序数和 34
+	var big3 := _cards(["Fe", "Co", "Ni"])       # 3 张 VIII，原子序数和 81
+	var he3 := _cards(["He", "Ne", "Ar"])        # 3 张 0 族，原子序数和 30
+	_check(CardPatternsScript.compare_cards(big4, big3, CLAN_BOMB, CLAN_BOMB) == 1,
+		"族炸张数：4 张压 3 张（哪怕对方的原子序数和更小）实际 %d" %
+		CardPatternsScript.compare_cards(big4, big3, CLAN_BOMB, CLAN_BOMB))
+	_check(CardPatternsScript.compare_cards(big3, big4, CLAN_BOMB, CLAN_BOMB) == -1,
+		"族炸张数：3 张压不过 4 张（必须反对称）实际 %d" %
+		CardPatternsScript.compare_cards(big3, big4, CLAN_BOMB, CLAN_BOMB))
+	_check(CardPatternsScript.compare_cards(he3, big3, CLAN_BOMB, CLAN_BOMB) == 1,
+		"族炸同张数：He/Ne/Ar（30）大于 Fe/Co/Ni（81）—— 数值越小牌越大")
+	_check(CardPatternsScript.compare_cards(big3, he3, CLAN_BOMB, CLAN_BOMB) == -1,
+		"族炸同张数：81 也压不过 30（反对称）")
+
+	# 4.5 引擎层：桌面 4 张 IA 族炸，3 张 VIII 族炸接不上 → -2
+	var gm4 = GameManagerScript.new()
+	gm4.init_game(4, 3)
+	_set_hand(gm4, 0, ["H", "Li", "Na", "K"])
+	_set_hand(gm4, 1, ["Fe", "Co", "Ni"])
+	var r_big = gm4.play_cards(0, _take(gm4, 0, ["H", "Li", "Na", "K"]), {}, CLAN_BOMB)
+	_check(r_big == 0 and gm4.clan_bomb_chain_active,
+		"布置：4 张 IA 族炸上桌，接炸链激活（实际 %d）" % r_big)
+	var r_small = gm4.play_cards(1, _take(gm4, 1, ["Fe", "Co", "Ni"]), {}, CLAN_BOMB)
+	_check(r_small == -2, "3 张族炸接不过 4 张（真机 Bug：旧实现放行，实际 %d）" % r_small)
+	var why_bomb: String = gm4.get_last_reject_reason()
+	_check(why_bomb.contains("张数"), "原因文案说明族炸张数不够（实际：%s）" % why_bomb)
+
 
 # ============================================================
 # 五、提示：过滤条件与引擎同源

@@ -139,11 +139,15 @@ static func compare_cards(cards_a: Array, cards_b: Array, pattern_a: int = -1, p
 		return -1
 
 	if pattern_a == CardPattern.CLAN_BOMB and pattern_b == CardPattern.CLAN_BOMB:
+		# 族炸之间：张数多者大（4 张 > 3 张 > 2 张）；张数相同才比原子序数和（小 = 大）。
+		#
+		# 旧实现是 `if cards_a.size() >= 3: return 1` —— 只要 a 是 3 张以上就无条件赢，
+		# 于是 compare(a,b) 与 compare(b,a) 同时返回 1（违反反对称性）：
+		# 3 张能压 4 张，4 张也能压 3 张 —— 谁后出谁赢，张数完全失效。
+		# 真机日志实证：玩家 4 张 IA 族炸 H/Li/Na/K（原子序数和 34）
+		# 被 AI 的 3 张 VIII 族 Fe/Co/Ni（和 81）接走，而 81 按「小 = 大」本该输。
+		# 引擎判「能不能接」用的是 compare(新牌, 桌面) > 0，所以必须严格反对称。
 		if cards_a.size() != cards_b.size():
-			if cards_a.size() >= 3:
-				return 1
-			if cards_b.size() >= 3:
-				return -1
 			return 1 if cards_a.size() > cards_b.size() else -1
 		return _compare_by_total_atomic(cards_a, cards_b)
 

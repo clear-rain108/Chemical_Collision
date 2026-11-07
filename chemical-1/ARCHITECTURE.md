@@ -1,6 +1,6 @@
 # 化学碰撞 — 程序架构与实现文档
 
-> **版本**: 15.1  
+> **版本**: 15.2  
 > **日期**: 2026-11-04  
 > **引擎**: Godot 4.x / GDScript
 
@@ -173,7 +173,7 @@ CardPatterns.detect_pattern(cards, skip_clan_bomb=false):
 | CardPattern 枚举 + DIATOMIC_SYMBOLS | 牌型定义与双原子分子元素集 |
 | detect_pattern / _is_same_element | 牌型检测总入口 |
 | _is_sequence / _is_clan_bomb | 顺序 / 族炸检测 |
-| compare_cards / _compare_by_total_atomic | 比大小（族炸>有机物>化合物>单质）；**牌型可显式传入**（`pattern_a/pattern_b`，默认 -1 = 按牌面检测），出牌校验 / 桌面显示 / 提示一律传 `table_pattern`，避免「同一批牌既是族炸又能配成化合物」时的误判 |
+| compare_cards / _compare_by_total_atomic | 比大小（族炸>有机物>化合物>单质）；**牌型可显式传入**（`pattern_a/pattern_b`，默认 -1 = 按牌面检测），出牌校验 / 桌面显示 / 提示一律传 `table_pattern`，避免「同一批牌既是族炸又能配成化合物」时的误判。**族炸之间先比张数**（多者大），同张数才比原子序数和（小 = 大）—— 旧实现 `if a.size() >= 3: return 1` 违反反对称性，谁后出谁赢（§12.9 P15-C）|
 | get_pattern_name / get_element_display | 牌型中文名 / 单质显示 |
 
 ### 5.2 CompoundSolver.gd（化合物形成模块）
@@ -312,7 +312,7 @@ AIPlayer.auto_play(game_manager, ui_refresh)
   ├─ 第0关：每回合只出 1 张单质（接不上就跳过），手牌剩 1 张即收手 —— AI 永不清空手牌
   ├─ 族炸链：冷却→跳过 / 否则出更大族炸
   └─ 常规：族炸→化合物对 O(n²)（`halogen_exchange_allowed` 关闭时跳过纯卤素对）
-        →化合物多分子（L4a：2 元素按最简比凑牌，`AI_RATIO_COMPOUND`）→双原子→单质→pass
+		→化合物多分子（L4a：2 元素按最简比凑牌，`AI_RATIO_COMPOUND`）→双原子→单质→pass
 ```
 
 > **第0关刻意放水（见 §12.8）**：第0关 AI 不抽牌（`ai_no_draw`），老策略「化合物对(2 张)→双原子→单质」
@@ -1226,9 +1226,26 @@ AI 侧（L4a）：`AIPlayer.AI_RATIO_COMPOUND` 打开后 2 元素按最简比凑
 免疫后族炸返回 −4 且手牌不变）、`tests/verify_valence_panel.gd`（提示改逐项点名）、
 `tests/verify_start_page.gd`（示例卡 O 显示 `-2 -1`）。
 
----
+### 12.10 族炸「3 张以上无条件赢」（P15-C）
+
+真机日志：玩家 4 张 IA 族炸 `H/Li/Na/K`（原子序数和 34）出桌，AI 用 3 张 VIII 族
+`Fe/Co/Ni`（和 81）**接上了** —— 按「数值越小牌越大」的设定，81 本该输。
+
+| 项 | 内容 |
+|---|---|
+| 根因 | `CardPatterns.compare_cards()` 的「族炸 vs 族炸」分支写成 `if cards_a.size() >= 3: return 1` |
+| 为什么坏 | 只要**第一个参数**是 3 张以上就返回 1 → `compare(a,b)` 与 `compare(b,a)` 同时为 1（违反反对称性）。引擎判「能不能接」用 `compare(新牌, 桌面) > 0`，于是**任何 3 张以上的族炸都能压任何张数**，张数完全失效，谁后出谁赢 |
+| 修法 | 张数不同 → 多者大；张数相同 → `_compare_by_total_atomic()`（原子序数和，小 = 大；打平比原子质量） |
+| 为什么不是「3 张以上算大招」 | `verify_pattern_ambiguity` §4.3 早就锁定了「2 张接 3 张 → -2，原因文案『张数不够』」，说明设计本意就是「张数多者大」；`>= 3` 是把「3 张 > 2 张」错写成了「≥3 张 > 任意张数」 |
+
+**同张数仍按「小 = 大」**：3 张 `He/Ne/Ar`（30）压得住 3 张 `Fe/Co/Ni`（81）——
+日志里紧接着的 AI3 那一手是**合法**的，不是同一个 bug。
+
+回归：`tests/verify_pattern_ambiguity.gd` §4.4（4 组 compare 断言，含双向反对称）
++ §4.5（引擎层：4 张上桌后 3 张接不上 → `-2`，原因文案含「张数」）。
+规则文档同步：`GAMEPLAY_RULES.md` §11「族炸之间先比张数」、§6 溢出例外口径改「单分子原子数」。
 
 ---
 
-**文档版本**: 15.1  
+**文档版本**: 15.2  
 **最后更新**: 2026-11-07
