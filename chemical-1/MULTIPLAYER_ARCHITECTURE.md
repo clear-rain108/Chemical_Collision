@@ -1,6 +1,6 @@
 # 化学碰撞（Chemical Collision）联机架构设计文档
 
-> 版本：v1.0 ｜ 状态：**设计定稿，地基（P11-B）已实现**
+> 版本：v1.1 ｜ 状态：**设计定稿；地基（P11-B）与 ENet 传输（P11-C1-a）已实现**
 > 适用范围：3~4 人朋友局，跨局域网 P2P（无端口映射条件）
 > 相关文档：[`ARCHITECTURE.md`](ARCHITECTURE.md)（单机架构）、[`GAMEPLAY_RULES.md`](GAMEPLAY_RULES.md)（规则）、[`UI_POLISH_PLAN.md`](UI_POLISH_PLAN.md)（UI 计划）
 
@@ -15,7 +15,7 @@
 | 同步方式选什么？ | **主机权威 + 事件重放 + 状态哈希校验**（不是逐帧状态同步） |
 | 需要改单机逻辑吗？ | **不需要**。`GameManager` 只新增只读/事件 API，单机调用路径一行未变 |
 | 推荐落地顺序？ | Tailscale 验证 → ENet 局域网 → WebRTC 跨网 → 打磨（见 §10） |
-| 当前进度 | P11-B 地基已完成：种子化洗牌、牌 uid、快照、FNV 哈希、`apply_event`、传输层抽象、回环传输、新测试套件 |
+| 当前进度 | P11-B 地基已完成：种子化洗牌、牌 uid、快照、FNV 哈希、`apply_event`、传输层抽象、回环传输、新测试套件。**P11-C1-a 已完成**：`ENetTransport`（局域网 / Tailscale 直连）+ 55 项自动化测试 |
 
 本次地基交付物（对应 §13 / 附录 A）：
 
@@ -24,6 +24,12 @@
 - `scripts/GameManager.gd`：`init_game(..., rng_seed)` / `to_snapshot()` / `state_hash()` / `apply_event()` / `event_log`
 - `scripts/net/NetProtocol.gd`、`NetTransport.gd`、`LoopbackTransport.gd`
 - `tests/verify_net_foundation.gd`（8 组 54 项断言，全部通过；原有 19 套测试零回归）
+
+P11-C1-a 追加交付物（真实网络传输层）：
+
+- `scripts/net/ENetTransport.gd`：`ENetMultiplayerPeer` 原始包封装（不挂 `SceneMultiplayer`）
+- `tests/verify_enet_transport.gd`（11 组 55 项断言，全部通过；同进程 127.0.0.1 真实 UDP，无需第二台机器）
+- `scripts/net/NetTransport.gd`：补充接口契约注释（peer_id ≠ 座位号）
 
 ---
 
@@ -413,14 +419,15 @@ func shuffle(rng_seed: int = -1) -> void
 | `scripts/net/NetProtocol.gd` | 消息常量、`make_intent`、`validate_intent`、`strip_snapshot`、`is_known_message` | 新文件，单机不加载 |
 | `scripts/net/NetTransport.gd` | 传输接口（host/join/send/broadcast/poll/close + 3 个信号） | 新文件 |
 | `scripts/net/LoopbackTransport.gd` | 进程内回环实现（测试用，含断线事件） | 新文件 |
+| `scripts/net/ENetTransport.gd` | **P11-C1-a**：`ENetMultiplayerPeer` 原始包封装（host/join/poll/send/broadcast/close），信号维护 peer 集合 | 新文件，单机不加载 |
 | `tests/verify_net_foundation.gd` | 8 组 54 项断言 | 新测试 |
+| `tests/verify_enet_transport.gd` | **P11-C1-a**：11 组 55 项断言（127.0.0.1 真实 UDP 回环） | 新测试 |
 
 ### 9.2 后续阶段改动（未开始）
 
 | 文件 | 改动 | 阶段 |
 |---|---|---|
-| `scripts/net/ENetTransport.gd`（新） | `ENetMultiplayerPeer` 封装 | P11-C1 |
-| `scripts/net/NetSession.gd`（新） | 房间生命周期、协议编解码、超时、重连 | P11-C1 |
+| `scripts/net/NetSession.gd`（新） | 房间生命周期、协议编解码、超时、重连（C1-b） | P11-C1 |
 | `scripts/net/ActionRouter.gd`（新） | 把 `GameUI` 的 8 处出牌 / 2 处跳过收口成 `submit(intent)` | P11-C1 |
 | `scripts/GameUI.gd` | ① 10 处动作改走 `ActionRouter`；② 联机时 AI 由主机驱动（客人显示"等待 X 行动"）；③ 新增房间页（建局 / 加入 / 房间码 / 座位列表） | P11-C1 |
 | `scripts/net/WebRTCTransport.gd`（新） | `WebRTCMultiplayerPeer` + ICE + 信令客户端 | P11-C2 |
@@ -439,7 +446,8 @@ func shuffle(rng_seed: int = -1) -> void
 |---|---|---|---|
 | **P11-B 地基** ✅ | 种子化洗牌、uid、快照、哈希、事件、传输抽象、回环、测试 | 新测试全绿；原有 19 套零回归 | 已完成 |
 | **P11-A 热座** | 同机 2~3 人轮流操作（只显示当前操作者手牌） | 不开网络也能两人打完一局；切换时手牌不串 | 0.5~1 天 |
-| **P11-C1 局域网** | `ENetTransport` + `NetSession` + 房间页 + 主机权威；配 Tailscale 跨网直连 | 同 WiFi / Tailscale 下 3~4 人打完一整局，`state_hash` 全程一致 | 3~5 天 |
+| **P11-C1-a ENet 传输** ✅ | `ENetTransport`（`ENetMultiplayerPeer` 原始包模式）+ 127.0.0.1 自动化测试 | 55 项断言全绿；41 套既有测试零回归 | 已完成 |
+| **P11-C1 局域网** | `NetSession` + `ActionRouter` + 房间页 + 主机权威；配 Tailscale 跨网直连 | 同 WiFi / Tailscale 下 3~4 人打完一整局，`state_hash` 全程一致 | 剩 ~3.5 天 |
 | **P11-C2 跨 NAT** | `webrtc-native` 插件 + 信令 + TURN 兜底 | 异地 2 人（无端口映射）输入房间码即可开局，失配自动修复 | 3~5 天 |
 | **P11-D 打磨** | 超时自动 pass、断线重连、RTT 显示、回放、房间码 UI 优化 | 拔网线 30s 内可恢复；回放可完整重现一局 | 2~3 天 |
 
@@ -459,6 +467,7 @@ func shuffle(rng_seed: int = -1) -> void
 | 层 | 工具 | 覆盖 | 是否需要网络 |
 |---|---|---|---|
 | L1 引擎确定性 | `tests/verify_net_foundation.gd` | 种子、uid、快照、哈希、事件应用、边界 | ❌ |
+| L1.5 真实传输（P11-C1-a 新增） | `tests/verify_enet_transport.gd` | 真实 UDP 握手、定向/广播、8KB 分片、100 包有序、三人房间、断线、端口占用 | ❌（同进程 127.0.0.1） |
 | L2 协议全流程（P11-C1 新增） | `tests/verify_net_session.gd` + `LoopbackTransport` | 握手、建局、一局事件流、拒绝路径、断线重连 | ❌（进程内回环） |
 | L3 真网络 | 手动 / 双开客户端 | 实际 NAT、延迟、丢包、平台差异 | ✅ |
 
@@ -585,3 +594,53 @@ A：不建议。信任模型 + 主机权威意味着房主能改牌，也没有�
 
 **Q6：这套地基会不会拖慢单机？**
 A：不会。单机路径不加载 `scripts/net/*`；`GameManager` 新增的都是按需调用的函数，`init_game(4, 3)` 等旧调用完全等价。
+
+---
+
+## 附录 C：ENet 传输实测结论（P11-C1-a）
+
+> Godot 4.7.2 ｜ 2026-11 ｜ 全部在 `--headless` 下自动化验证（`tests/verify_enet_transport.gd`，55 项断言）
+
+### C.1 必须走「原始包」模式
+
+`ENetMultiplayerPeer` 一旦赋给 `multiplayer.multiplayer_peer`，就会被 `SceneMultiplayer` 接管，只剩 `@rpc` / 场景复制两条路，**无法收发任意 `PackedByteArray`**。本项目用的是底层的 `set_target_peer` + `put_packet` / `get_packet`，完全绕开 `SceneMultiplayer`：
+
+```gdscript
+var peer := ENetMultiplayerPeer.new()
+peer.create_server(port, max_players - 1)      # 房主自己不算 client
+peer.set_transfer_mode(MultiplayerPeer.TRANSFER_MODE_RELIABLE)
+peer.set_target_peer(peer_id)                  # 定向；0 = 广播
+peer.put_packet(data)
+
+# 每帧：peer.poll() 之后
+while peer.get_available_packet_count() > 0:
+	var from := peer.get_packet_peer()         # 必须先取 peer，再取包
+	var data := peer.get_packet()
+```
+
+### C.2 三条与 Loopback 不一致的语义（写 NetSession 之前必读）
+
+| # | 实测差异 | 后果 | 处理 |
+|---|---|---|---|
+| 1 | `ENetMultiplayerPeer` **没有 `get_peers()`**（`MultiplayerPeer` 也未暴露） | 拿不到在线列表 | `ENetTransport` 用 `peer_connected` / `peer_disconnected` 信号自己维护 `_peers` 字典，`get_peers()` 返回其升序快照 |
+| 2 | 客人的 `get_unique_id()` 是**随机 32 位整数**（实测 `754867515`），只有主机恒为 `1` | 沿用 Loopback 的「host=1 / client=2」假设会让座位映射全错 | `NetSession` 必须建立 `peer_id ↔ seat` 映射表，**不能拿 peer_id 当座位索引**（已写进 `NetTransport.gd` 接口契约） |
+| 3 | `close()` 之后再 `poll()`，引擎刷 `ERROR: The multiplayer instance isn't currently active.` | 关房间后 UI 仍每帧 poll → 日志被刷屏 | `close()` 先把 `_peer` 置 `null` 再 `close()`；`poll()` 首行判空直接返回 |
+
+### C.3 已验证的行为（可以放心依赖）
+
+| 行为 | 实测结果 |
+|---|---|
+| 同进程内 `create_server` + 多个 `create_client("127.0.0.1", port)` | ✅ 可行，握手 ~6ms → **无需第二台机器即可自动化测试** |
+| `create_client` 的返回时机 | 立即返回 0（只代表「发起」）；真正连上要等 `peer_connected`，连不上的地址也不返回错误 |
+| `set_target_peer(0)` | 广播给所有已连接 peer，主机自己不会收到 |
+| 8 KB 单包 | ✅ 自动分片，逐字节完整 |
+| 连发 100 包 | ✅ 全部到达且严格有序（`TRANSFER_MODE_RELIABLE`） |
+| 同端口二次 `create_server` | 返回 `20 (ERR_CANT_CREATE)` → `host()` 转成 `-1` |
+| 客人主动 `close()` | 主机在下一次 `poll()` 收到 `peer_disconnected(uid)` |
+
+### C.4 端口与局域网提示
+
+- 默认端口 `47800`（`ENetTransport.DEFAULT_PORT`）：固定端口便于房主直接报给客人，随机端口对朋友局不友好。
+- 测试用 `47811 / 47812 / 47813` 三个候选依次尝试，避免端口被占导致误报。
+- Windows 首次监听会弹防火墙确认框；C1-d 房间页必须把「已监听 / 未监听」显示出来，否则用户点错一次就是静默失败。
+- 异地联机不做打洞：直接上 Tailscale / ZeroTier，`ENetTransport` 一行不用改（见 §2.1 方案 A）。
