@@ -351,6 +351,25 @@ func _run() -> void:
 	_check(_count("d2", "closed") >= 1, "G17 被拒的客人收到 session_closed")
 	_check(d1["s"].my_seat == 1, "G17 被拒事件不影响已有客人")
 
+	# ---- G18 ready 比对的时序（真机三进程冒烟抓到的误报）----
+	# 背景：ready 是「快照重放完那一刻」发出的，等主机 poll 到它，主机往往已经
+	# 多打了几笔事件。老实现直接拿客户端旧指纹比主机新局面 → 每局开局必报
+	# ERR_DESYNC。现在 ready 带 events，进度不同就只记 ready、不比对。
+	var err_before := _count("host", "error")
+	var bad_hash: int = int(host["gm"].state_hash()) + 1
+	var ready_peer: int = host["s"].peer_of_seat(1)
+	host["s"]._host_on_ready(ready_peer, {"hash": bad_hash, "events": 0})
+	_check(_count("host", "error") == err_before,
+		"G18 进度不同（对端 0 笔 / 主机 %d 笔）→ 不比对、不误报 -109"
+		% host["gm"].event_log.size())
+	host["s"]._host_on_ready(ready_peer, {"hash": bad_hash, "events": host["gm"].event_log.size()})
+	_check(_count("host", "error") == err_before + 1, "G18 同一进度 + 指纹不同 → 照常报错")
+	var errs18 := _ev("host", "error")
+	_check(not errs18.is_empty() and int(errs18[errs18.size() - 1]["code"]) == NetProtocolScript.ERR_DESYNC,
+		"G18 报的码是 ERR_DESYNC")
+	host["s"]._host_on_ready(ready_peer, {"hash": 0, "events": 0})
+	_check(_count("host", "error") == err_before + 1, "G18 hash=0（大厅 / 未初始化）不当分叉")
+
 	# ---- 收尾：全程无分叉 + close 幂等 ----
 	_check(_count("c1", "desync") == 0 and _count("c2", "desync") == 0, "全程没有出现状态分叉")
 	for p in [host, c1, c2, c3, h2, d1, d2]:

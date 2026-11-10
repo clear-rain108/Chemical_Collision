@@ -1,6 +1,6 @@
 # 化学碰撞（Chemical Collision）联机架构设计文档
 
-> 版本：v1.2 ｜ 状态：**设计定稿；P11-B 地基、P11-C1-a 传输、P11-C1-b 会话层均已实现**
+> 版本：v1.2 ｜ 状态：**设计定稿；P11-B 地基、P11-C1-a 传输、P11-C1-b 会话层均已实现；P11-C1-c Step 0 真机冒烟脚本已就绪**
 > 适用范围：3~4 人朋友局，跨局域网 P2P（无端口映射条件）
 > 相关文档：[`ARCHITECTURE.md`](ARCHITECTURE.md)（单机架构）、[`GAMEPLAY_RULES.md`](GAMEPLAY_RULES.md)（规则）、[`UI_POLISH_PLAN.md`](UI_POLISH_PLAN.md)（UI 计划）
 
@@ -15,7 +15,7 @@
 | 同步方式选什么？ | **主机权威 + 事件重放 + 状态哈希校验**（不是逐帧状态同步） |
 | 需要改单机逻辑吗？ | **不需要**。`GameManager` 只新增只读/事件 API，单机调用路径一行未变 |
 | 推荐落地顺序？ | Tailscale 验证 → ENet 局域网 → WebRTC 跨网 → 打磨（见 §10） |
-| 当前进度 | P11-B 地基已完成：种子化洗牌、牌 uid、快照、FNV 哈希、`apply_event`、传输层抽象、回环传输、新测试套件。**P11-C1-a 已完成**：`ENetTransport`（局域网 / Tailscale 直连）+ 55 项自动化测试。**P11-C1-b 已完成**：`NetSession` 房间 / 座位 / 主机权威裁决 / 两阶段冻结 / 超时托管 / 掉线保留 / token 重连 / 观战 + 107 项自动化测试 |
+| 当前进度 | P11-B 地基已完成：种子化洗牌、牌 uid、快照、FNV 哈希、`apply_event`、传输层抽象、回环传输、新测试套件。**P11-C1-a 已完成**：`ENetTransport`（局域网 / Tailscale 直连）+ 55 项自动化测试。**P11-C1-b 已完成**：`NetSession` 房间 / 座位 / 主机权威裁决 / 两阶段冻结 / 超时托管 / 掉线保留 / token 重连 / 观战 + 111 项自动化测试。**P11-C1-c Step 0 已完成**：`tests/net_smoke.gd` 真机冒烟（3 个独立进程走真实 ENet，本机实测打完一整局 32 笔事件，三端逐笔 `state_hash` 相同、0 拒绝、0 分叉） |
 
 本次地基交付物（对应 §13 / 附录 A）：
 
@@ -429,7 +429,8 @@ func shuffle(rng_seed: int = -1) -> void
 | `scripts/net/NetSession.gd` | **P11-C1-b**：房间生命周期、座位分配、主机权威裁决、两阶段冻结、超时托管、掉线保留、token 重连、观战 | 新文件，单机不加载 |
 | `tests/verify_net_foundation.gd` | 8 组 54 项断言 | 新测试 |
 | `tests/verify_enet_transport.gd` | **P11-C1-a**：11 组 55 项断言（127.0.0.1 真实 UDP 回环） | 新测试 |
-| `tests/verify_net_session.gd` | **P11-C1-b**：17 组 107 项断言（真实 ENet，3 个独立 `GameManager`） | 新测试 |
+| `tests/verify_net_session.gd` | **P11-C1-b**：18 组 111 项断言（真实 ENet，3 个独立 `GameManager`） | 新测试 |
+| `tests/net_smoke.gd` | **P11-C1-c Step 0**：真机联机冒烟（`--host` / `--join`，3 个独立进程 + 带缓冲的逐行日志），自动出牌走 `HintAdvisor` 只读建议 | 新工具，单机不加载 |
 
 ### 9.2 后续阶段改动（未开始）
 
@@ -454,7 +455,8 @@ func shuffle(rng_seed: int = -1) -> void
 | **P11-B 地基** ✅ | 种子化洗牌、uid、快照、哈希、事件、传输抽象、回环、测试 | 新测试全绿；原有 19 套零回归 | 已完成 |
 | **P11-A 热座** | 同机 2~3 人轮流操作（只显示当前操作者手牌） | 不开网络也能两人打完一局；切换时手牌不串 | 0.5~1 天 |
 | **P11-C1-a ENet 传输** ✅ | `ENetTransport`（`ENetMultiplayerPeer` 原始包模式）+ 127.0.0.1 自动化测试 | 55 项断言全绿；41 套既有测试零回归 | 已完成 |
-| **P11-C1-b 会话层** ✅ | `NetSession`（房间 / 座位 / 主机权威 / 两阶段冻结 / 托管 / 重连 / 观战）+ 真实 ENet 三方测试 | 107 项断言全绿；`state_hash` 逐事件一致 | 已完成 |
+| **P11-C1-b 会话层** ✅ | `NetSession`（房间 / 座位 / 主机权威 / 两阶段冻结 / 托管 / 重连 / 观战）+ 真实 ENet 三方测试 | 111 项断言全绿；`state_hash` 逐事件一致 | 已完成 |
+| **P11-C1-c Step 0 冒烟** ✅ | `tests/net_smoke.gd`：3 个独立进程真机联机，逐笔打印 `applied#N ... hash=H`，末尾打 `final_hash` 供三端比对 | 三端 `final_hash` 相同；本机实测整局 32 笔事件、0 拒绝、0 分叉 | 已完成 |
 | **P11-C1 局域网** | `ActionRouter` + 房间页 + 接真机 UI；配 Tailscale 跨网直连 | 同 WiFi / Tailscale 下 3~4 人打完一整局，`state_hash` 全程一致 | 剩 ~2 天 |
 | **P11-C2 跨 NAT** | `webrtc-native` 插件 + 信令 + TURN 兜底 | 异地 2 人（无端口映射）输入房间码即可开局，失配自动修复 | 3~5 天 |
 | **P11-D 打磨** | 超时自动 pass、断线重连、RTT 显示、回放、房间码 UI 优化 | 拔网线 30s 内可恢复；回放可完整重现一局 | 2~3 天 |
@@ -476,8 +478,8 @@ func shuffle(rng_seed: int = -1) -> void
 |---|---|---|---|
 | L1 引擎确定性 | `tests/verify_net_foundation.gd` | 种子、uid、快照、哈希、事件应用、边界 | ❌ |
 | L1.5 真实传输（P11-C1-a 新增） | `tests/verify_enet_transport.gd` | 真实 UDP 握手、定向/广播、8KB 分片、100 包有序、三人房间、断线、端口占用 | ❌（同进程 127.0.0.1） |
-| L2 协议全流程（P11-C1 新增） | `tests/verify_net_session.gd` | 真实 ENet 三端：握手、座位、建局、事件流、拒绝路径、两阶段、托管、掉线重连、观战、满员拒绝（107 项） | ❌（同进程 127.0.0.1） |
-| L3 真网络 | 手动 / 双开客户端 | 实际 NAT、延迟、丢包、平台差异 | ✅ |
+| L2 协议全流程（P11-C1 新增） | `tests/verify_net_session.gd` | 真实 ENet 三端：握手、座位、建局、事件流、拒绝路径、两阶段、托管、掉线重连、观战、满员拒绝、`ready` 指纹比对时序（111 项） | ❌（同进程 127.0.0.1） |
+| L3 真网络（P11-C1-c Step 0） | `tests/net_smoke.gd` + 多开 `--headless` | 跨进程 / 跨机器的真实 UDP：座位上线、开局同步、逐笔账本、终局指纹 | ✅ |
 
 ### 11.2 运行方式
 
@@ -490,6 +492,17 @@ for %f in (tests\verify_*.gd) do @(echo === %f === & godot --headless --path . -
 ```
 
 （`verify_logger.gd` 只打印单条 PASS 后退出，不含 `TESTS` 汇总行，属既有行为。）
+
+真机冒烟（3 个独立进程，最少 3 人；同机可用 `127.0.0.1` 多开）：
+
+```bash
+# 终端 1：房主（会打印本机可用 IP + 房号）
+godot --headless --path . --script tests/net_smoke.gd -- --host --port 47800 --duration 60
+# 终端 2 / 3：客人（把 127.0.0.1 换成房主 IP 即可跨机器）
+godot --headless --path . --script tests/net_smoke.gd -- --join 127.0.0.1 --port 47800 --duration 60
+```
+
+客人要先于房主 `start_game()` 连上（房主默认等 60s）。判读：三端 `[tag] applied#N by=… type=… hash=…` 逐行一致，末尾 `SMOKE FINAL final_hash=H` 三端相同即通过；`--manual` 关掉自动出牌，改成人工出牌观察。
 
 ### 11.3 断言范式（沿用现有约定）
 
@@ -710,7 +723,7 @@ state: IDLE ─► CONNECTING ─► LOBBY ─► PLAYING ─► OVER
 | `applied` | S→all | 权威结果：`{by, result, ev, hash}`，客人**只重放这条** |
 | `rejected` | S→C | `{seq, code}`；`ERR_ROOM_FULL` 会让客人本地 `close()` |
 | `pending_sequence` | S→all | `{seat, remain_ms}`；`seat = -1` 表示窗口关闭 |
-| `ready` | C→S | 快照重放完，附本地 `hash` 供主机核对 |
+| `ready` | C→S | 快照重放完，附 `{hash, events}`；主机只在 `events` 与本地相同（同一时刻）时才比对，否则就是拿旧指纹比新局面 —— 实测会稳定误报 `ERR_DESYNC` |
 | `peer_left` / `peer_joined` | S→all | 座位掉线（座位保留）/ 座位（重新）上线 |
 
 线格式：`[magic "CHM1" u32][body_len u32][var_to_bytes(dict)]`。用 `var_to_bytes` 而不是 JSON —— JSON 会把 `uid` / `seq` / `hash` 全变成 float，漏一处就是「`uid` 12.0 找不到手牌」的静默 bug。8 字节头让畸形包在 `bytes_to_var` 之前就被丢掉，不会让引擎刷 `Invalid data`。
@@ -765,7 +778,9 @@ game.replay_events(msg["event_log"])          # 逐条 apply，日志条数也�
 _last_hash = game.state_hash()                # 与主机 compare
 ```
 
-日志条数一并重建这点很关键：`state_hash()` 里含 `event_log` 计数，用 `to_snapshot()` 反序列化（如果存在）也对不上。恢复后客人回 `ready{hash}`，主机用它核对；不一致就 `error_raised(ERR_DESYNC)`，UI 该重拉快照。
+日志条数一并重建这点很关键：`state_hash()` 里含 `event_log` 计数，用 `to_snapshot()` 反序列化（如果存在）也对不上。恢复后客人回 `ready{hash, events}`，主机用它核对。
+
+`events` 不能省：`ready` 是**快照重放完成那一刻**发出的，等主机 `poll()` 到这条消息，主机自己往往已经多打了几笔事件。只带 `hash` 就只能拿「旧指纹」比「新局面」，每局开局必报 `ERR_DESYNC`（真机三进程实测，见 D.10）。现在的规则是：**只有 `events` 与主机本地 `event_log.size()` 相同（同一时刻）才比对指纹**，否则只记 ready。真正逐笔把关的是客人侧 `_client_on_applied` 里的事件后比对。
 
 ### D.7 已知限制
 
@@ -812,4 +827,17 @@ session.skip_sequence()
 - **每个端点一个独立 `GameManager`**：三份 `GameManager` 各持一份牌库，`state_hash()` 一致才是真一致（共享一个对象是自欺欺人）。
 - **真实 ENet，不是 Loopback**：顺序牌窗口、掉线重连、观战、满员拒绝都需要真实 `peer_id` 与真实断开语义，Loopback 一对一测不出来。
 - **直接驱动内部状态机**：两阶段相关的断言用 `_update_pending_after_apply(seat, result)` 直接开窗，不去赌「手上正好有顺序牌」；`by` 伪造 / 重号用 `transport.send_to()` 发原始包才做得到。
+
+### D.10 真机三进程冒烟抓到的两个坑（P11-C1-c Step 0）
+
+`tests/net_smoke.gd` 第一次多开真机跑，抓到的两个问题都不是「网络问题」，而是**协议语义**问题：
+
+| # | 现象 | 根因 | 修法 |
+|---|---|---|---|
+| 1 | 每局开局房主必报两条 `ERR_DESYNC：座位 N 重建后指纹不一致`，可三端 `final_hash` 其实一样 | `ready` 只带 `hash`，而它是「快照重放完那一刻」发出的；等主机 `poll()` 到，主机自己往往已经多打了几笔 —— 拿旧指纹比新局面，100% 误报 | `ready` 加 `events`（该指纹对应第几笔事件），主机只在 `events == event_log.size()` 时比对；逐笔把关交给客人侧 `_client_on_applied`（回归断言：G18） |
+| 2 | 只推进 1 笔事件就卡住，客人刷出 1596 条 `intent_rejected` | 冒烟脚本自己「瞎试单张」：客人 `submit()` 恒返回 0（本地不裁决），于是它在同一张非法牌上无限重试 | 自动出牌改用 `HintAdvisor.suggest(game)`（和「提示」按钮同一套只读判定），把返回的 `indices / pattern / valence` 直接转成意图 |
+
+教训：**写联机脚本前先想清楚「谁的返回值能当结果」** —— 主机 `submit()` 返回裁决码，客人只返回「已发出」。任何靠返回码做自适应重试的逻辑，在联机版本里都必须改成「等 `state_applied` / `intent_rejected` 信号」。
+
+同一次冒烟也顺手确认了「三端逐笔账本」这套判读方式好用：每端自己决策（房主出 `H+K` 族炸、客人出 `H+Na` / `AlN` 化合物），但 `applied#N by=… type=… hash=…` 三端逐行完全相同，32 笔事件打完一整局、0 拒绝、0 分叉。真机联调就看这三行末尾的 `final_hash` 是否一致。
 - **退出要留余量**：见附录 C.5。

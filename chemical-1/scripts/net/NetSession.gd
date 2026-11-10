@@ -625,7 +625,17 @@ func _send_ready() -> void:
 		"type": NetProtocolScript.MSG_READY,
 		"seat": my_seat,
 		"hash": _last_hash,
+		# 报「这个指纹对应第几笔事件」。只报 hash 不够用：主机收到 ready 时
+		# 自己可能已经多打了几笔，拿旧指纹比新局面必然误报 -109（实测过）。
+		"events": _local_event_count(),
 	})
+
+
+func _local_event_count() -> int:
+	if game == null:
+		return 0
+	return game.event_log.size()
+
 
 
 # ---- 客人：房间事件 / 拒绝 / 两阶段通知 ----
@@ -965,11 +975,19 @@ func _host_on_ready(peer_id: int, msg: Dictionary) -> void:
 		return
 	_ready_seats[seat] = true
 	var client_hash := int(msg.get("hash", -1))
-	if state == State.PLAYING and client_hash >= 0 and game != null:
+	var client_events := int(msg.get("events", -1))
+	# 只在「对端报的进度 == 主机此刻的进度」时才比对指纹。
+	# 为什么：ready 是快照重放完成那一刻发出的，等主机 poll 到它，主机很可能
+	# 已经多打了几笔事件；拿旧指纹比新局面会稳定误报 -109（真机冒烟实测）。
+	# 真正逐笔把关的是客人侧 _client_on_applied 里的事件后比对，这里只是兜底。
+	if state == State.PLAYING and client_hash > 0 and game != null \
+			and client_events == game.event_log.size():
 		var host_hash: int = int(game.state_hash())
 		if client_hash != host_hash:
 			error_raised.emit(NetProtocolScript.ERR_DESYNC,
-				"座位 %d 重建后指纹不一致（对端 %d / 主机 %d）" % [seat, client_hash, host_hash])
+				"座位 %d 重建后指纹不一致（对端 %d / 主机 %d，第 %d 笔）"
+				% [seat, client_hash, host_hash, client_events])
+
 
 
 # 所有人类座位是否都已就绪（开局前的硬前置）
