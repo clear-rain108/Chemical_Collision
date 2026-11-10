@@ -20,6 +20,10 @@ const MSG_PENDING_SEQUENCE = "pending_sequence"
 const MSG_SNAPSHOT = "snapshot"
 const MSG_PING = "ping"
 const MSG_PONG = "pong"
+# P11-C1-b 增补：连接状态双向确认 / 座位变化广播
+const MSG_READY = "ready"                # C→S：快照重放完，附本地指纹供主机核对
+const MSG_PEER_LEFT = "peer_left"        # S→all：某座位掉线，座位保留等待重连
+const MSG_PEER_JOINED = "peer_joined"    # S→all：某座位（重新）上线
 
 # ---- 客户端意图类型（与 GameManager.apply_event 的 type 完全一致）----
 const INTENT_PLAY = "play"
@@ -42,13 +46,19 @@ const ERR_BAD_EVENT = -101
 const ERR_NOT_YOUR_TURN = -102
 const ERR_GAME_OVER = -103
 const ERR_WRONG_SEAT = -104
+# P11-C1-b 增补
+const ERR_NO_PENDING = -105      # 没有待处理的顺序牌型，却收到 sequence_pick / sequence_skip
+const ERR_NOT_READY = -106       # 未开局 / 观战者（seat = -1）提交意图
+const ERR_ROOM_FULL = -107       # 房间满员，且本局不允许中途观战
+const ERR_DUPLICATE_SEQ = -108   # 重复序号（同一意图被重投）
+const ERR_DESYNC = -109          # 重连重放后 state_hash 仍与主机不符
 
 
 static func is_known_message(msg_type: String) -> bool:
 	return msg_type in [
 		MSG_HELLO, MSG_WELCOME, MSG_GAME_START, MSG_INTENT, MSG_APPLIED,
 		MSG_REJECTED, MSG_TURN, MSG_PENDING_SEQUENCE, MSG_SNAPSHOT,
-		MSG_PING, MSG_PONG,
+		MSG_PING, MSG_PONG, MSG_READY, MSG_PEER_LEFT, MSG_PEER_JOINED,
 	]
 
 
@@ -102,3 +112,46 @@ static func strip_snapshot(snapshot: Dictionary, seat: int) -> Dictionary:
 		seats[i]["hand_uids"] = []   # hand_count 保留，供 UI 显示对手张数
 	out["view_seat"] = seat
 	return out
+
+
+# ============================================================
+# 消息编解码（P11-C1-b）
+# ============================================================
+# 为什么用 var_to_bytes 而不是 JSON：
+#   JSON 会把所有数字变成 float —— uids / seq / hash 都要显式转回 int，
+#   漏一处就是「uid 12.0 找不到手牌」这类静默 bug。var_to_bytes 保留 int 类型。
+# 外层加 8 字节头（魔数 + body 长度）：
+#   畸形包在进 bytes_to_var 之前就被拦下，不会让引擎刷 "Invalid data" 报错。
+const WIRE_MAGIC = 0x43484D31        # "CHM1"
+const WIRE_HEADER_SIZE = 8
+
+
+# 字典 → 线格式字节：[magic u32][body_len u32][var_to_bytes(msg)]
+static func encode(msg: Dictionary) -> PackedByteArray:
+	var body := var_to_bytes(msg)
+	var out := PackedByteArray()
+	out.resize(WIRE_HEADER_SIZE)
+	out.encode_u32(0, WIRE_MAGIC)
+	out.encode_u32(4, body.size())
+	out.append_array(body)
+	return out
+
+
+# 线格式字节 → 字典；任何不合规输入一律返回空字典（调用方按「丢弃」处理）
+static func decode(data: PackedByteArray) -> Dictionary:
+	if data == null or data.size() < WIRE_HEADER_SIZE:
+		return {}
+	if data.decode_u32(0) != WIRE_MAGIC:
+		return {}
+	if int(data.decode_u32(4)) != data.size() - WIRE_HEADER_SIZE:
+		return {}
+	var body := data.slice(WIRE_HEADER_SIZE)
+	var value = bytes_to_var(body)
+	if not (value is Dictionary):
+		return {}
+	return value
+
+
+# sequence_pick / sequence_skip 发生在「牌权已移交」之后，不算普通回合意图
+static func is_sequence_intent(intent_type: String) -> bool:
+	return intent_type == INTENT_SEQUENCE_PICK or intent_type == INTENT_SEQUENCE_SKIP

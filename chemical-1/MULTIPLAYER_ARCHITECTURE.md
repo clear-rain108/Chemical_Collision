@@ -1,6 +1,6 @@
 # 化学碰撞（Chemical Collision）联机架构设计文档
 
-> 版本：v1.1 ｜ 状态：**设计定稿；地基（P11-B）与 ENet 传输（P11-C1-a）已实现**
+> 版本：v1.2 ｜ 状态：**设计定稿；P11-B 地基、P11-C1-a 传输、P11-C1-b 会话层均已实现**
 > 适用范围：3~4 人朋友局，跨局域网 P2P（无端口映射条件）
 > 相关文档：[`ARCHITECTURE.md`](ARCHITECTURE.md)（单机架构）、[`GAMEPLAY_RULES.md`](GAMEPLAY_RULES.md)（规则）、[`UI_POLISH_PLAN.md`](UI_POLISH_PLAN.md)（UI 计划）
 
@@ -15,7 +15,7 @@
 | 同步方式选什么？ | **主机权威 + 事件重放 + 状态哈希校验**（不是逐帧状态同步） |
 | 需要改单机逻辑吗？ | **不需要**。`GameManager` 只新增只读/事件 API，单机调用路径一行未变 |
 | 推荐落地顺序？ | Tailscale 验证 → ENet 局域网 → WebRTC 跨网 → 打磨（见 §10） |
-| 当前进度 | P11-B 地基已完成：种子化洗牌、牌 uid、快照、FNV 哈希、`apply_event`、传输层抽象、回环传输、新测试套件。**P11-C1-a 已完成**：`ENetTransport`（局域网 / Tailscale 直连）+ 55 项自动化测试 |
+| 当前进度 | P11-B 地基已完成：种子化洗牌、牌 uid、快照、FNV 哈希、`apply_event`、传输层抽象、回环传输、新测试套件。**P11-C1-a 已完成**：`ENetTransport`（局域网 / Tailscale 直连）+ 55 项自动化测试。**P11-C1-b 已完成**：`NetSession` 房间 / 座位 / 主机权威裁决 / 两阶段冻结 / 超时托管 / 掉线保留 / token 重连 / 观战 + 107 项自动化测试 |
 
 本次地基交付物（对应 §13 / 附录 A）：
 
@@ -30,6 +30,12 @@ P11-C1-a 追加交付物（真实网络传输层）：
 - `scripts/net/ENetTransport.gd`：`ENetMultiplayerPeer` 原始包封装（不挂 `SceneMultiplayer`）
 - `tests/verify_enet_transport.gd`（11 组 55 项断言，全部通过；同进程 127.0.0.1 真实 UDP，无需第二台机器）
 - `scripts/net/NetTransport.gd`：补充接口契约注释（peer_id ≠ 座位号）
+
+P11-C1-b 追加交付物（会话层）：
+
+- `scripts/net/NetSession.gd`：房间生命周期、座位分配与 `peer_id ↔ seat` 映射、主机权威裁决与广播、两阶段（指定牌型）冻结、超时托管、掉线座位保留、token 重连、观战与满员拒绝
+- `scripts/net/NetProtocol.gd`：新增 `ready / peer_left / peer_joined` 消息、`ERR_NO_PENDING / ERR_NOT_READY / ERR_ROOM_FULL / ERR_DUPLICATE_SEQ / ERR_DESYNC`、`var_to_bytes` 线格式编解码（`encode` / `decode`）
+- `tests/verify_net_session.gd`（17 组 107 项断言，全部通过；真实 ENet + 3 个独立 `GameManager` 实例，指纹是真两端各自重放出来的）
 
 ---
 
@@ -420,19 +426,20 @@ func shuffle(rng_seed: int = -1) -> void
 | `scripts/net/NetTransport.gd` | 传输接口（host/join/send/broadcast/poll/close + 3 个信号） | 新文件 |
 | `scripts/net/LoopbackTransport.gd` | 进程内回环实现（测试用，含断线事件） | 新文件 |
 | `scripts/net/ENetTransport.gd` | **P11-C1-a**：`ENetMultiplayerPeer` 原始包封装（host/join/poll/send/broadcast/close），信号维护 peer 集合 | 新文件，单机不加载 |
+| `scripts/net/NetSession.gd` | **P11-C1-b**：房间生命周期、座位分配、主机权威裁决、两阶段冻结、超时托管、掉线保留、token 重连、观战 | 新文件，单机不加载 |
 | `tests/verify_net_foundation.gd` | 8 组 54 项断言 | 新测试 |
 | `tests/verify_enet_transport.gd` | **P11-C1-a**：11 组 55 项断言（127.0.0.1 真实 UDP 回环） | 新测试 |
+| `tests/verify_net_session.gd` | **P11-C1-b**：17 组 107 项断言（真实 ENet，3 个独立 `GameManager`） | 新测试 |
 
 ### 9.2 后续阶段改动（未开始）
 
 | 文件 | 改动 | 阶段 |
 |---|---|---|
-| `scripts/net/NetSession.gd`（新） | 房间生命周期、协议编解码、超时、重连（C1-b） | P11-C1 |
 | `scripts/net/ActionRouter.gd`（新） | 把 `GameUI` 的 8 处出牌 / 2 处跳过收口成 `submit(intent)` | P11-C1 |
 | `scripts/GameUI.gd` | ① 10 处动作改走 `ActionRouter`；② 联机时 AI 由主机驱动（客人显示"等待 X 行动"）；③ 新增房间页（建局 / 加入 / 房间码 / 座位列表） | P11-C1 |
 | `scripts/net/WebRTCTransport.gd`（新） | `WebRTCMultiplayerPeer` + ICE + 信令客户端 | P11-C2 |
 | `scripts/net/SignalingClient.gd`（新） | 零部署 MVP（ntfy.sh）或自建 WebSocket | P11-C2 |
-| `tests/verify_net_session.gd`（新） | 用 `LoopbackTransport` 跑完整握手 + 一局全流程 + 断线重连 | P11-C1 |
+| `scripts/net/NetSession.gd` | 接入真机 UI 前的加固项：踢人（`ENetMultiplayerPeer.disconnect_peer`，当前 `NetTransport` 未暴露）、房间码 → 地址的发现层 | P11-C1 收尾 |
 
 ### 9.3 明确不改的文件
 
@@ -447,7 +454,8 @@ func shuffle(rng_seed: int = -1) -> void
 | **P11-B 地基** ✅ | 种子化洗牌、uid、快照、哈希、事件、传输抽象、回环、测试 | 新测试全绿；原有 19 套零回归 | 已完成 |
 | **P11-A 热座** | 同机 2~3 人轮流操作（只显示当前操作者手牌） | 不开网络也能两人打完一局；切换时手牌不串 | 0.5~1 天 |
 | **P11-C1-a ENet 传输** ✅ | `ENetTransport`（`ENetMultiplayerPeer` 原始包模式）+ 127.0.0.1 自动化测试 | 55 项断言全绿；41 套既有测试零回归 | 已完成 |
-| **P11-C1 局域网** | `NetSession` + `ActionRouter` + 房间页 + 主机权威；配 Tailscale 跨网直连 | 同 WiFi / Tailscale 下 3~4 人打完一整局，`state_hash` 全程一致 | 剩 ~3.5 天 |
+| **P11-C1-b 会话层** ✅ | `NetSession`（房间 / 座位 / 主机权威 / 两阶段冻结 / 托管 / 重连 / 观战）+ 真实 ENet 三方测试 | 107 项断言全绿；`state_hash` 逐事件一致 | 已完成 |
+| **P11-C1 局域网** | `ActionRouter` + 房间页 + 接真机 UI；配 Tailscale 跨网直连 | 同 WiFi / Tailscale 下 3~4 人打完一整局，`state_hash` 全程一致 | 剩 ~2 天 |
 | **P11-C2 跨 NAT** | `webrtc-native` 插件 + 信令 + TURN 兜底 | 异地 2 人（无端口映射）输入房间码即可开局，失配自动修复 | 3~5 天 |
 | **P11-D 打磨** | 超时自动 pass、断线重连、RTT 显示、回放、房间码 UI 优化 | 拔网线 30s 内可恢复；回放可完整重现一局 | 2~3 天 |
 
@@ -468,7 +476,7 @@ func shuffle(rng_seed: int = -1) -> void
 |---|---|---|---|
 | L1 引擎确定性 | `tests/verify_net_foundation.gd` | 种子、uid、快照、哈希、事件应用、边界 | ❌ |
 | L1.5 真实传输（P11-C1-a 新增） | `tests/verify_enet_transport.gd` | 真实 UDP 握手、定向/广播、8KB 分片、100 包有序、三人房间、断线、端口占用 | ❌（同进程 127.0.0.1） |
-| L2 协议全流程（P11-C1 新增） | `tests/verify_net_session.gd` + `LoopbackTransport` | 握手、建局、一局事件流、拒绝路径、断线重连 | ❌（进程内回环） |
+| L2 协议全流程（P11-C1 新增） | `tests/verify_net_session.gd` | 真实 ENet 三端：握手、座位、建局、事件流、拒绝路径、两阶段、托管、掉线重连、观战、满员拒绝（107 项） | ❌（同进程 127.0.0.1） |
 | L3 真网络 | 手动 / 双开客户端 | 实际 NAT、延迟、丢包、平台差异 | ✅ |
 
 ### 11.2 运行方式
@@ -644,3 +652,164 @@ while peer.get_available_packet_count() > 0:
 - 测试用 `47811 / 47812 / 47813` 三个候选依次尝试，避免端口被占导致误报。
 - Windows 首次监听会弹防火墙确认框；C1-d 房间页必须把「已监听 / 未监听」显示出来，否则用户点错一次就是静默失败。
 - 异地联机不做打洞：直接上 Tailscale / ZeroTier，`ENetTransport` 一行不用改（见 §2.1 方案 A）。
+
+### C.5 退出时的坑：客户端 `close()` 之后不能立刻 `quit()`
+
+**现象**：测试跑完（全部 PASS，汇总行都打印了），进程却永远不退出 —— 内存不再变化、CPU 归零，CI 里表现为「挂起 / 超时」，看起来像是断言逻辑死循环，实际死引擎退出阶段。
+
+**定位**：用 4 个最小脚本二分（2026-11，Godot 4.7.2 headless）：
+
+| 脚本做的事 | 进程退出 |
+|---|---|
+| 只 `print` + `quit()`（不碰 ENet） | ✅ 正常 |
+| `create_server`（没人连）+ `close()` + `quit()` | ✅ 正常 |
+| `create_server` + `create_client` 连上 + `close()` + **立刻** `quit()` | ❌ **卡死** |
+| 同上，但 `close()` 后 `OS.delay_msec(800)` 再 `quit()` | ✅ 正常 |
+
+**结论**：ENet 客户端断开后的底层收尾是**异步**的，`ENetMultiplayerPeer.close()` 返回时还有未完成的断开 / 线程收尾；此时立刻让引擎退出会挂住。主机侧 + 无连接两种情况都不受影响，所以「小测试不卡、大测试卡」极具迷惑性。
+
+**写法**：网络测试的 `_finish()` 在 `quit()` 前留一小段：
+
+```gdscript
+func _finish() -> void:
+	...
+	OS.delay_msec(600)      # ENet 客户端 close() 后异步收尾，立刻 quit 会卡死
+	quit(1 if fails > 0 else 0)
+```
+
+`tests/verify_net_session.gd` 已按此实现（见文件头注释）。
+
+---
+
+## 附录 D：`NetSession` 实现说明（P11-C1-b）
+
+> 源码：`scripts/net/NetSession.gd` ｜ 测试：`tests/verify_net_session.gd`（107 项）
+> 层次：`GameManager`（纯逻辑）→ `NetSession`（房间 / 权威 / 一致性）→ `NetTransport`（ENet / Loopback）
+
+### D.1 状态机
+
+```
+role:  NONE ──start_host──► HOST
+       NONE ──start_client─► CLIENT
+state: IDLE ─► CONNECTING ─► LOBBY ─► PLAYING ─► OVER
+                              └──────── CLOSED（任何阶段都可进入，不可逆）
+```
+
+- `LOBBY` 之前（`IDLE/CONNECTING`）**不分配座位**：主机只在收到 `hello` 时才写座位表，所以「发起连接」≠「进房间」。
+- `PLAYING` 之后不再接纳新玩家：`_assign_new_seat()` 直接返回 `WATCHER_SEAT`，把后到的人变成观战者（否则座位表与 `GameManager` 的 `player_count` 会错位，`apply_event` 的越界校验立刻炸）。
+
+### D.2 消息流
+
+| 消息 | 方向 | 用途 |
+|---|---|---|
+| `hello` | C→S | 报昵称 + `proto` + `token`（空 = 首次，非空 = 申请恢复座位） |
+| `welcome` | S→C | 座位、token、房间码、座位表、配置、`resume` 标记、（重连时）两阶段剩余时间 |
+| `snapshot` | S→C | 已开局则紧跟 `welcome` 发：`seed` + `event_log` + `hash` + 座位表 |
+| `game_start` | S→all | 开局：`seed` / `player_count` / `ai_count` / 配置 / 座位表 / `hash` |
+| `intent` | C→S | `{seq, ev}`；`seq` 单调递增，主机用它去重 |
+| `applied` | S→all | 权威结果：`{by, result, ev, hash}`，客人**只重放这条** |
+| `rejected` | S→C | `{seq, code}`；`ERR_ROOM_FULL` 会让客人本地 `close()` |
+| `pending_sequence` | S→all | `{seat, remain_ms}`；`seat = -1` 表示窗口关闭 |
+| `ready` | C→S | 快照重放完，附本地 `hash` 供主机核对 |
+| `peer_left` / `peer_joined` | S→all | 座位掉线（座位保留）/ 座位（重新）上线 |
+
+线格式：`[magic "CHM1" u32][body_len u32][var_to_bytes(dict)]`。用 `var_to_bytes` 而不是 JSON —— JSON 会把 `uid` / `seq` / `hash` 全变成 float，漏一处就是「`uid` 12.0 找不到手牌」的静默 bug。8 字节头让畸形包在 `bytes_to_var` 之前就被丢掉，不会让引擎刷 `Invalid data`。
+
+### D.3 座位与身份
+
+- **`peer_id ≠ seat`**：ENet 客人的 `peer_id` 是随机 32 位整数，`NetSession` 维护双向表 `_peer_seat` / `_seat_peer`，并用 `seat_of_peer()` 作为唯一入口。
+- **token**：每座位一枚 32 位 hex 随机串。掉线时座位、昵称、token 全部保留（只把状态置 `OFFLINE`），带 token 重连进来 `_seat_of_token_if_offline()` 命中即恢复原座位，**token 不换发**（客人不必更新本地存档）。
+- **不许顶号**：座位 `ONLINE` 时任何 token 都不作数，走「新面孔」分支。
+- **观战者**：`seat = -1`，收全量广播但不能提交（`can_submit()` 为假，主机侧还会用 `ERR_NOT_READY` 兜底）。
+- **ENet 名额要留余量**：`create_server(port, max_players - 1)` 时名额正好等于座位数，会让「掉线重连（旧连接未释放）+ 观战」被 ENet 直接拒掉，表现为永远 `CONNECTING`、上层连拒绝消息都发不出去。故 `host()` 传 `max_players + RECONNECT_SLACK(4)`。
+
+### D.4 主机裁决（唯一权威）
+
+```
+_on_intent(peer, msg):
+  seat = seat_of_peer(peer)              # 不信任 payload 里的 by
+  seat == -1                 → ERR_NOT_READY      （观战者）
+  seq <= 该座位已用最大 seq  → ERR_DUPLICATE_SEQ  （重投 / 重放）
+  state != PLAYING           → ERR_NOT_READY
+  by != seat                 → ERR_WRONG_SEAT     （谁也不许替别人出牌）
+  两阶段窗口开着 且 不是等待方 → ERR_NOT_YOUR_TURN
+  两阶段窗口开着 且 是普通意图 → ERR_BAD_EVENT
+  无窗口却发 sequence_*       → ERR_NO_PENDING
+  其余 → GameManager.apply_event → result
+result < 0 → 回 rejected（局面不动、不进 event_log）
+result >= 0 → 记 hash → 广播 applied（含 ev 与 hash）→ 本地 state_applied
+```
+
+客人永远不自己 apply 自己的意图，只重放主机 `applied` 里那条 `ev`，然后把本地 `state_hash()` 与报文里的 `hash` 对比；不一致即 `desync_detected`（`NetProtocol.ERR_DESYNC`），且只报一次。
+
+### D.5 两阶段冻结（顺序牌型）
+
+`GameManager.apply_event` 用 `result == 1` 表示「打出了顺序牌型，牌权已经移交，但约束还没指定」。这中间的空档就是最容易分叉的地方：若客人这时又能出牌，双方对「谁是当前玩家」的理解会立刻分叉。
+
+处理：
+1. `result == 1` → 主机开窗 `{seat, deadline}`，广播 `pending_sequence{seat, remain_ms}`；
+2. 窗口内 `_validate_for_seat` **只**接受等待方本人的 `sequence_pick` / `sequence_skip`，其余一律 `ERR_NOT_YOUR_TURN` / `ERR_BAD_EVENT`；
+3. 等待方结算完（`was == seat` 且 result != 1）→ 关窗，广播 `pending_sequence{seat: -1}` + `sequence_cleared`；
+4. 超时（默认 15s）→ 主机代替该座位 `sequence_skip`（即「托管」），成功后正常广播；万一跳票也被规则拒绝，则强制关窗并 `error_raised` —— **宁可少一条规则，也不能让整局卡死**；
+5. 等待方掉线 → 立刻走同一套托管，不等超时。
+
+UI 侧只需要：`is_my_sequence_pending()` 为真时弹出「指定牌型」面板，`sequence_pending(seat, ms)` 的 `ms` 就是倒计时。
+
+### D.6 重连与恢复
+
+`GameManager` **没有** `from_snapshot()`，所以恢复一律是「同 `seed` `init_game` + 重放 `event_log`」：
+
+```gdscript
+_apply_config_and_init()                      # init_game(player_count, ai_count, seed)
+game.replay_events(msg["event_log"])          # 逐条 apply，日志条数也一起重建
+_last_hash = game.state_hash()                # 与主机 compare
+```
+
+日志条数一并重建这点很关键：`state_hash()` 里含 `event_log` 计数，用 `to_snapshot()` 反序列化（如果存在）也对不上。恢复后客人回 `ready{hash}`，主机用它核对；不一致就 `error_raised(ERR_DESYNC)`，UI 该重拉快照。
+
+### D.7 已知限制
+
+| # | 限制 | 说明 |
+|---|---|---|
+| 1 | 不会踢人 | `NetTransport` 只暴露 `close()`，没有 `disconnect_peer`。满员拒绝时靠客人自己收到 `ERR_ROOM_FULL` 后 `close()`；恶意端挂着不关会占一个连接名额（有 `RECONNECT_SLACK` 兜着） |
+| 2 | 房间码只是标识 | 4 位数字便于口头报号，**不做发现**：客人仍需知道 IP（局域网 / Tailscale） |
+| 3 | 掉线座位永不回收 | 宽限期只清计时器，座位与 token 一直保留（`reconnect_grace_ms` 到点后不再提示）。要在「一局结束后」腾座位得由 UI 层显式重置房间 |
+| 4 | 信任模型 A 档 | 客人本地有完整 `GameManager`，技术上能看牌；主机能改牌（§8、R4） |
+| 5 | 主机掉线 = 对局结束 | 客人侧收到与主机断开就直接 `close("与主机的连接已断开")` |
+
+### D.8 用法
+
+```gdscript
+const NetSessionScript = preload("res://scripts/net/NetSession.gd")
+const ENetTransportScript = preload("res://scripts/net/ENetTransport.gd")
+
+var session = NetSessionScript.new()
+session.setup(game_manager, ENetTransportScript.new())   # GameManager 由外部持有
+session.seat_assigned.connect(func(seat): ...)
+session.state_applied.connect(func(ev, r): refresh_table())
+session.sequence_pending.connect(func(seat, ms): show_pick_panel(seat, ms))
+session.session_closed.connect(func(reason): back_to_menu(reason))
+
+# 房主
+session.start_host(47800, 4, "小明")
+session.start_game(4, 0)          # 座位都 ready 之后
+
+# 客人（token 非空 = 带重连凭据回来）
+session.start_client("192.168.1.7", 47800, "小红")
+session.start_client_resume("192.168.1.7", 47800, saved_token, "小红")
+
+# 渲染 / 逻辑帧里各一次
+session.poll()
+
+# 提交意图：主机直接裁决，客人发出去等广播（本地不改局面）
+session.submit("play", {"uids": [12, 44], "pattern": -1})
+session.skip_sequence()
+```
+
+### D.9 测试怎么写的（可复用经验）
+
+- **手工 pump，不用帧循环**：`_pump(peers, cond, timeout)` 里循环 `for p in peers: p["s"].poll()` + `OS.delay_msec(3)`，直到条件成立或超时。断言里的等待都是「等某个可观测状态」，不是睡固定时长。
+- **每个端点一个独立 `GameManager`**：三份 `GameManager` 各持一份牌库，`state_hash()` 一致才是真一致（共享一个对象是自欺欺人）。
+- **真实 ENet，不是 Loopback**：顺序牌窗口、掉线重连、观战、满员拒绝都需要真实 `peer_id` 与真实断开语义，Loopback 一对一测不出来。
+- **直接驱动内部状态机**：两阶段相关的断言用 `_update_pending_after_apply(seat, result)` 直接开窗，不去赌「手上正好有顺序牌」；`by` 伪造 / 重号用 `transport.send_to()` 发原始包才做得到。
+- **退出要留余量**：见附录 C.5。

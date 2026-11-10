@@ -1436,6 +1436,26 @@ func apply_event(ev: Dictionary) -> int:
 	return result
 
 
+# ---- 事件序列重放（联机：中途加入 / 断线重连 / 失配修复 / 回放）----
+# 调用约定：
+#   1) 调用方必须已用**同一 seed + 同一配置**调过 init_game（牌序才能对上）；
+#   2) events 是主机下发的 event_log（apply_event 已过滤掉失败事件）；
+#   3) 返回「成功应用的条数」；<0 = 在某一处分叉（说明两端牌序或版本不一致）。
+# 重放会重建 log_messages（apply_event 内部照常写日志），因此重放后
+# state_hash() 里的 logs 计数也能与主机对齐 —— 这正是快照恢复做不到的。
+func replay_events(events: Array) -> int:
+	event_log.clear()
+	var applied := 0
+	for ev in events:
+		if not (ev is Dictionary):
+			return EVENT_BAD_PAYLOAD
+		var code := apply_event(ev)
+		if code < 0:
+			return code
+		applied += 1
+	return applied
+
+
 func _card_by_uid(player_index: int, uid: int):
 	for c in players[player_index].hand:
 		if int(c.uid) == uid:
