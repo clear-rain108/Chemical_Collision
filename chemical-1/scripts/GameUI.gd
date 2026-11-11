@@ -13,6 +13,9 @@ const CompoundSolverScript = preload("res://scripts/CompoundSolver.gd")
 const AIPlayerScript = preload("res://scripts/AIPlayer.gd")
 const HelpContentScript = preload("res://scripts/HelpContent.gd")
 const HintAdvisorScript = preload("res://scripts/HintAdvisor.gd")
+# 联机（P11-C1-c Step 3）：动作走 ActionRouter，局面刷新走 NetSession 信号
+const ActionRouterScript = preload("res://scripts/net/ActionRouter.gd")
+const NetSessionScript = preload("res://scripts/net/NetSession.gd")
 
 # ============================================================
 # 一、页面引用
@@ -103,6 +106,18 @@ var _hand_read_only: bool = false       # 手牌区只读（AI 回合显示玩�
 # 热座交接（B2）：已确认「正在看自己手牌」的人类座位；-1 = 还没人确认。
 # 只记座位号不记人 → 同一位玩家连续行动（顺序牌型的二次选择）不会重复弹遮罩。
 var _hotseat_ready_seat: int = -1
+
+# ------------------------------------------------------------
+# 联机（P11-C1-c Step 3，决策 D6~D11 见 MULTIPLAYER_TASKS.md）
+#   · net_session == null 时，本文件所有联机分支都不生效 —— 单机路径逐字不变
+#   · 装配只有一处入口：attach_session(session)（房间页 / 测试都走它）
+#   · 动作统一走 action_router（单机 = 直连 GameManager，返回码与今天等价）
+# ------------------------------------------------------------
+const NET_AI_DELAY_S := 1.2             # 联机 AI 思考节流（对齐单机 1.5s 的节奏）
+var net_session = null                  # NetSession 实例；单机恒 null
+var action_router = null                # ActionRouter 实例；attach_session 时创建
+var _net_ai_wait: float = 0.0           # 联机 AI 计时累加（仅主机用）
+var _seq_overlay: Control = null        # 顺序牌型弹窗（sequence_cleared 时收掉）
 
 # 手牌重叠布局参数
 const CARD_W := 95.0                    # 卡牌宽度
@@ -2478,6 +2493,11 @@ func _on_player_count_changed(value: float) -> void:
 		_start_flash_rule_hint("AI 人数已自动降为 %d（最多 = 总人数 - 1）" % seat_for_ai)
 
 func _on_start_game() -> void:
+	# 联机（Step 3）：开局只能由房间页 → session.start_game() 驱动。
+	# 这里若不拦住，会在本地 new 一个 GameManager，直接和会话手里的那份分叉。
+	if net_session != null:
+		_show_info("联机对局请从房间页开局（本页仅用于单机 / 教程）")
+		return
 	var total = int(player_spin.value) if player_spin else 4
 	var ai = int(ai_spin.value) if ai_spin else 3
 	if total < GameManagerScript.MIN_PLAYERS or total > GameManagerScript.MAX_PLAYERS:
@@ -2547,6 +2567,12 @@ func _on_quit_game() -> void:
 	_quit_confirm_pending = false
 	if quit_button != null and is_instance_valid(quit_button):
 		quit_button.text = "退出游戏"
+	# 联机（Step 3，D11）：退出 = 关闭会话，绝不写 game.phase
+	#   （本端写 phase 只是本地作废，主机那份局面不受影响，客人却以为自己结束了）
+	if net_session != null:
+		net_session.close("主动退出对局")
+		_show_end_page("已退出联机对局")
+		return
 	if game_manager: game_manager.phase = 2
 	_show_end_page("游戏已退出")
 
@@ -3837,10 +3863,30 @@ func _update_log_label() -> void:
 
 func _update_card_info_label() -> void:
 	if not card_info_label or not game_manager: return
+	var pi: int = game_manager.get_current_player_index()
 	var cp = game_manager.get_current_player()
 	if cp == null:
 		card_info_label.text = ""
 		return
+	# 联机（Step 3，D6）：视角与「可用牌型」都只按自己的座位算 ——
+	# 用当前行动者的下标去查 get_available_patterns() 就是白送别人手牌情报。
+	if net_session != null:
+		if net_session.is_watcher():
+			card_info_label.text = "观战中：不显示任何玩家的手牌"
+			return
+		cp = _view_player()
+		if cp == null:
+			card_info_label.text = ""
+			return
+		if not _net_can_operate():
+			if action_router != null and action_router.awaiting_reply():
+				card_info_label.text = "已提交，等待主机裁决…"
+			else:
+				var actor = game_manager.get_current_player()
+				var who: String = actor.player_name if actor != null else "对手"
+				card_info_label.text = "等待 %s 行动中… 现在不是你的回合，手牌仅供查看" % who
+			return
+		pi = int(net_session.my_seat)
 	if cp.is_ai:
 		# 手牌区此时显示玩家自己的牌（只读），这里说明在等谁，
 		# 否则玩家会误以为界面卡住
@@ -3858,13 +3904,13 @@ func _update_card_info_label() -> void:
 	# 提示（P6）：_apply_hint() 写入的建议优先于默认「可用牌型」，
 	# 但局面一变（换人 / 手牌数变了 / 顺序被玩家重排）就作废，避免选中残留误导玩家
 	if _hint_text != "":
-		if _hint_owner == game_manager.get_current_player_index() \
+		if _hint_owner == pi \
 				and _hint_hand_size == cp.hand.size() \
 				and _hint_order_sig == _hand_order_sig(cp):
 			card_info_label.text = _hint_text
 			return
 		_clear_hint()
-	var hint = game_manager.get_available_patterns(game_manager.get_current_player_index())
+	var hint = game_manager.get_available_patterns(pi)
 	card_info_label.text = "提示: " + hint
 
 
@@ -3924,6 +3970,14 @@ func _update_action_panel() -> void:
 	if _hotseat_handoff_pending():
 		_fit_action_panel()
 		return
+	# 联机（Step 3，D1/D6）：非我回合 / 已提交待裁决 / 观战 / 待选牌型
+	#   → 只给一句等待提示，一个按钮都不给（客人绝不能替别人「点」出牌）
+	if net_session != null:
+		var wait_text := _net_wait_text()
+		if wait_text != "":
+			action_panel.add_child(_mk_wait_label(wait_text))
+			_fit_action_panel()
+			return
 	var cp = game_manager.get_current_player()
 	if cp == null or cp.is_ai or game_manager.is_game_over():
 		_fit_action_panel()
@@ -4512,6 +4566,10 @@ func _on_hint_toggled(pressed: bool) -> void:
 func _apply_hint() -> void:
 	if game_manager == null or game_manager.is_game_over():
 		return
+	# 联机（Step 3）：只有轮到我、且没有待裁决 / 待选牌型时才给提示 ——
+	# HintAdvisor 读的是「当前行动者」的手牌，别人回合点提示等于偷看别人的牌
+	if net_session != null and not _net_can_operate():
+		return
 	var cp = game_manager.get_current_player()
 	if cp == null or cp.is_ai:
 		return
@@ -4605,7 +4663,12 @@ func _update_hand_buttons() -> void:
 	# 旧实现在 AI 回合直接把手牌区换成一句「等待 XX 行动中...」，
 	# 玩家整轮看不到自己的牌 → 改成始终显示自己的手牌，只是不可操作。
 	var view = _hand_view_player(actor)
-	_hand_read_only = view != null and actor != null and view != actor
+	if net_session != null:
+		# 联机（Step 3，D6）：只读与否只看「是不是我这一手」，与 actor 无关：
+		#   别人回合 / 已提交待裁决 / 待我选牌型 → 只读（看得到自己牌，点不动）
+		_hand_read_only = view == null or not _net_can_operate()
+	else:
+		_hand_read_only = view != null and actor != null and view != actor
 	# 选中快照必须抢在 hand_buttons.clear() 之前：旧按钮上的 card meta 是
 	# 「玩家看见并点中的那张牌」的唯一可靠来源（数据层顺序可能已被拖拽 / 抽牌排序改过）
 	var keep_selected: Array = _selected_cards(view)
@@ -4624,8 +4687,10 @@ func _update_hand_buttons() -> void:
 	ai_triggered = false
 
 	# AI 调度与手牌渲染解耦：即使显示的是玩家自己的牌，也要继续推动 AI 行动
+	# 联机（Step 3，D8）：AI 只能由主机 _update_net() 代打（走 host_step_ai → 广播）。
+	#   客人若也跑这个计时器，就是本地私自 play_cards → 立刻与主机分叉。
 	var ai_acting: bool = actor != null and actor.is_ai and not game_manager.is_game_over()
-	if ai_acting and not ai_triggered:
+	if ai_acting and not ai_triggered and net_session == null:
 		ai_triggered = true
 		var timer = get_tree().create_timer(1.5)
 		timer.timeout.connect(_ai_auto_play)
@@ -4635,6 +4700,8 @@ func _update_hand_buttons() -> void:
 		if actor != null:
 			var wl = Label.new()
 			wl.text = "等待 %s 行动中..." % actor.player_name
+			if net_session != null and net_session.is_watcher():
+				wl.text = "观战中：不显示任何玩家的手牌"
 			wl.add_theme_font_size_override("font_size", 28)
 			# 手牌区背景是浅蓝，默认白色字几乎不可见
 			wl.add_theme_color_override("font_color", Color(0.33, 0.4, 0.5, 1))
@@ -4690,10 +4757,13 @@ func _human_players() -> Array:
 #   单人类（1 人 + N AI）：永远看自己；AI 回合只读 → 修掉「AI 回合看不到自己的牌」
 #   热座（多人类）    ：只看当前人类；AI 回合返回 null，由调用方显示等待提示
 #                        （同屏多人绝不能同时显示各自手牌）
-# 联机改造（P11-C1）时改成返回「本地座位」即可，guest 永远只有自己。
+# 联机改造（P11-C1-c Step 3，D6）：联机时视角恒为「自己的座位」，
+# 与「当前行动者」无关 —— 客人永远只看到自己的牌，轮到别人时手牌只读。
 func _hand_view_player(actor = null):
 	if game_manager == null:
 		return null
+	if net_session != null:
+		return _view_player()
 	var a = actor
 	if a == null:
 		a = game_manager.get_current_player()
@@ -4712,7 +4782,10 @@ func _hand_view_player(actor = null):
 # -------- 热座交接（B2）--------
 # 同屏多人类时，谁轮到谁就得先「认领」屏幕：手牌默认盖住，本人点一下才展示。
 # 单人类（1 人 + N AI）用不上 —— 只有一个能看牌的人，遮罩只会多一步点击。
+# 联机（Step 3，D7）恒为 false：每个玩家盯自己那块屏，同屏交接遮罩只会把对局卡死。
 func _is_hotseat() -> bool:
+	if net_session != null:
+		return false
 	return _human_players().size() >= 2
 
 
@@ -4904,6 +4977,9 @@ func _can_reorder_hand() -> bool:
 		return false
 	# 只读视角（AI 回合查看自己的牌）不许改顺序
 	if _hand_read_only:
+		return false
+	# 联机（Step 3）：只有「轮到我、且没有待裁决 / 待选牌型」才允许拖
+	if net_session != null and not _net_can_operate():
 		return false
 	# 热座交接未认领：手牌还盖着，重排按钮 / 拖拽都该消失
 	if _hotseat_handoff_pending():
@@ -5142,7 +5218,10 @@ func _cancel_drag() -> void:
 # 抬起 → 让出底部 20px → exited → 落回 → entered → 再抬起 → ……
 # 重叠区还会出现两张牌互相抢 hover。这里改为用「静止坐标」算命中区，
 # 悬停状态永远不参与判定，因此不可能自激。
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	# 联机（Step 3，D8）：先 poll 会话（收包 + 超时），主机再按节流推进 AI 座位。
+	# 单机时 net_session == null，这一行直接返回，等于不存在。
+	_update_net(delta)
 	# 拖拽优先：拖拽期间不跑悬停状态机（否则牌会随鼠标反复抬起/落下抖动）
 	_update_hand_drag()
 	if _drag_active:
@@ -5774,7 +5853,9 @@ func _update_valence_buttons() -> void:
 func _sel_cards() -> Array:
 	if game_manager == null:
 		return []
-	return _selected_cards(game_manager.get_current_player())
+	# 联机（Step 3，D6）：选中的永远是「自己手牌」里的牌 —— 用 get_current_player()
+	# 会在别人回合读到别人的手牌（索引来自我这边的手牌按钮，取出来就是另一张牌）
+	return _selected_cards(_view_player())
 
 
 # 面板所选化合价的「总电荷 Σ」：按张数累加（2 张 H 就是 2 份价），
@@ -5904,16 +5985,18 @@ func _apply_card_selection(index: int) -> void:
 func _on_auto_play() -> void:
 	if game_manager == null:
 		return
-	var cp = game_manager.get_current_player()
+	var cp = _view_player()
 	if cp == null or cp.is_ai:
+		return
+	if net_session != null and not _net_can_operate():
 		return
 	var cards := _sel_cards()
 	if cards.is_empty():
 		_show_info("请先选择要打出的牌")
 		return
 	_clear_hint()
-	var result: int = game_manager.auto_play(game_manager.get_current_player_index(), cards)
-	_handle_result(result)
+	var result: int = _router().auto_play(cards)
+	_dispatch_result(result)
 
 func _on_step_next() -> void:
 	_clear_hint()
@@ -5922,44 +6005,39 @@ func _on_step_next() -> void:
 	_update_card_info_label()
 
 func _on_element() -> void:
-	var cp = game_manager.get_current_player()
-	var cards: Array = []
-	for _idx in selected_indices: cards.append(cp.hand[_idx])
+	var cards := _sel_cards()
 	if CardPatternsScript.detect_pattern(cards) != CardPatternsScript.CardPattern.ELEMENT:
 		_show_info("不是有效单质！")
 		_on_back()
 		return
-	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards, {}, CardPatternsScript.CardPattern.ELEMENT)
-	_handle_result(result)
+	var result = _router().play(cards, {}, CardPatternsScript.CardPattern.ELEMENT)
+	_dispatch_result(result)
 
 func _on_sequence() -> void:
-	var cp = game_manager.get_current_player()
-	var cards: Array = []
-	for _idx in selected_indices: cards.append(cp.hand[_idx])
+	var cards := _sel_cards()
 	# 玩家选择"作为顺序"：顺序优先于族炸检测（如 Fe+Co+Ni 既是族炸又是顺序）
 	if CardPatternsScript.detect_pattern(cards, false, true) != CardPatternsScript.CardPattern.SEQUENCE:
 		_show_info("不是有效顺序！需≥3张连续原子序数的牌。")
 		_on_back()
 		return
-	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards, {}, CardPatternsScript.CardPattern.SEQUENCE)
-	_handle_result(result)
+	var result = _router().play(cards, {}, CardPatternsScript.CardPattern.SEQUENCE)
+	_dispatch_result(result)
 
 func _on_clan_bomb() -> void:
-	var cp = game_manager.get_current_player()
-	var cards: Array = []
-	for _idx in selected_indices: cards.append(cp.hand[_idx])
+	var cards := _sel_cards()
 	if CardPatternsScript.detect_pattern(cards) != CardPatternsScript.CardPattern.CLAN_BOMB:
 		_show_info("不是有效族炸！")
 		_on_back()
 		return
-	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards, {}, CardPatternsScript.CardPattern.CLAN_BOMB)
-	_handle_result(result)
+	var result = _router().play(cards, {}, CardPatternsScript.CardPattern.CLAN_BOMB)
+	_dispatch_result(result)
 
 func _on_choose_compound() -> void:
-	var cp = game_manager.get_current_player()
+	var cp = _view_player()
+	var cards: Array = _sel_cards()
 	var symbols: Array = []
-	for _idx in selected_indices:
-		var s = cp.hand[_idx].symbol
+	for card in cards:
+		var s = card.symbol
 		if s not in symbols: symbols.append(s)
 	if symbols.size() < 2:
 		_show_info("化合物至少需要两种不同元素！")
@@ -5974,16 +6052,16 @@ func _on_choose_compound() -> void:
 
 	# 自动识别有机物：选中牌组若实际为有机物（甲醛/甲醇/乙醇/甲酸/乙酸/烷烃等），
 	# 直接按有机物打出（跳过化合价选择），有机物打出即获胜
-	var cards: Array = []
-	for _idx in selected_indices: cards.append(cp.hand[_idx])
 	if CardPatternsScript.detect_pattern(cards, true) == CardPatternsScript.CardPattern.ORGANIC:
 		var custom_valences = {"_organic": true}
-		var result = game_manager.play_cards(game_manager.get_current_player_index(), cards, custom_valences, CardPatternsScript.CardPattern.ORGANIC)
-		if result == 0:
-			log_lines.push_back("🎉 %s 打出有机物，立即获胜！" % cp.player_name)
-		else:
-			_show_info("有机物打出失败！")
-		_handle_result(result)
+		var result = _router().play(cards, custom_valences, CardPatternsScript.CardPattern.ORGANIC)
+		# 日志只在本端真落子时写（联机要等主机裁决，写早了就是假消息）
+		if net_session == null:
+			if result == 0:
+				log_lines.push_back("🎉 %s 打出有机物，立即获胜！" % cp.player_name)
+			else:
+				_show_info("有机物打出失败！")
+		_dispatch_result(result)
 		return
 
 	step_mode = 2
@@ -5991,9 +6069,8 @@ func _on_choose_compound() -> void:
 	_update_action_panel()
 
 func _on_choose_organic() -> void:
-	var cp = game_manager.get_current_player()
-	var cards: Array = []
-	for _idx in selected_indices: cards.append(cp.hand[_idx])
+	var cp = _view_player()
+	var cards: Array = _sel_cards()
 	# 检查是否为有机物
 	if CardPatternsScript.detect_pattern(cards, true) != CardPatternsScript.CardPattern.ORGANIC:
 		_show_info("不是有效有机物！有机物包括：甲烷CH4、乙烷C2H6、丙烷C3H8及他们的单一卤代物。\n卤代物只能包含一种卤族元素(F/Cl/Br)。")
@@ -6001,7 +6078,10 @@ func _on_choose_organic() -> void:
 		return
 	# 打出有机物，标记 _organic 跳过族炸检测
 	var custom_valences = {"_organic": true}
-	var result = game_manager.play_cards(game_manager.get_current_player_index(), cards, custom_valences, CardPatternsScript.CardPattern.ORGANIC)
+	var result = _router().play(cards, custom_valences, CardPatternsScript.CardPattern.ORGANIC)
+	if net_session != null:
+		_dispatch_result(result)
+		return
 	if result == 0:
 		# 有机物打出成功
 		log_lines.push_back("🎉 %s 打出有机物，立即获胜！" % cp.player_name)
@@ -6017,8 +6097,8 @@ func _on_select_valence(symbol: String, valence: int) -> void:
 	_update_action_panel()
 
 func _on_confirm_compound() -> void:
-	var cp = game_manager.get_current_player()
-	var gm_idx = game_manager.get_current_player_index()
+	# 选中牌一次性拍快照（重排 / 抽牌后 selected_indices 可能已对不上，_sel_cards 内部按按钮 meta 兜底）
+	var sel_cards: Array = _sel_cards()
 
 	var custom_valences: Dictionary = {}
 	for sel in compound_selections:
@@ -6034,8 +6114,7 @@ func _on_confirm_compound() -> void:
 		return
 
 	var available: Dictionary = {}
-	for _idx in selected_indices:
-		var card = cp.hand[_idx]
+	for card in sel_cards:
 		available[card.symbol] = available.get(card.symbol, 0) + 1
 
 	var valence_list: Array = []
@@ -6060,8 +6139,7 @@ func _on_confirm_compound() -> void:
 			_show_info("手牌不足！需 %s×%d + %s×%d" % [a.symbol, na, b.symbol, nb])
 			return
 		var ccards: Array = []
-		for _idx in selected_indices:
-			var card = cp.hand[_idx]
+		for card in sel_cards:
 			if card.symbol == a.symbol:
 				var already = 0
 				for cc in ccards:
@@ -6075,8 +6153,8 @@ func _on_confirm_compound() -> void:
 		if ccards.size() != na + nb:
 			_show_info("收集卡牌出错！")
 			return
-		var result = game_manager.play_cards(gm_idx, ccards, custom_valences, CardPatternsScript.CardPattern.COMPOUND)
-		_handle_result(result)
+		var result = _router().play(ccards, custom_valences, CardPatternsScript.CardPattern.COMPOUND)
+		_dispatch_result(result)
 		return
 
 	# 3+ 元素化合物：总电荷 Σ = 0 即可（不再要求「每种恰好 1 张」）。
@@ -6088,10 +6166,9 @@ func _on_confirm_compound() -> void:
 	for e in valence_list:
 		total_charge += e.sign * e.v * e.avail   # 按张数累加：2 张 H 就是 2 份价
 	if total_charge == 0:
-		var ccards: Array = []
-		for _idx in selected_indices: ccards.append(cp.hand[_idx])
-		var result = game_manager.play_cards(gm_idx, ccards, custom_valences, CardPatternsScript.CardPattern.COMPOUND)
-		_handle_result(result)
+		var ccards: Array = sel_cards.duplicate()
+		var result = _router().play(ccards, custom_valences, CardPatternsScript.CardPattern.COMPOUND)
+		_dispatch_result(result)
 		return
 
 	# 逐项列出「价 × 张数」，玩家一眼能看出哪个元素多带了 / 少带了
@@ -6126,9 +6203,8 @@ func _play_selected_compound(cv: Dictionary) -> void:
 	if ccards.size() < 2:
 		_show_info("请先选择要打出的化合物卡牌！")
 		return
-	var result = game_manager.play_cards(game_manager.get_current_player_index(), ccards,
-		cv.duplicate(true), CardPatternsScript.CardPattern.COMPOUND)
-	_handle_result(result)
+	var result = _router().play(ccards, cv.duplicate(true), CardPatternsScript.CardPattern.COMPOUND)
+	_dispatch_result(result)
 
 
 func _on_back() -> void:
@@ -6139,17 +6215,29 @@ func _on_back() -> void:
 	_update_card_info_label()
 
 func _on_pass() -> void:
-	var cp = game_manager.get_current_player()
+	if net_session != null and not _net_can_operate():
+		return
+	var cp = _view_player()
+	if cp == null:
+		return
 	var hand_limit = game_manager.get_hand_limit()
 	if cp.get_hand_count() >= hand_limit:
 		_on_discard_mode()
 		return
-	game_manager.player_pass(game_manager.get_current_player_index())
-	_step_reset()
-	_refresh_ui()
+	var code: int = _router().pass_turn()
+	if net_session == null:
+		# 单机：与重构前逐字一致（跳过不该走 _handle_result 的「出牌成功」提示与飞牌）
+		_step_reset()
+		_refresh_ui()
+		return
+	_dispatch_result(code)
 
 func _on_discard_mode() -> void:
-	var cp = game_manager.get_current_player()
+	if net_session != null and not _net_can_operate():
+		return
+	var cp = _view_player()
+	if cp == null:
+		return
 	var hand_limit = game_manager.get_hand_limit()
 	if cp.get_hand_count() < hand_limit:
 		step_mode = 0
@@ -6164,16 +6252,22 @@ func _on_discard_mode() -> void:
 		_update_action_panel()
 		_update_hand_buttons()
 		return
-	if selected_indices.size() != 1:
+	var picked: Array = _sel_cards()
+	if picked.size() != 1:
 		_show_info("请选择恰好1张牌弃置！")
 		return
-	var card = cp.hand[selected_indices[0]]
+	var card = picked[0]
 	# 弃牌抬起（A3）：同样抢在数据层改动 / 重建之前（hand_buttons 此时还是旧的一批）
-	_fly_discarded_card()
-	game_manager.player_discard_and_pass(game_manager.get_current_player_index(), card)
-	step_mode = 0
-	_step_reset()
-	_refresh_ui()
+	# 联机不播：局面要等主机裁决，先飞走会让人以为已经弃掉了
+	if net_session == null:
+		_fly_discarded_card()
+	var code: int = _router().discard_and_pass(card)
+	if net_session == null:
+		step_mode = 0
+		_step_reset()
+		_refresh_ui()
+		return
+	_dispatch_result(code)
 
 
 # ============================================================
@@ -6286,9 +6380,13 @@ func _show_sequence_constraint_dialog() -> void:
 	for i in range(patterns.size()):
 		var p = patterns[i].pattern
 		var choose := func():
-			game_manager.set_sequence_constraint(p)
+			var code: int = _router().pick_sequence(p)
 			overlay.queue_free()
-			_refresh_ui()
+			_seq_overlay = null
+			if net_session == null:
+				_refresh_ui()
+			else:
+				_dispatch_result(code)
 		# 与操作面板同一套按钮样式（P2 统一）
 		var btn = _mkb(patterns[i].name, choose, false)
 		btn.custom_minimum_size = Vector2(140, 40)
@@ -6298,12 +6396,13 @@ func _show_sequence_constraint_dialog() -> void:
 
 	# 取消按钮（不指定，视为放弃权利）
 	var cancel_cb := func():
-		game_manager.sequence_constraint_active = false
-		game_manager.sequence_constraint = -1
-		game_manager.sequence_constraint_target = -1
-		game_manager.next_turn()
+		var code: int = _router().skip_sequence()
 		overlay.queue_free()
-		_refresh_ui()
+		_seq_overlay = null
+		if net_session == null:
+			_refresh_ui()
+		else:
+			_dispatch_result(code)
 	var cancel_btn = _mkb("跳过指定", cancel_cb, false)
 	cancel_btn.custom_minimum_size = Vector2(140, 40)
 	cancel_btn.add_theme_font_size_override("font_size", 14)
@@ -6311,6 +6410,7 @@ func _show_sequence_constraint_dialog() -> void:
 	overlay.add_child(cancel_btn)
 
 	_layer(1).add_child(overlay)
+	_seq_overlay = overlay
 
 
 # ============================================================
@@ -6419,6 +6519,9 @@ func _ensure_end_button_connected(target: Callable) -> void:
 # 十六、AI 自动操作策略
 # ============================================================
 func _ai_auto_play() -> void:
+	# 联机（Step 3，D8）：AI 只能由主机 _update_net() 代打，本入口仅单机可用
+	if net_session != null:
+		return
 	AIPlayerScript.auto_play(game_manager, _refresh_ui)
 
 
@@ -6441,3 +6544,267 @@ func _gcd(a: int, b: int) -> int:
 		b = a % b
 		a = t
 	return abs(a)
+
+
+# ============================================================
+# 十八、联机（P11-C1-c Step 3）
+# ------------------------------------------------------------
+# 三条不许破的线：
+#   ① 单机红线：所有联机逻辑都在 `net_session != null` 分支里；不挂会话时本段代码
+#      一次都不执行（44 套单机测试逐字不变）。
+#   ② 视图归属（D6）：客人只看到自己的手牌 / 自己的可用牌型，与「当前行动者」无关。
+#   ③ 主机权威（D1）：客人提交后返回 0 只代表「已发出」，界面一律停在
+#      「已提交，等待主机裁决…」，直到 state_applied / intent_rejected 回来。
+# 装配只有一个入口 attach_session()：房间页传入会话，测试传入假会话 / 真实会话。
+# ============================================================
+
+# 动作层懒装配：测试常常直接换 game_manager 而不走 attach_session，
+# 这里保证「第一次动手时」router 一定指向当前的 GameManager（单机 session = null）。
+func _router():
+	if action_router == null:
+		action_router = ActionRouterScript.new()
+		action_router.setup(game_manager, net_session)
+	elif action_router.game != game_manager:
+		action_router.setup(game_manager, net_session)
+	return action_router
+
+
+# 装配联机会话。session == null 表示退回单机（动作层同时切回直连 GameManager）。
+func attach_session(session) -> void:
+	net_session = session
+	if action_router == null:
+		action_router = ActionRouterScript.new()
+	action_router.setup(game_manager, session)
+	# 换座 / 重连后残留的热座认领与只读态必须清零（D7）
+	_hotseat_ready_seat = -1
+	_hand_read_only = false
+	_net_ai_wait = 0.0
+	if session == null:
+		_hide_sequence_overlay()
+		return
+	_connect_online_signals(session)
+	# 会话已经在对局中（重连 / 热加入）：直接切到牌桌，不必等 game_started
+	if session.is_playing() and game_manager != null:
+		_enter_online_game()
+
+
+# -------- 座位 / 视图归属 --------
+func _my_seat() -> int:
+	if net_session == null:
+		return -1
+	return int(net_session.my_seat)
+
+
+# 本地视角的玩家：单机 = 当前行动者；联机 = 自己座位（观战 = null）
+func _view_player():
+	if game_manager == null:
+		return null
+	if net_session == null:
+		return game_manager.get_current_player()
+	var seat := _my_seat()
+	if seat < 0 or seat >= game_manager.players.size():
+		return null
+	return game_manager.players[seat]
+
+
+# 现在这份手牌能不能动：对局中 + 轮到我 + 没有待处理两阶段 + 没有待裁决意图
+func _net_can_operate() -> bool:
+	if net_session == null or action_router == null:
+		return false
+	if not net_session.can_submit():
+		return false
+	if not net_session.is_my_turn():
+		return false
+	return not action_router.awaiting_reply()
+
+
+# 操作面板的等待文案（"" = 该显示正常按钮）
+func _net_wait_text() -> String:
+	if net_session == null:
+		return ""
+	if net_session.is_watcher():
+		return "观战中：本轮由其他玩家操作"
+	if action_router != null and action_router.awaiting_reply():
+		return "已提交，等待主机裁决…"
+	if net_session.is_my_sequence_pending():
+		return "请先在弹窗中选择牌型（或跳过指定）"
+	if not net_session.is_my_turn():
+		var actor = game_manager.get_current_player() if game_manager != null else null
+		var who: String = actor.player_name if actor != null else "对手"
+		return "等待 %s 行动…" % who
+	return ""
+
+
+# 等待提示用一个 Label（与按钮同高，_fit_action_panel 的行数计算对 Control 一视同仁）
+func _mk_wait_label(text: String) -> Label:
+	var lbl := Label.new()
+	lbl.text = text
+	lbl.add_theme_font_size_override("font_size", 18)
+	lbl.add_theme_color_override("font_color", Color(0.33, 0.4, 0.5, 1))
+	lbl.custom_minimum_size = Vector2(0, _action_btn_h())
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	return lbl
+
+
+# -------- 动作结果分派（D1 / D2）--------
+# 单机：原样交给 _handle_result（返回码 = 规则码，飞牌 / 弹窗 / 提示全靠它）
+# 联机：客人侧 0 只代表「已发出」；主机侧规则码当场有效，但 1 = 轮到自己选牌型
+func _dispatch_result(code: int) -> void:
+	if net_session == null:
+		_handle_result(code)
+		return
+	if action_router != null and action_router.awaiting_reply():
+		# 客人：等 state_applied / intent_rejected，先把自己刷成「已提交」态
+		_update_action_panel()
+		_update_card_info_label()
+		return
+	if int(code) == 0:
+		return                      # 主机：_host_apply 已广播并触发 _online_on_state_applied
+	if int(code) == 1:
+		_step_reset()
+		_show_sequence_constraint_dialog()
+		return
+	var why: String = action_router.last_reason() if action_router != null else ""
+	if why == "":
+		why = ActionRouterScript.describe_code(int(code))
+	_show_info("操作被拒绝：" + why)
+	_on_back()
+
+
+# -------- 信号接线（attach_session 可能因重连被重复调用，必须只连一次）--------
+func _connect_online_signals(session) -> void:
+	if not session.game_started.is_connected(_online_on_game_started):
+		session.game_started.connect(_online_on_game_started)
+	if not session.state_applied.is_connected(_online_on_state_applied):
+		session.state_applied.connect(_online_on_state_applied)
+	if not session.intent_rejected.is_connected(_online_on_intent_rejected):
+		session.intent_rejected.connect(_online_on_intent_rejected)
+	if not session.sequence_pending.is_connected(_online_on_sequence_pending):
+		session.sequence_pending.connect(_online_on_sequence_pending)
+	if not session.sequence_cleared.is_connected(_online_on_sequence_cleared):
+		session.sequence_cleared.connect(_online_on_sequence_cleared)
+	if not session.session_closed.is_connected(_online_on_session_closed):
+		session.session_closed.connect(_online_on_session_closed)
+	if not session.desync_detected.is_connected(_online_on_desync):
+		session.desync_detected.connect(_online_on_desync)
+	if not session.error_raised.is_connected(_online_on_error):
+		session.error_raised.connect(_online_on_error)
+
+
+# -------- 信号回调 --------
+func _online_on_game_started() -> void:
+	_enter_online_game()
+
+
+func _online_on_state_applied(_ev: Dictionary, _result: int) -> void:
+	if game_manager == null:
+		return
+	# 主机自己的一手在 submit() 里当场落子（同步），客人靠重放；
+	# 两条路径都在这里收口：清步骤态 → 整屏重画（_refresh_ui 负责结算页）
+	_step_reset()
+	_refresh_ui()
+
+
+func _online_on_intent_rejected(_seq: int, code: int) -> void:
+	_show_info("主机拒绝：" + ActionRouterScript.describe_code(int(code)))
+	_step_reset()
+	_refresh_ui()
+
+
+func _online_on_sequence_pending(seat: int, remain_ms: int) -> void:
+	if game_manager == null:
+		return
+	if seat != _my_seat():
+		# 别人在选牌型：轮不到我，先把面板刷成等待态
+		_refresh_ui()
+		return
+	_show_sequence_constraint_dialog()
+	_refresh_ui()
+	_show_info("请选择下一名玩家必须打出的牌型（%d 秒内）" % maxi(1, int(remain_ms / 1000)))
+
+
+func _online_on_sequence_cleared() -> void:
+	_hide_sequence_overlay()
+	_refresh_ui()
+
+
+func _online_on_session_closed(reason: String) -> void:
+	# 会话没了，此刻还开着的顺序牌型弹窗就永远等不到 sequence_cleared 了
+	_hide_sequence_overlay()
+	var msg := "联机已结束"
+	if reason != "":
+		msg += "：" + reason
+	_show_info(msg)
+	_refresh_ui()
+
+
+func _online_on_desync(local_hash: int, host_hash: int) -> void:
+	# 分叉后不再推进，弹窗留着只会让人以为还能选
+	_hide_sequence_overlay()
+	_show_info("状态分叉（本端 %d / 主机 %d），已停止推进" % [int(local_hash), int(host_hash)])
+	_refresh_ui()
+
+
+func _online_on_error(code: int, detail: String) -> void:
+	_show_info("联机错误 %d：%s" % [int(code), String(detail)])
+
+
+# 顺序牌型弹窗的唯一关闭口（两个回调 / 超时 / 会话结束都走它）
+func _hide_sequence_overlay() -> void:
+	if _seq_overlay != null and is_instance_valid(_seq_overlay):
+		_seq_overlay.queue_free()
+	_seq_overlay = null
+
+
+# -------- 每帧驱动（_process 第一行）--------
+func _update_net(delta: float) -> void:
+	if net_session == null:
+		return
+	# ① 收包 / 超时 / 断线宽限：所有角色都必须 poll，否则永远收不到包
+	net_session.poll()
+	if game_manager == null:
+		return
+	# ② 主机代打 AI 座位（D8）：单机那份「AI 计时器」在联机被关掉了，
+	#    不在这里推进，AI 回合会永远停住
+	if not net_session.is_host():
+		return
+	if not net_session.is_playing() or game_manager.is_game_over():
+		return
+	# 客人还没按快照重建完就替 AI 出牌 → 客人重放必分叉（host_step_ai 内部也有这道门，
+	# 这里提前挡住，顺带清零节流，避免重建完成后立刻连打好几手）
+	if not net_session.all_seats_ready():
+		_net_ai_wait = 0.0
+		return
+	var cp = game_manager.get_current_player()
+	if cp == null or not cp.is_ai:
+		_net_ai_wait = 0.0
+		return
+	_net_ai_wait += delta
+	if _net_ai_wait < NET_AI_DELAY_S:
+		return
+	_net_ai_wait = 0.0
+	# host_step_ai 内部走 host_act_for_seat → _host_apply → state_applied，
+	# 界面刷新由 _online_on_state_applied 负责，这里不再重复刷
+	net_session.host_step_ai(1)
+
+
+# -------- 进牌桌（联机版 _on_start_game：局面由会话给，不在这里 new GameManager）--------
+func _enter_online_game() -> void:
+	if game_manager == null:
+		return
+	start_page.visible = false
+	game_page.visible = true
+	end_page.visible = false
+	if help_page: help_page.visible = false
+	# 教学关卡列表可能刚从开始页打开，会盖在 GamePage 上
+	var tut_page = get_node_or_null("TutorialPage")
+	if tut_page: tut_page.visible = false
+	_close_supp_rules()
+	_hide_warning_toast()
+	_hotseat_ready_seat = -1
+	log_lines.clear()
+	if log_label:
+		log_label.text = "游戏日志:"
+	_fade_in_page(game_page)
+	_step_reset()
+	_refresh_ui()
