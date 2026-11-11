@@ -432,12 +432,12 @@ func shuffle(rng_seed: int = -1) -> void
 | `tests/verify_net_session.gd` | **P11-C1-b**：18 组 111 项断言（真实 ENet，3 个独立 `GameManager`） | 新测试 |
 | `tests/net_smoke.gd` | **P11-C1-c Step 0**：真机联机冒烟（`--host` / `--join`，3 个独立进程 + 带缓冲的逐行日志），自动出牌走 `HintAdvisor` 只读建议 | 新工具，单机不加载 |
 
-### 9.2 后续阶段改动（未开始）
+### 9.2 客户端阶段改动（P11-C1-c：已完成）
 
 | 文件 | 改动 | 阶段 |
 |---|---|---|
-| `scripts/net/ActionRouter.gd`（新） | 把 `GameUI` 的 8 处出牌 / 2 处跳过收口成 `submit(intent)` | P11-C1 |
-| `scripts/GameUI.gd` | ① 10 处动作改走 `ActionRouter`；② 联机时 AI 由主机驱动（客人显示"等待 X 行动"）；③ 新增房间页（建局 / 加入 / 房间码 / 座位列表） | P11-C1 |
+| `scripts/net/ActionRouter.gd`（新）✅ | 把 `GameUI` 的 8 处出牌 / 2 处跳过收口成 `submit(intent)`（Step 1） | P11-C1 ✅ |
+| `scripts/GameUI.gd` ✅ | ① ✅ 10 处动作改走 `ActionRouter`；② ✅ 联机时 AI 由主机驱动（客人显示"等待 X 行动"）；③ ✅ 新增房间页（建房 / 加入 / 本机 IP / 座位表 / 开局闸门 / 离开收尾） | P11-C1 ✅ |
 | `scripts/net/WebRTCTransport.gd`（新） | `WebRTCMultiplayerPeer` + ICE + 信令客户端 | P11-C2 |
 | `scripts/net/SignalingClient.gd`（新） | 零部署 MVP（ntfy.sh）或自建 WebSocket | P11-C2 |
 | `scripts/net/NetSession.gd` | 接入真机 UI 前的加固项：踢人（`ENetMultiplayerPeer.disconnect_peer`，当前 `NetTransport` 未暴露）、房间码 → 地址的发现层 | P11-C1 收尾 |
@@ -457,6 +457,8 @@ func shuffle(rng_seed: int = -1) -> void
 | **P11-C1-a ENet 传输** ✅ | `ENetTransport`（`ENetMultiplayerPeer` 原始包模式）+ 127.0.0.1 自动化测试 | 55 项断言全绿；41 套既有测试零回归 | 已完成 |
 | **P11-C1-b 会话层** ✅ | `NetSession`（房间 / 座位 / 主机权威 / 两阶段冻结 / 托管 / 重连 / 观战）+ 真实 ENet 三方测试 | 111 项断言全绿；`state_hash` 逐事件一致 | 已完成 |
 | **P11-C1-c Step 0 冒烟** ✅ | `tests/net_smoke.gd`：3 个独立进程真机联机，逐笔打印 `applied#N ... hash=H`，末尾打 `final_hash` 供三端比对 | 三端 `final_hash` 相同；本机实测整局 32 笔事件、0 拒绝、0 分叉 | 已完成 |
+| **P11-C1-c Step 3 UI 联机化** ✅ | `GameUI.attach_session()` 装配口（视图归属 D6 / 热座关闭 D7 / AI 计时器门控 D8 / 结果分派 D9 / 弹窗收窗 D10 / 退出 D11）+ 10 处动作走 `ActionRouter`；`verify_ui_online` 93 项 | A 段假会话 69 项 + B 段 3 实例真 ENet 24 项全绿；单机全量零回归 | 已完成 |
+| **P11-C1-c Step 4 房间页** ✅ | `GameUI._build_room_page()`（代码建页）：建房 / 加入 / 4 张座位卡 / AI 补位 / 开局闸门 / 离开收尾；`verify_room_page` 142 项 | A 段零网络 111 项 + B 段 3 实例真 ENet 31 项（页面建房 → 2 客人加入 → 3 人 + 1 AI 开局 → 三端进牌桌）全绿；不改 `.tscn`，全量 46 套零回归 | 已完成 |
 | **P11-C1 局域网** | `ActionRouter` + 房间页 + 接真机 UI；配 Tailscale 跨网直连 | 同 WiFi / Tailscale 下 3~4 人打完一整局，`state_hash` 全程一致 | 剩 ~2 天 |
 | **P11-C2 跨 NAT** | `webrtc-native` 插件 + 信令 + TURN 兜底 | 异地 2 人（无端口映射）输入房间码即可开局，失配自动修复 | 3~5 天 |
 | **P11-D 打磨** | 超时自动 pass、断线重连、RTT 显示、回放、房间码 UI 优化 | 拔网线 30s 内可恢复；回放可完整重现一局 | 2~3 天 |
@@ -841,3 +843,47 @@ session.skip_sequence()
 
 同一次冒烟也顺手确认了「三端逐笔账本」这套判读方式好用：每端自己决策（房主出 `H+K` 族炸、客人出 `H+Na` / `AlN` 化合物），但 `applied#N by=… type=… hash=…` 三端逐行完全相同，32 笔事件打完一整局、0 拒绝、0 分叉。真机联调就看这三行末尾的 `final_hash` 是否一致。
 - **退出要留余量**：见附录 C.5。
+
+### D.11 房间页接线说明（P11-C1-c Step 4）
+
+房间页整页由 `GameUI._build_room_page()` 代码生成（D5：不改 `Main.tscn`），挂在 `start_page` 下且默认 `visible = false` —— **不点「联机对战」就一行都不会执行**（单机红线）。
+
+**节点树（全部可 `_start_child(name)` 递归取到，便于测试）**
+
+```
+StartPage
+├─ StartButton / RoomEntryBtn / TutorialBtn / ExitButton   ← 开始页那一行（Step 4 把 260 宽拆成 124+124）
+└─ RoomPage                        (RoomBg / RoomBand 背景 + ‹ 返回)
+   ├─ RoomTitle / RoomSubtitle    ← 副标题写死 D14：「房号仅用于辨认，客人需填房主 IP」
+   ├─ RoomHostCard                ← 昵称 RoomHostNameEdit / 端口 RoomPortSpin / RoomHostIpLabel /
+   │                                 RoomCreateBtn / RoomCodeLabel
+   ├─ RoomJoinCard                ← RoomJoinNameEdit / RoomJoinPortSpin / RoomAddrEdit /
+   │                                 RoomJoinBtn / RoomLeaveBtn
+   ├─ RoomSeatsPanel              ← 固定 4 张 RoomSeatCard_i（RoomSeatName_i / RoomSeatState_i）
+   ├─ RoomHintLabel               ← 操作反馈（「xx 加入了」「座位不足…」）
+   ├─ RoomAiSpin                  ← 0 ~ (4 - 在线人类)
+   └─ RoomStartBtn                ← 房主才可用（D12 闸门）
+```
+
+座位卡**固定 4 张、只改文字**：座位数只在 1..4 之间变，动态重建既麻烦又让测试取节点不稳（改名只在 `RoomSeatName_i` / `RoomSeatState_i`）。
+
+**`_room_refresh()` 是唯一的派生点**（任何 `room_changed` / AI 数值变化 / 开关页都调它）：
+
+| 派生项 | 规则 |
+|---|---|
+| 座位名 / 状态 | 人类按 `seat_name(i)`，`online == false` → 「掉线中 · 座位保留」；AI 排在人类之后 → 「AI k」+「AI 托管」 |
+| 房号 | `"房号 " + room_code`（空则「房号 ----」） |
+| 本机 IP | `_room_local_ips()` 过滤 IPv6 / `127.*` / `169.254.*`，空则提示用 127.0.0.1 自测 |
+| AI 上限 | `maxi(0, 4 - 在线人类数)`；`max_value` 压小后 Range 会把 `value` 一起压回 |
+| 三颗按钮 | 进房间后「创建 / 加入」禁用、「离开」可用；开局按钮文本 = `开始对局` / `等待房主开始` / `开始对局 · N/4 座位` |
+
+**开局闸门是纯函数**（`_room_start_block_reason(online_humans, ai_count, is_host, room_state, offline_seats)`，返回 `""` 才放行）：非房主 → 「等待房主开始」；`PLAYING` → 「对局已开始」；非 `LOBBY` → 「房间未就绪」；`total < 3` / `> 4` → 座位数不足 / 超限；有掉线座位 → 等重连。**不看 `all_seats_ready()`**（D12：大厅里它恒为 false）。
+
+**收尾只有一条路**：`_room_teardown()` = `close(reason)` → `attach_session(null)` → 丢掉 `players` 为空的大厅 `GameManager` → 清提示 → `_room_refresh()`；`_room_closing` 闸门防止 `close()` 同步回的 `session_closed` 递归进来。`_room_leave()` / `_close_room_page()` / `_show_start_page()` 都走它。
+
+**测试踩到的三个坑**（`verify_room_page.gd` 里已绕开）：
+
+1. 开始页入场补间会把子节点 `position.y` 先 +14 再落回，量几何前必须等它播完（`_settle_start_page()`），且比较用距离容差（`_vec_eq()`）而不是 `==`，收尾会留下 1e-4 级残差。
+2. 卡片里的控件不是页的直接子节点（`RoomCreateBtn` 在 `RoomHostCard` 里、`RoomSeatName_i` 在 `RoomSeatsPanel/RoomSeatCard_i` 里），断言一律走 `_start_child()` 递归查找，别用 `page.get_node_or_null("RoomCreateBtn")`。
+3. 3 个在线人类**已经够开局**（D15 下限是 3），B 段别再断言「3 人 + 0 AI 被拦」——要拦只能靠 2 人或掉线座位。
+

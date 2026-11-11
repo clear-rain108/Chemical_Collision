@@ -25,7 +25,7 @@
 | 2 | **主机代 AI 入口** | `NetSession.host_act_for_seat()` / `host_step_ai()`<br>`AIPlayer.plan()` 只读化<br>`tests/verify_ai_plan.gd`（新）+ `verify_net_session.gd` G19 | AI 座位动作被广播、三端 hash 一致；人类座位 / 非主机调用被拒；≥115 项 | ✅ 已完成（G19 后 `verify_net_session` 150 项、`verify_ai_plan` 156 项、全量 44 套绿） |
 | 3a | **视图归属（防作弊）** | `GameUI`：`_hand_view_player` / `_view_player` / `_sel_cards` / `_hotseat_handoff_pending` / AI 调度 gate / 面板禁用 / `_process → _update_net()` | 联机只看得到自己手牌；非我方回合显示「等待 X」；单机 41 套 + `verify_touch_ui` / `verify_hand_view` 零回归 | ✅ 已完成（`verify_ui_online` A 段 69 项；全量 45 套绿） |
 | 3b | **动作收口 + 信号接线** | 10 处动作改走 `ActionRouter`（`_router()` 惰性装配）；会话信号 8 个接线；主机 `host_step_ai()` 节流代打 | 单机全量零回归；联机 3 端打完一局 hash 全程一致 | ✅ 已完成（B 段 3 实例真 ENet：24 项；单机全量零回归） |
-| 4 | **房间页** | `GameUI._build_room_page()`（代码建页）<br>`tests/verify_room_page.gd`（新） | 开房 / 加入 / 座位表 / 开始按钮状态正确；不改 `.tscn` 结构 | ⬜ 未开始 |
+| 4 | **房间页** | `GameUI._build_room_page()`（代码建页 + 6 个 helper）<br>`tests/verify_room_page.gd`（新） | 开房 / 加入 / 座位表 / 开始按钮状态正确；不改 `.tscn` 结构 | ✅ 已完成（142 项：A 段零网络 111 项 + B 段 3 实例真 ENet 31 项；全量 46 套绿） |
 | 5 | **真机联调 + 文档收口** | 3 端真窗口一局；文档 §9.2 → §9.1、§10 打勾、附录 D 补「UI 接线」 | 真窗口 3 人打完一局无报错、无分叉；文档与代码一致 | ⬜ 未开始 |
 
 状态图例：⬜ 未开始 ｜ 🟨 进行中 ｜ ✅ 已完成 ｜ ⛔ 受阻（写明原因）
@@ -47,6 +47,10 @@
 | D9 | 联机分支一律「先预检再提交」，界面状态只认会话回调：客人返回 0 仅表示**已发出**，面板停在「已提交，等待主机裁决…」 | 与 D1 同一语义在 UI 侧的落地：飞牌 / 清选中 / 写日志都必须等 `state_applied` 回来 | `GameUI._dispatch_result()` |
 | D10 | 顺序牌型弹窗只在 `sequence_pending(seat == my_seat)` 时弹；`pick / skip` 走 `ActionRouter`，收窗统一走 `sequence_cleared → _hide_sequence_overlay()` | 客人弹了不该自己选的窗＝替别人做决定；不统一收窗会在超时 / 掉线 / 会话结束时留个遮罩挡住操作 | `GameUI._online_on_sequence_pending()` / `_show_sequence_constraint_dialog()` / `_hide_sequence_overlay()` |
 | D11 | 联机退出 = `session.close(reason)` + 结算页，**不写** `game.phase` | 本端写 phase 只是本地作废，主机那份局面不受影响，客人却以为自己结束了 | `GameUI._on_quit_game()` |
+| D12 | 大厅**没有 ready 握手**：`MSG_READY` 的语义是「快照重建完成（带 `events` 计数）」，只在开局后发；房间里 `all_seats_ready()` 恒为 false | 拿 ready 做开局门控 = 永远开不了局（`NetSession` 从没在大厅收过 ready）。闸门只能是「在线人类 + AI ∈ [3,4]」，掉线座位另算 | `GameUI._room_start_block_reason()` / `_room_start_disabled_reason()` |
+| D13 | 会话只有**一个装配口** `_room_bind_session()` → `attach_session()`；离开房间一律走 `_room_teardown()`（`close()` + `attach_session(null)` + 丢掉大厅那份空 `GameManager`） | 闭着的会话若留在 `net_session` 上，单机「开始游戏」会被 `_on_start_game()` 的联机分支拦成「请从房间页开局」；大厅那份 `GameManager` 的 players 为空，留着会污染下一次单机开局 | `GameUI._room_bind_session()` / `_room_teardown()` / `_room_leave()` / `_close_room_page()` |
+| D14 | `room_code` 只是**辨认用的 4 位数**，不代表任何地址：页面副标题写死「房号仅用于辨认，客人需填房主 IP」，房主页直接显示本机 IPv4 列表 | 房间码 → 地址需要信令服务器（P11-C2）；让用户以为「输房号就能连」是最贵的误解 | `GameUI._room_ip_text()` / `_room_local_ips()` / `RoomSubtitle` |
+| D15 | 房间**最少 3 座位**：`GameManager.MIN_PLAYERS = 3`，`NetSession.start_game()` 把 total clamp 到 2..4 —— 2 座位会在 `init_game` 里直接失败；AI 只能补到 `4 - 在线人类数` | 少于 3 人开局必然初始化失败，不如在按钮上就拦住并写清「至少 3 个（当前 N）」 | `GameUI._room_refresh()`（`ai_cap`）/ `_room_start_block_reason()` |
 
 ---
 
@@ -59,6 +63,7 @@ godot --headless --path . --script tests\verify_ai_plan.gd
 godot --headless --path . --script tests\verify_net_session.gd
 godot --headless --path . --script tests\verify_enet_transport.gd
 godot --headless --path . --script tests\verify_ui_online.gd
+godot --headless --path . --script tests\verify_room_page.gd
 
 :: 单机全量（零回归硬门槛）
 for %f in (tests\verify_*.gd) do @(echo === %f === & godot --headless --path . --script %f 2>&1 | findstr TESTS)
@@ -79,7 +84,8 @@ godot --headless --path . --script tests\net_smoke.gd -- --host --port 47800 --d
 | 2026-11-10 | Step 0 冒烟脚本 | 三进程一局 32 笔 / 27 笔，三端 hash 一致；顺带修掉 `ready` 误报 -109 | `0b78187` |
 | 2026-11-10 | Step 1 路由层 | `ActionRouter` 6 个动作 × 单机/联机双路；`verify_action_router` 67 项（A 段同 seed 双实例逐步对拍 16 步，B 段三进程 ENet 验已发出/已裁决/-102/-105/预检不发包）；全量 43 套测试绿 | 已提交 |
 | 2026-11-11 | Step 2 主机代 AI | `AIPlayer` 拆成只读 `plan(game_manager, seat)` + 单机 `_execute_local()`（`auto_play()` 签名不变）；`NetSession.host_act_for_seat()` / `host_step_ai()` 复用 `make_intent → _validate_for_seat → _host_apply` 同一条裁决链，`NetProtocol.ERR_NOT_HOST = -110`；新增 `verify_ai_plan` 156 项（只读性 / 单机落子 ≡ `apply_event` 重放 20 手逐笔对拍 / 计划复核 / 覆盖 / 边界），G19 39 项；全量 44 套绿 | 已提交 |
-| 2026-11-11 | Step 3 UI 联机化 | `GameUI` 加 `net_session / action_router` 装配口 `attach_session()`：视图归属（D6）/ 热座关闭（D7）/ AI 计时器联机门控（D8）/ 结果分派（D9）/ 弹窗收窗（D10）/ 退出只关会话（D11）；10 处动作改走 `ActionRouter`（`_router()` 惰性装配，单机路径逐字等价）；`_process → _update_net()` 每帧 poll + 主机 `host_step_ai(1)` 1.2s 节流；新增 `verify_ui_online` 93 项（A 段假会话 69 项 + B 段 3 实例真 ENet 24 项：三端 hash / event_log 一致、客人提交不动本地局面、AI 座位由主机代打广播）；全量 45 套绿 | 本次提交 |
+| 2026-11-11 | Step 3 UI 联机化 | `GameUI` 加 `net_session / action_router` 装配口 `attach_session()`：视图归属（D6）/ 热座关闭（D7）/ AI 计时器联机门控（D8）/ 结果分派（D9）/ 弹窗收窗（D10）/ 退出只关会话（D11）；10 处动作改走 `ActionRouter`（`_router()` 惰性装配，单机路径逐字等价）；`_process → _update_net()` 每帧 poll + 主机 `host_step_ai(1)` 1.2s 节流；新增 `verify_ui_online` 93 项（A 段假会话 69 项 + B 段 3 实例真 ENet 24 项：三端 hash / event_log 一致、客人提交不动本地局面、AI 座位由主机代打广播）；全量 45 套绿 | `25d0007` |
+| 2026-11-11 | Step 4 房间页 | `GameUI` 新增 `_build_room_page()`（代码建页，不动 `.tscn`）：标题 / 副标题（写死 D14「房号仅用于辨认」）/ 建房卡（昵称 + 端口 + 本机 IP + 创建 + 房号）/ 加入卡（昵称 + 端口 + 房主 IP + 加入 + 离开）/ 4 张固定座位卡 / AI 人数 / 开始对局 / 提示区；闸门纯函数 `_room_start_block_reason(online, ai, is_host, state, offline)`（D12 不看 ready、D15 只认 3~4）；`_room_bind_session()` 唯一装配口 + `_room_teardown()` 唯一收尾口（D13）；`_room_refresh()` 派生 AI 上限与三颗按钮状态；本机 IP 过滤回环 / 链路本地 / IPv6；新增 `verify_room_page` 142 项（A 段零网络 111 项：结构 / 开始页按钮几何 / 开关页 / 闸门边界 / 假会话座位表与信号 / 离开收尾 / 单机红线；B 段 3 实例真 ENet 31 项：页面建房 → 2 客人从页面加入 → 昵称 + 房号 + 座位表 → 3 人 + 1 AI 开局 → 三端进牌桌 4 玩家 → 客人离开后座位保留掉线）；全量 46 套绿 | 本次提交 |
 
 ---
 

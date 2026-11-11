@@ -16,6 +16,8 @@ const HintAdvisorScript = preload("res://scripts/HintAdvisor.gd")
 # 联机（P11-C1-c Step 3）：动作走 ActionRouter，局面刷新走 NetSession 信号
 const ActionRouterScript = preload("res://scripts/net/ActionRouter.gd")
 const NetSessionScript = preload("res://scripts/net/NetSession.gd")
+# 房间页（Step 4）：会话与传输都由页内创建，建好后一律交给 attach_session() 装配
+const ENetTransportScript = preload("res://scripts/net/ENetTransport.gd")
 
 # ============================================================
 # 一、页面引用
@@ -399,6 +401,11 @@ func _setup_pages() -> void:
 	var supp_entry = _start_child("SupplementaryHelpBtn")
 	if supp_entry:
 		supp_entry.pressed.connect(_open_supp_rules)
+	# 房间页（Step 4）：开始页「联机对战」→ 建房 / 加入。
+	# 页内按钮在 _build_room_page() 里已用回调绑定，这里不再 connect（否则报已连接）
+	var room_entry = _start_child("RoomEntryBtn")
+	if room_entry:
+		room_entry.pressed.connect(_open_room_page)
 	var element_limit_cb = _start_child("ElementLimitCheckBox")
 	if element_limit_cb:
 		element_limit_cb.toggled.connect(_on_element_limit_toggled)
@@ -451,6 +458,7 @@ func _setup_pages() -> void:
 	_apply_touch_sizing(get_node_or_null("TutorialPage"))
 	_apply_touch_sizing(help_page)
 	_apply_touch_sizing(_supp_rules_page)
+	_apply_touch_sizing(_room_page)
 	# 开关初值跟随当前档位（--touch-ui / 平台判定），用 no_signal 避免误触发一次「已开启」提示
 	_sync_touch_toggle()
 
@@ -634,6 +642,8 @@ func _fade_in_page(page) -> void:
 
 func _show_start_page() -> void:
 	_close_supp_rules()   # 从结束页 / 帮助页回来时不能还停在上一次打开的小页上
+	# Step 4：回开始页 = 离开房间（关会话 + 断开装配，D13）。没有会话时是空操作
+	_close_room_page()
 	if start_page: start_page.visible = true
 	if game_page: game_page.visible = false
 	if end_page: end_page.visible = false
@@ -754,6 +764,40 @@ var _supp_rules_page: Control = null
 var _supp_element_stats: Label = null
 var _supp_element_chips: Dictionary = {}
 
+# ------------------------------------------------------------
+# 房间页（P11-C1-c Step 4，决策 D12~D15 见 MULTIPLAYER_TASKS.md）
+#   · 座位只能是 3~4：GameManager.MIN_PLAYERS = 3，而 NetSession.start_game()
+#     把 player_count clamp 到 2..4 —— 2 座位会在 init_game 里直接失败。
+#   · 大厅没有 ready 握手：客人的 MSG_READY 是「快照重建完成」，开局后才发。
+#     所以开局闸门是「在线人类数 + AI 数 ∈ [3,4]」，不是 all_seats_ready()。
+# ------------------------------------------------------------
+const ROOM_MIN_SEATS := 3                 # = GameManager.MIN_PLAYERS
+const ROOM_MAX_SEATS := 4                 # = NetSession.DEFAULT_MAX_PLAYERS
+const ROOM_DEFAULT_PORT := 47800          # = ENetTransport.DEFAULT_PORT
+const ROOM_CONNECT_TIMEOUT_S := 8.0       # create_client 是异步的，连不上没有任何回调
+enum RoomMode { IDLE, HOSTING, CONNECTING, JOINED }
+var _room_page: Control = null
+var _room_mode: int = RoomMode.IDLE
+var _room_connect_wait: float = 0.0
+var _room_join_target: String = ""        # 只用于「连不上 xxx」的提示文案
+var _room_closing: bool = false           # 主动关会话时的重入闸（close 会同步发 session_closed）
+var _room_seat_cards: Array = []          # 4 张座位卡（Panel）
+var _room_seat_names: Array = []          # 座位卡上的昵称 Label
+var _room_seat_states: Array = []         # 座位卡上的状态 Label
+var _room_code_label: Label = null
+var _room_hint_label: Label = null
+var _room_host_ip_label: Label = null
+var _room_host_name_edit: LineEdit = null
+var _room_host_port_spin: SpinBox = null
+var _room_join_name_edit: LineEdit = null
+var _room_addr_edit: LineEdit = null
+var _room_join_port_spin: SpinBox = null
+var _room_create_btn: Button = null
+var _room_join_btn: Button = null
+var _room_leave_btn: Button = null
+var _room_start_btn: Button = null
+var _room_ai_spin: SpinBox = null
+
 
 func _build_start_page() -> void:
 	if not start_page:
@@ -769,6 +813,8 @@ func _build_start_page() -> void:
 	_start_page_buttons()
 	# P10：补充规则小页（盖在开始页之上，默认隐藏）
 	_build_supp_rules_page()
+	# Step 4：房间页（同样盖在开始页之上，默认隐藏）
+	_build_room_page()
 
 
 # -------- 背景：同色底 + 45° 渐变带 --------
@@ -1007,9 +1053,14 @@ func _start_setting_label(node_name: String, text: String, pos: Vector2) -> Labe
 
 
 # -------- 按钮区 --------
+# Step 4：开始页纵向已排到 632，只剩这一行有空间 —— 「开始游戏 / 联机对战」并排。
+# 单机那颗字号 22 → 20：宽度从 260 收到 124，「开始游戏」四个字才不会撑破按钮。
 func _start_page_buttons() -> void:
-	start_button = _start_make_primary("开始游戏", Vector2(446, 486), Vector2(260, 52))
+	start_button = _page_primary_btn("开始游戏", func() -> void: pass,
+		Vector2(124, 52), "StartButton", 20)
+	start_button.position = Vector2(446, 486)
 	start_page.add_child(start_button)
+	start_page.add_child(_start_make_secondary("RoomEntryBtn", "联机对战", Vector2(582, 486), Vector2(124, 52)))
 	start_page.add_child(_start_make_secondary("TutorialBtn", "教学引导", Vector2(446, 546), Vector2(260, 46)))
 	start_page.add_child(_start_make_ghost("ExitButton", "退出程序", Vector2(476, 598), Vector2(200, 34)))
 
@@ -2589,6 +2640,29 @@ func _show_info_simple(text: String) -> void:
 	if info_label: info_label.text = text
 	else: push_warning(text)
 
+
+# 开始页 4 条补充规则 → GameManager（Step 4 从 _init_game 抽出来，单机行为逐字不变）
+# 联机：房主这份会进 game_start 的 config 下发给客人；客人建房时读到的值会被
+# NetSession._apply_config() 用主机的配置覆盖，所以客人这边填什么都不影响牌库。
+func _apply_start_page_rules(gm) -> void:
+	if gm == null:
+		return
+	# 读取开始页的补充规则勾选框状态（三个独立勾选框，嵌在 SettingsCard 内）
+	var organic_cb = _start_child("OrganicCheckBox")
+	if organic_cb:
+		gm.organic_rules_enabled = organic_cb.button_pressed
+	var seq_cb_node = _start_child("SequenceCheckBox")
+	if seq_cb_node:
+		gm.sequence_rules_enabled = seq_cb_node.button_pressed
+	var halogen_cb_node = _start_child("HalogenCheckBox")
+	if halogen_cb_node:
+		gm.halogen_exchange_allowed = halogen_cb_node.button_pressed
+	# 元素限制（P10）：前 20 号元素 + 小页里勾选的扩展元素
+	var limit_cb_node = _start_child("ElementLimitCheckBox")
+	gm.element_limit_enabled = limit_cb_node != null and limit_cb_node.button_pressed
+	gm.allowed_extra_elements = _selected_extra_elements() if gm.element_limit_enabled else []
+
+
 func _init_game(total: int = 4, ai: int = 3) -> void:
 	# 新一局：教学局残留的规则提醒 / 日志缓存必须清掉，否则会跟着进正常对局
 	_level0_clear_rule_tips()
@@ -2597,19 +2671,7 @@ func _init_game(total: int = 4, ai: int = 3) -> void:
 		log_label.text = "游戏日志:"
 	game_manager = GameManagerScript.new()
 	# 读取开始页的补充规则勾选框状态（三个独立勾选框，嵌在 SettingsCard 内）
-	var organic_cb = _start_child("OrganicCheckBox")
-	if organic_cb:
-		game_manager.organic_rules_enabled = organic_cb.button_pressed
-	var seq_cb_node = _start_child("SequenceCheckBox")
-	if seq_cb_node:
-		game_manager.sequence_rules_enabled = seq_cb_node.button_pressed
-	var halogen_cb_node = _start_child("HalogenCheckBox")
-	if halogen_cb_node:
-		game_manager.halogen_exchange_allowed = halogen_cb_node.button_pressed
-	# 元素限制（P10）：前 20 号元素 + 小页里勾选的扩展元素
-	var limit_cb_node = _start_child("ElementLimitCheckBox")
-	game_manager.element_limit_enabled = limit_cb_node != null and limit_cb_node.button_pressed
-	game_manager.allowed_extra_elements = _selected_extra_elements() if game_manager.element_limit_enabled else []
+	_apply_start_page_rules(game_manager)
 	var ok = game_manager.init_game(total, ai)
 	if not ok:
 		push_error("init_game failed with total=%d ai=%d, retrying defaults" % [total, ai])
@@ -6731,11 +6793,25 @@ func _online_on_sequence_cleared() -> void:
 func _online_on_session_closed(reason: String) -> void:
 	# 会话没了，此刻还开着的顺序牌型弹窗就永远等不到 sequence_cleared 了
 	_hide_sequence_overlay()
+	# 自己主动关的（离开房间 / 退出对局）：调用方已在收尾，别再刷一遍提示
+	if _room_closing:
+		return
+	_room_mode = RoomMode.IDLE
+	_room_connect_wait = 0.0
 	var msg := "联机已结束"
 	if reason != "":
 		msg += "：" + reason
+	# 房间里掉线（房主离开 / 连不上 / 被拒）：留在房间页显示原因。
+	# 大厅里 game_manager 的 players 是空的，这时 _refresh_ui() 会去读空局面，
+	# 所以绝不能落到下面的通用分支（Step 4 修掉的隐患，见 D13）
+	if _room_page != null and is_instance_valid(_room_page) and _room_page.visible:
+		_room_teardown()
+		_room_hint(msg)
+		return
 	_show_info(msg)
-	_refresh_ui()
+	# 单机 / 房间页关着：只有真的有一局在打才刷新（0 玩家时刷 = 读空局面）
+	if game_manager != null and game_manager.get_player_count() > 0:
+		_refresh_ui()
 
 
 func _online_on_desync(local_hash: int, host_hash: int) -> void:
@@ -6762,6 +6838,15 @@ func _update_net(delta: float) -> void:
 		return
 	# ① 收包 / 超时 / 断线宽限：所有角色都必须 poll，否则永远收不到包
 	net_session.poll()
+	# ①之二 房间页：ENet 的 create_client 是异步的，连不上时一个回调都不会来，
+	#       只能自己计时给条出路（否则客人会永远停在「正在连接…」）
+	if _room_mode == RoomMode.CONNECTING:
+		_room_connect_wait += delta
+		if _room_connect_wait >= ROOM_CONNECT_TIMEOUT_S:
+			var target := _room_join_target
+			_room_teardown()
+			_room_hint("连不上 %s：检查房主 IP / 端口 / 防火墙是否放行" % target)
+			return
 	if game_manager == null:
 		return
 	# ② 主机代打 AI 座位（D8）：单机那份「AI 计时器」在联机被关掉了，
@@ -6800,6 +6885,10 @@ func _enter_online_game() -> void:
 	var tut_page = get_node_or_null("TutorialPage")
 	if tut_page: tut_page.visible = false
 	_close_supp_rules()
+	# Step 4：房间页挂在开始页下面，跟着 start_page 一起藏起来；
+	# 这里只隐藏、绝不 teardown —— 开局后会话还要用
+	if _room_page != null and is_instance_valid(_room_page):
+		_room_page.visible = false
 	_hide_warning_toast()
 	_hotseat_ready_seat = -1
 	log_lines.clear()
@@ -6808,3 +6897,579 @@ func _enter_online_game() -> void:
 	_fade_in_page(game_page)
 	_step_reset()
 	_refresh_ui()
+
+
+# ============================================================
+# 十九、房间页（P11-C1-c Step 4）
+# ------------------------------------------------------------
+# 为什么代码建页（D5）：现有 6 个页面全是代码生成；改 Main.tscn 会拖累一批
+# 布局测试，而这一页只有联机时才用得上。
+#
+# 三条不许破的线：
+#   ① 单机红线：不点「联机对战」就一行都不会执行（页默认隐藏、会话默认 null）。
+#   ② 会话只有一个装配口 _room_bind_session() → attach_session()（D13）；
+#      离开房间一律 _room_teardown()：close 会话 + attach_session(null) +
+#      丢掉大厅那份空 GameManager。闭着的会话绝不许留在 net_session 上，
+#      否则单机「开始游戏」会被 D6 拦成「请从房间页开局」。
+#   ③ 座位 3~4（D15）：GameManager.MIN_PLAYERS = 3 且 NetSession.start_game()
+#      把 player_count clamp 到 2..4 —— 2 座位会在 init_game 里直接失败。
+#
+# 大厅没有 ready 握手（D12）：客人的 MSG_READY 是「快照重建完成」，开局后才发，
+# 所以 all_seats_ready() 在大厅恒为 false。开局闸门只能是「在线人类数 + AI 数
+# ∈ [3,4]」，拿 ready 门控等于永远开不了局。
+# ============================================================
+
+func _build_room_page() -> void:
+	if not start_page:
+		return
+	var page := Control.new()
+	page.name = "RoomPage"
+	page.visible = false
+	page.mouse_filter = Control.MOUSE_FILTER_STOP
+	start_page.add_child(page)
+	page.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	_room_page = page
+	_page_bg_into(page, "RoomBg", "RoomBand")
+
+	var back := _page_ghost_btn("‹ 返回", _close_room_page, Vector2(140, 34), "RoomBackBtn", 15)
+	back.position = Vector2(46, 34)
+	page.add_child(back)
+
+	page.add_child(_room_label("RoomTitle", "联机对战", Vector2(0, 62), Vector2(1152, 46),
+		34, START_C_TITLE, HORIZONTAL_ALIGNMENT_CENTER))
+
+	# D14：房号只是辨认用的 4 位数，不代表任何地址（发现层在 P11-C2）。
+	# 副标题必须写死这句，别让人以为「输房号就能连」
+	page.add_child(_room_label("RoomSubtitle",
+		"局域网 / Tailscale 直连 · 3~4 人 · 房号仅用于辨认，客人需填房主 IP",
+		Vector2(0, 110), Vector2(1152, 20), START_FS_META, START_C_MUTED,
+		HORIZONTAL_ALIGNMENT_CENTER))
+
+	_room_host_card(page)
+	_room_join_card(page)
+	_room_seats_panel(page)
+
+	_room_hint_label = _room_label("RoomHintLabel", "", Vector2(46, 556), Vector2(1060, 22),
+		START_FS_META, START_C_ACCENT, HORIZONTAL_ALIGNMENT_LEFT)
+	page.add_child(_room_hint_label)
+
+	page.add_child(_room_label("RoomAiLabel", "AI 人数", Vector2(46, 592), Vector2(110, 34),
+		START_FS_LABEL, START_C_TITLE, HORIZONTAL_ALIGNMENT_LEFT))
+	_room_ai_spin = _start_make_spin(0, ROOM_MAX_SEATS - 1, 0, "RoomAiSpin")
+	_room_ai_spin.position = Vector2(162, 590)
+	_room_ai_spin.size = Vector2(150, 38)
+	_room_ai_spin.tooltip_text = "空座位由 AI 补上（人类座位在前，AI 在后）"
+	_room_ai_spin.value_changed.connect(_on_room_ai_changed)
+	page.add_child(_room_ai_spin)
+
+	_room_start_btn = _page_primary_btn("开始对局", _room_start, Vector2(260, 50), "RoomStartBtn", 20)
+	_room_start_btn.position = Vector2(846, 586)
+	_room_start_btn.disabled = true
+	page.add_child(_room_start_btn)
+
+	_room_refresh()
+
+
+# 房间页统一的小标签工厂：_start_label() 只给字号 / 颜色 / 对齐，尺寸由调用点定
+func _room_label(node_name: String, text: String, pos: Vector2, sz: Vector2,
+		fs: int = START_FS_META, col: Color = START_C_TITLE,
+		align: HorizontalAlignment = HORIZONTAL_ALIGNMENT_LEFT) -> Label:
+	var lb := _start_label(text, fs, col, align)
+	lb.name = node_name
+	lb.position = pos
+	lb.size = sz
+	return lb
+
+
+# 带白底 + 主题蓝焦点框的单行输入框（与 _start_make_spin 里的 LineEdit 同一套画风）
+func _room_line_edit(node_name: String, text: String, pos: Vector2, sz: Vector2) -> LineEdit:
+	var le := LineEdit.new()
+	le.name = node_name
+	le.text = text
+	le.position = pos
+	le.size = sz
+	le.custom_minimum_size = sz
+	le.add_theme_font_size_override("font_size", 17)
+	le.add_theme_color_override("font_color", START_C_TITLE)
+	var n := _make_panel_style("mini_card")
+	n.bg_color = Color(1, 1, 1, 1)
+	n.content_margin_left = 10
+	n.content_margin_right = 6
+	le.add_theme_stylebox_override("normal", n)
+	var f: StyleBoxFlat = n.duplicate()
+	f.border_color = START_C_ACCENT
+	f.set_border_width_all(BORDER_W_ACTIVE)
+	le.add_theme_stylebox_override("focus", f)
+	return le
+
+
+# -------- 建房卡：昵称 / 端口 / 本机 IP / 创建 --------
+func _room_host_card(page: Control) -> void:
+	var card := Panel.new()
+	card.name = "RoomHostCard"
+	card.position = Vector2(46, 146)
+	card.size = Vector2(520, 210)
+	var cs := _make_panel_style("card")
+	cs.bg_color = Color(1, 1, 1, 0.94)
+	card.add_theme_stylebox_override("panel", cs)
+	page.add_child(card)
+
+	card.add_child(_room_label("RoomHostTitle", "建房（房主）", Vector2(24, 10), Vector2(300, 24),
+		START_FS_LABEL, START_C_TITLE, HORIZONTAL_ALIGNMENT_LEFT))
+	card.add_child(_room_label("RoomHostNameLabel", "昵称", Vector2(24, 46), Vector2(60, 36),
+		START_FS_META, START_C_MUTED, HORIZONTAL_ALIGNMENT_LEFT))
+	_room_host_name_edit = _room_line_edit("RoomHostNameEdit", "房主",
+		Vector2(88, 46), Vector2(156, 36))
+	card.add_child(_room_host_name_edit)
+	card.add_child(_room_label("RoomHostPortLabel", "端口", Vector2(256, 46), Vector2(56, 36),
+		START_FS_META, START_C_MUTED, HORIZONTAL_ALIGNMENT_LEFT))
+	_room_host_port_spin = _start_make_spin(1024, 65535, ROOM_DEFAULT_PORT, "RoomPortSpin")
+	_room_host_port_spin.position = Vector2(316, 46)
+	_room_host_port_spin.size = Vector2(130, 36)
+	card.add_child(_room_host_port_spin)
+
+	_room_host_ip_label = _room_label("RoomHostIpLabel", "本机 IP：检测中…",
+		Vector2(24, 90), Vector2(470, 40), START_FS_META, START_C_MUTED,
+		HORIZONTAL_ALIGNMENT_LEFT)
+	_room_host_ip_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	card.add_child(_room_host_ip_label)
+
+	_room_create_btn = _page_primary_btn("创建房间", _room_start_host, Vector2(200, 44), "RoomCreateBtn", 19)
+	_room_create_btn.position = Vector2(24, 140)
+	card.add_child(_room_create_btn)
+
+	_room_code_label = _room_label("RoomCodeLabel", "房号 ----", Vector2(240, 152), Vector2(260, 26),
+		START_FS_LABEL, START_C_ACCENT, HORIZONTAL_ALIGNMENT_LEFT)
+	card.add_child(_room_code_label)
+
+
+# -------- 加入卡：昵称 / 端口 / 房主 IP / 加入 + 离开 --------
+func _room_join_card(page: Control) -> void:
+	var card := Panel.new()
+	card.name = "RoomJoinCard"
+	card.position = Vector2(586, 146)
+	card.size = Vector2(520, 210)
+	var cs := _make_panel_style("card")
+	cs.bg_color = Color(1, 1, 1, 0.94)
+	card.add_theme_stylebox_override("panel", cs)
+	page.add_child(card)
+
+	card.add_child(_room_label("RoomJoinTitle", "加入房间（客人）", Vector2(24, 10), Vector2(300, 24),
+		START_FS_LABEL, START_C_TITLE, HORIZONTAL_ALIGNMENT_LEFT))
+	card.add_child(_room_label("RoomJoinNameLabel", "昵称", Vector2(24, 46), Vector2(60, 36),
+		START_FS_META, START_C_MUTED, HORIZONTAL_ALIGNMENT_LEFT))
+	_room_join_name_edit = _room_line_edit("RoomJoinNameEdit", "玩家",
+		Vector2(88, 46), Vector2(156, 36))
+	card.add_child(_room_join_name_edit)
+	card.add_child(_room_label("RoomJoinPortLabel", "端口", Vector2(256, 46), Vector2(56, 36),
+		START_FS_META, START_C_MUTED, HORIZONTAL_ALIGNMENT_LEFT))
+	_room_join_port_spin = _start_make_spin(1024, 65535, ROOM_DEFAULT_PORT, "RoomJoinPortSpin")
+	_room_join_port_spin.position = Vector2(316, 46)
+	_room_join_port_spin.size = Vector2(130, 36)
+	card.add_child(_room_join_port_spin)
+
+	card.add_child(_room_label("RoomJoinAddrLabel", "房主 IP", Vector2(24, 92), Vector2(84, 36),
+		START_FS_META, START_C_MUTED, HORIZONTAL_ALIGNMENT_LEFT))
+	_room_addr_edit = _room_line_edit("RoomAddrEdit", "127.0.0.1",
+		Vector2(112, 92), Vector2(210, 36))
+	_room_addr_edit.tooltip_text = "房主页面上「本机 IP」那一串（如 192.168.1.7）"
+	card.add_child(_room_addr_edit)
+	card.add_child(_room_label("RoomJoinAddrHint", "例 192.168.1.7",
+		Vector2(330, 96), Vector2(170, 24), START_FS_META, START_C_MUTED,
+		HORIZONTAL_ALIGNMENT_LEFT))
+
+	_room_join_btn = _page_primary_btn("加入房间", _room_join, Vector2(180, 44), "RoomJoinBtn", 19)
+	_room_join_btn.position = Vector2(24, 140)
+	card.add_child(_room_join_btn)
+	_room_leave_btn = _page_secondary_btn("离开房间", _room_leave, Vector2(150, 44), "RoomLeaveBtn", 17)
+	_room_leave_btn.position = Vector2(216, 140)
+	_room_leave_btn.disabled = true
+	card.add_child(_room_leave_btn)
+
+
+
+# -------- 座位表：固定 4 张卡（max_players 恒为 4）--------
+# 为什么不用动态重建：座位数只在 1..4 之间变，4 张卡直接摆好改文字最省事，
+# 测试也能按名字 "RoomSeatName_0" 稳定取到，不用担心重建时机。
+func _room_seats_panel(page: Control) -> void:
+	var panel := Panel.new()
+	panel.name = "RoomSeatsPanel"
+	panel.position = Vector2(46, 372)
+	panel.size = Vector2(1060, 176)
+	var st := _make_panel_style("card")
+	st.bg_color = Color(1, 1, 1, 0.94)
+	panel.add_theme_stylebox_override("panel", st)
+	page.add_child(panel)
+
+	panel.add_child(_room_label("RoomSeatsTitle", "座位表（人类座位在前，AI 座位在后）",
+		Vector2(24, 8), Vector2(700, 24), START_FS_LABEL, START_C_TITLE,
+		HORIZONTAL_ALIGNMENT_LEFT))
+
+	_room_seat_cards.clear()
+	_room_seat_names.clear()
+	_room_seat_states.clear()
+	for i in range(ROOM_MAX_SEATS):
+		var sc := Panel.new()
+		sc.name = "RoomSeatCard_%d" % i
+		sc.position = Vector2(24 + i * 256, 38)
+		sc.size = Vector2(240, 122)
+		var ss := _make_panel_style("mini_card")
+		ss.bg_color = Color(0.965, 0.976, 0.99, 1.0)
+		ss.border_color = Color(0.85, 0.89, 0.94, 1.0)
+		ss.set_border_width_all(1)
+		sc.add_theme_stylebox_override("panel", ss)
+		panel.add_child(sc)
+
+		sc.add_child(_room_label("RoomSeatNo_%d" % i, "座位 %d" % (i + 1),
+			Vector2(14, 8), Vector2(212, 18), START_FS_META, START_C_MUTED,
+			HORIZONTAL_ALIGNMENT_LEFT))
+		var nm := _room_label("RoomSeatName_%d" % i, "空位",
+			Vector2(14, 30), Vector2(212, 30), 20, START_C_MUTED,
+			HORIZONTAL_ALIGNMENT_LEFT)
+		sc.add_child(nm)
+		var stt := _room_label("RoomSeatState_%d" % i, "—",
+			Vector2(14, 72), Vector2(212, 20), START_FS_META, START_C_MUTED,
+			HORIZONTAL_ALIGNMENT_LEFT)
+		sc.add_child(stt)
+		_room_seat_cards.append(sc)
+		_room_seat_names.append(nm)
+		_room_seat_states.append(stt)
+
+
+# -------- 整页刷新：座位表 / 房号 / 提示 / 4 颗按钮的可用态 --------
+func _room_refresh() -> void:
+	if _room_page == null or not is_instance_valid(_room_page):
+		return
+	var online := _room_online_humans()
+	var offline := _room_offline_humans()
+	var seat_total := int(net_session.seat_count()) if net_session != null else 0
+	var my_seat := int(net_session.my_seat) if net_session != null else -1
+
+	# AI 上限 = 剩下的空座位（总座位最多 4）：3 个真人在线就一个 AI 也加不了
+	if _room_ai_spin != null:
+		var ai_cap := maxi(0, ROOM_MAX_SEATS - online)
+		_room_ai_spin.max_value = ai_cap
+		if int(_room_ai_spin.value) > ai_cap:
+			_room_ai_spin.value = ai_cap      # Range 会把超限值压回 max
+	var ai := _room_ai_value()
+	var planned := online + ai
+
+	for i in range(ROOM_MAX_SEATS):
+		var name_text := "空位"
+		var state_text := "—"
+		var taken := false
+		if i < seat_total:
+			taken = true
+			name_text = String(net_session.seat_name(i))
+			if name_text == "":
+				name_text = "玩家 %d" % (i + 1)
+			if not net_session.seat_is_online(i):
+				state_text = "掉线中 · 座位保留"
+			elif i == 0 and net_session.is_host():
+				state_text = "房主 · 你" if my_seat == i else "房主"
+			elif my_seat == i:
+				state_text = "你 · 在线"
+			else:
+				state_text = "在线"
+		elif i >= online and (i - online) < ai:
+			# 人类座位永远排在前面 → 第 online 个之后的空座位才是 AI
+			taken = true
+			name_text = "AI %d" % (i - online + 1)
+			state_text = "AI 托管"
+		if i >= _room_seat_names.size():
+			continue
+		_room_seat_names[i].text = name_text
+		_room_seat_names[i].add_theme_color_override("font_color",
+			START_C_TITLE if taken else START_C_MUTED)
+		_room_seat_states[i].text = state_text
+		_room_seat_states[i].add_theme_color_override("font_color",
+			START_C_ACCENT if taken else START_C_MUTED)
+
+	if _room_code_label != null:
+		var code := String(net_session.room_code) if net_session != null else ""
+		_room_code_label.text = ("房号 " + code) if code != "" else "房号 ----"
+	if _room_host_ip_label != null:
+		_room_host_ip_label.text = _room_ip_text()
+
+	var joined := net_session != null
+	if _room_create_btn != null:
+		_room_create_btn.disabled = joined
+	if _room_join_btn != null:
+		_room_join_btn.disabled = joined
+	if _room_leave_btn != null:
+		_room_leave_btn.disabled = not joined
+	if _room_start_btn != null:
+		var reason := _room_start_disabled_reason()
+		_room_start_btn.disabled = reason != ""
+		if reason == "":
+			_room_start_btn.text = "开始对局"
+		elif joined and not net_session.is_host():
+			_room_start_btn.text = "等待房主开始"
+		elif joined:
+			_room_start_btn.text = "开始对局 · %d/%d 座位" % [mini(planned, ROOM_MAX_SEATS), ROOM_MAX_SEATS]
+		else:
+			_room_start_btn.text = "开始对局"
+	# 掉线提示只在提示区空着时补一句（否则会盖掉「xxx 加入了」这类操作反馈）
+	if offline > 0 and _room_hint_label != null and _room_hint_label.text == "":
+		_room_hint_label.text = "有玩家掉线，座位会保留 %d 秒等重连" % int(int(net_session.reconnect_grace_ms) / 1000)
+
+
+# -------- 本机 IP：房主要把这一串报给客人（D14：房号不是地址）--------
+func _room_local_ips() -> Array:
+	var out: Array = []
+	for a in IP.get_local_addresses():
+		var s := String(a)
+		if s.find(":") >= 0:
+			continue                 # IPv6 不列：手输太长，局域网 IPv4 够用
+		if s.begins_with("127."):
+			continue                 # 回环：本机自测用，别当房主地址报给客人
+		if s.begins_with("169.254."):
+			continue                 # 链路本地地址：实际连不通
+		out.append(s)
+	out.sort()
+	return out
+
+
+func _room_ip_text() -> String:
+	var ips := _room_local_ips()
+	if ips.is_empty():
+		return "本机 IP：未检测到局域网地址（同一台机器自测可用 127.0.0.1）"
+	var txt := ""
+	for ip in ips:
+		if txt != "":
+			txt += " / "
+		txt += String(ip)
+	return "本机 IP：%s（客人填这一串）" % txt
+
+
+# -------- 开局闸门（D12 / D15）--------
+# 纯函数：只吃 5 个数，不碰会话 / 控件，测试可以逐格喂边界。
+# 返回 "" = 可以开局；其余 = 直接显示给用户的原因
+func _room_start_block_reason(online_humans: int, ai_count: int, is_host: bool,
+		room_state: int, offline_seats: int = 0) -> String:
+	if not is_host:
+		return "等待房主开始"
+	if room_state == NetSessionScript.State.PLAYING:
+		return "对局已开始"
+	if room_state != NetSessionScript.State.LOBBY:
+		return "房间未就绪"
+	var total := int(online_humans) + int(ai_count)
+	if total < ROOM_MIN_SEATS:
+		return "座位不足：至少 %d 个（当前 %d）" % [ROOM_MIN_SEATS, total]
+	if total > ROOM_MAX_SEATS:
+		return "座位超限：最多 %d 个（当前 %d）" % [ROOM_MAX_SEATS, total]
+	if int(offline_seats) > 0:
+		return "有玩家掉线，等重连后再开局"
+	return ""
+
+
+# 会话 → 闸门参数。state 用 is_playing() 反推，不去读会话内部字段
+# （假会话只需要实现 is_host / is_playing / seat_count / seat_is_online 这几条查询）
+func _room_start_disabled_reason() -> String:
+	if net_session == null:
+		return "还没加入房间"
+	var st := NetSessionScript.State.LOBBY
+	if net_session.is_playing():
+		st = NetSessionScript.State.PLAYING
+	return _room_start_block_reason(_room_online_humans(), _room_ai_value(),
+		net_session.is_host(), st, _room_offline_humans())
+
+
+func _room_can_start() -> bool:
+	return _room_start_disabled_reason() == ""
+
+
+func _room_online_humans() -> int:
+	if net_session == null:
+		return 0
+	var n := 0
+	for s in range(int(net_session.seat_count())):
+		if net_session.seat_is_online(s):
+			n += 1
+	return n
+
+
+func _room_offline_humans() -> int:
+	if net_session == null:
+		return 0
+	var n := 0
+	for s in range(int(net_session.seat_count())):
+		if not net_session.seat_is_online(s):
+			n += 1
+	return n
+
+
+func _room_ai_value() -> int:
+	return int(_room_ai_spin.value) if _room_ai_spin != null else 0
+
+
+# -------- 页面开关 --------
+func _open_room_page() -> void:
+	if _room_page == null or not is_instance_valid(_room_page):
+		return
+	_room_page.visible = true
+	_room_refresh()
+	_fade_in_page(_room_page)
+
+
+func _close_room_page() -> void:
+	_room_teardown()
+	if _room_page != null and is_instance_valid(_room_page):
+		_room_page.visible = false
+
+
+# 离开房间 / 回开始页 / 连不上：唯一的收尾口（D13）
+func _room_teardown() -> void:
+	if _room_closing:
+		return
+	_room_closing = true
+	_room_mode = RoomMode.IDLE
+	_room_connect_wait = 0.0
+	_room_join_target = ""
+	var s = net_session
+	if s != null:
+		s.close("离开房间")
+		attach_session(null)
+	# 大厅那份 GameManager 只是给会话占位（players 为空）：留着会让下一次单机开局
+	# 带着空 players 进 _refresh_ui。真打过的对局（players 非空）绝不在这里丢
+	if game_manager != null and game_manager.get_player_count() == 0:
+		game_manager = null
+	_room_hint("")
+	_room_closing = false
+	_room_refresh()
+
+
+func _room_leave() -> void:
+	if net_session == null:
+		_room_hint("还不在房间里")
+		return
+	_room_teardown()
+	_room_hint("已离开房间")
+
+
+func _room_hint(text: String) -> void:
+	if _room_hint_label != null and is_instance_valid(_room_hint_label):
+		_room_hint_label.text = text
+
+
+# -------- 建房（房主 = seat 0）--------
+func _room_start_host() -> void:
+	if net_session != null:
+		_room_hint("已经在房间里了：先「离开房间」再新建")
+		return
+	var port := int(_room_host_port_spin.value) if _room_host_port_spin != null else ROOM_DEFAULT_PORT
+	var nm := "房主"
+	if _room_host_name_edit != null and _room_host_name_edit.text.strip_edges() != "":
+		nm = _room_host_name_edit.text.strip_edges()
+	# 大厅也要一份 GameManager：补充规则要在开局前定下来，随 game_start 的 config 下发
+	game_manager = GameManagerScript.new()
+	_apply_start_page_rules(game_manager)
+	var s = NetSessionScript.new()
+	s.setup(game_manager, ENetTransportScript.new())
+	s.max_players = ROOM_MAX_SEATS
+	# 观战者 UI 还没做（见 MULTIPLAYER_TASKS §5）：满员直接拒，别给个看不见的观战位
+	s.allow_watchers = false
+	_room_bind_session(s)
+	if s.start_host(port, ROOM_MAX_SEATS, nm) != 0:
+		_room_teardown()
+		_room_hint("端口 %d 建不起来（多半被占用）：换一个端口再试" % port)
+		return
+	_room_mode = RoomMode.HOSTING
+	_room_hint("房间已创建：把本机 IP + 端口 %d 告诉客人" % port)
+	_room_refresh()
+
+
+# -------- 加入（客人）--------
+func _room_join() -> void:
+	if net_session != null:
+		_room_hint("已经在房间里了：先「离开房间」再加入")
+		return
+	var addr := "127.0.0.1"
+	if _room_addr_edit != null:
+		addr = _room_addr_edit.text.strip_edges()
+	if addr == "":
+		_room_hint("请填房主 IP（房主页面「本机 IP」那一串，如 192.168.1.7）")
+		return
+	var port := int(_room_join_port_spin.value) if _room_join_port_spin != null else ROOM_DEFAULT_PORT
+	var nm := "玩家"
+	if _room_join_name_edit != null and _room_join_name_edit.text.strip_edges() != "":
+		nm = _room_join_name_edit.text.strip_edges()
+	# 客人这份 GameManager 只为「手上有个对象」：牌库 / 规则最终由主机
+	# game_start 的 config + seed 覆盖（NetSession._apply_config_and_init）
+	game_manager = GameManagerScript.new()
+	_apply_start_page_rules(game_manager)
+	var s = NetSessionScript.new()
+	s.setup(game_manager, ENetTransportScript.new())
+	s.max_players = ROOM_MAX_SEATS
+	s.allow_watchers = false
+	_room_bind_session(s)
+	if s.start_client(addr, port, nm) != 0:
+		_room_teardown()
+		_room_hint("地址填错了：%s" % addr)
+		return
+	_room_mode = RoomMode.CONNECTING
+	_room_connect_wait = 0.0
+	_room_join_target = "%s:%d" % [addr, port]
+	_room_hint("正在连接 %s …（连不上 %d 秒后自动放弃）" % [_room_join_target, int(ROOM_CONNECT_TIMEOUT_S)])
+	_room_refresh()
+
+
+# -------- 开局（只有房主能点，闸门见 _room_start_block_reason）--------
+func _room_start() -> void:
+	var reason := _room_start_disabled_reason()
+	if reason != "":
+		_room_hint(reason)
+		_room_refresh()
+		return
+	var ai := _room_ai_value()
+	var total := _room_online_humans() + ai
+	if net_session.start_game(total, ai) != 0:
+		_room_hint("开局失败：房间状态异常，请离开后重新建房")
+		return
+	_room_mode = RoomMode.JOINED
+	_room_refresh()   # game_started → _enter_online_game() 已把整页切走
+
+
+# -------- 会话绑定 / 回调 --------
+# 房间页唯一的会话装配口：既复用 Step 3 的 attach_session（视图归属 / 动作层 /
+# 8 个对局信号），又额外挂 3 个大厅信号。D13：别在别处直接给 net_session 赋值。
+func _room_bind_session(s) -> void:
+	attach_session(s)
+	if not s.room_changed.is_connected(_room_refresh):
+		s.room_changed.connect(_room_refresh)
+	if not s.seat_assigned.is_connected(_room_on_seat_assigned):
+		s.seat_assigned.connect(_room_on_seat_assigned)
+	if not s.peer_joined.is_connected(_room_on_peer_joined):
+		s.peer_joined.connect(_room_on_peer_joined)
+	if not s.peer_left.is_connected(_room_on_peer_left):
+		s.peer_left.connect(_room_on_peer_left)
+
+
+# 客人收到 welcome（含自己座位）+ 快照后到这儿；seat < 0 = 观战
+func _room_on_seat_assigned(seat: int) -> void:
+	_room_mode = RoomMode.JOINED
+	_room_connect_wait = 0.0
+	_room_join_target = ""
+	if int(seat) < 0:
+		_room_hint("房间已满：你以观战身份进入（对局中只能看，不能出牌）")
+	else:
+		_room_hint("已加入：你是座位 %d，房主开局后自动进入牌桌" % (int(seat) + 1))
+	_room_refresh()
+
+
+func _room_on_peer_joined(seat: int, peer_name: String) -> void:
+	_room_hint("%s 加入了（座位 %d）" % [String(peer_name), int(seat) + 1])
+	_room_refresh()
+
+
+func _room_on_peer_left(seat: int, peer_name: String, grace_ms: int) -> void:
+	_room_hint("%s 离开了（座位 %d 保留 %d 秒等重连）" % [
+		String(peer_name), int(seat) + 1, int(int(grace_ms) / 1000)])
+	_room_refresh()
+
+
+func _on_room_ai_changed(_value: float) -> void:
+	_room_refresh()
+
+
+
