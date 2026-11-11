@@ -52,6 +52,8 @@ const ERR_NOT_READY = -106       # 未开局 / 观战者（seat = -1）提交意
 const ERR_ROOM_FULL = -107       # 房间满员，且本局不允许中途观战
 const ERR_DUPLICATE_SEQ = -108   # 重复序号（同一意图被重投）
 const ERR_DESYNC = -109          # 重连重放后 state_hash 仍与主机不符
+# P11-C1-c 增补
+const ERR_NOT_HOST = -110        # 非主机调用主机专属接口（host_act_for_seat / host_step_ai）
 
 
 static func is_known_message(msg_type: String) -> bool:

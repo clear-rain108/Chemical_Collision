@@ -17,6 +17,7 @@
 extends RefCounted
 
 const NetProtocolScript = preload("res://scripts/net/NetProtocol.gd")
+const AIPlayerScript = preload("res://scripts/AIPlayer.gd")
 
 # ---- 角色 / 会话状态 ----
 enum Role { NONE, HOST, CLIENT }
@@ -809,6 +810,80 @@ func submit_sequence(pattern: int) -> int:
 # 两阶段：跳过指定
 func skip_sequence() -> int:
 	return submit(NetProtocolScript.INTENT_SEQUENCE_SKIP)
+
+
+# ============================================================
+# 七之二、主机代 AI 座位动作（P11-C1-c Step 2 / 决策 D3）
+# ============================================================
+# AI 只出「计划」（AIPlayer.plan 纯只读），主机拿计划当一笔意图，走的是与人类
+# 完全相同的裁决链：make_intent → _validate_for_seat → _host_apply（广播 applied）。
+# 于是三端重放的是同一笔事件，不会出现「主机自己改了局面、客人重放不出来」。
+# 反例（必须避免）：主机直接调 game.play_cards() —— 客人只看到主机广播的
+# state_hash 变了，却收不到那笔事件，event_log 与 logs 计数立刻对不上。
+#
+# 与 submit() 的三点差别（所以不复用 submit）：
+#   · submit 用 my_seat 只替自己发言；这里要替**别的**座位（AI 座位）发言；
+#   · 不进 _last_seq 去重表：AI 没有序号，也没有重投问题；
+#   · 不调 _reject：AI 座位没有对端连接可回执，失败只把错误码返给调用方。
+func host_act_for_seat(seat: int, intent_type: String, payload: Dictionary = {}) -> int:
+	if role != Role.HOST:
+		return NetProtocolScript.ERR_NOT_HOST
+	if state != State.PLAYING or game == null:
+		return NetProtocolScript.ERR_NOT_READY
+	if _desynced:
+		return NetProtocolScript.ERR_DESYNC
+	# 只许代打 AI 座位：人类座位只能由本人 submit，主机碰它就是作弊口子
+	if not game.is_valid_seat(seat) or not is_seat_ai(seat):
+		return NetProtocolScript.ERR_WRONG_SEAT
+	var ev := NetProtocolScript.make_intent(intent_type, seat, payload)
+	var code := _validate_for_seat(seat, ev)
+	if code != 0:
+		return code
+	return _host_apply(seat, ev)
+
+
+# 主机推进「AI 座位」最多 max_steps 步（由宿主每帧显式调用，本层不自动驱动）：
+#   ① 待处理的两阶段属于 AI 座位 → 立刻按「跳过指定」收窗
+#      （AI 不做两阶段决策；不收窗就要白等 pending_sequence_timeout_ms）
+#   ② 当前玩家是 AI 座位 → AIPlayer.plan() → host_act_for_seat() 广播
+# 返回本帧代打成功的步数（0 = 没轮上 AI / 被门控挡住 / 出错停下）。
+# max_steps 是死循环保险：AI 连跳时一帧能推很多手，但客人那边要跟着刷同样多次
+# UI，一帧 4 手足够顺滑，其余的下一帧继续。
+func host_step_ai(max_steps: int = 4) -> int:
+	if role != Role.HOST or state != State.PLAYING or game == null or _desynced:
+		return 0
+	# 抢跑门控：客人还没按快照重建完就替 AI 出牌，客人重放必分叉
+	if not all_seats_ready():
+		return 0
+	var steps := 0
+	while steps < max_steps:
+		if game.is_game_over():
+			break
+		var pend := pending_seat()
+		if pend != WATCHER_SEAT:
+			if not is_seat_ai(pend):
+				break                              # 人类正在选牌型，等他自己点
+			if host_act_for_seat(pend, NetProtocolScript.INTENT_SEQUENCE_SKIP) < 0:
+				break
+			steps += 1
+			continue
+		var seat := int(game.current_player_index)
+		if not is_seat_ai(seat):
+			break                                  # 轮到人类
+		var plan: Dictionary = AIPlayerScript.plan(game, seat)
+		if plan.is_empty():
+			break                                  # 计划不出来（手牌空等），交给宿主兜底
+		var intent_type := String(plan.get("type", ""))
+		var payload: Dictionary = {}
+		for k in plan:
+			if String(k) != "type":
+				payload[k] = plan[k]
+		# 计划里的 uids / valences / pattern 原样发走，主机不再二次挑选：
+		# 主机自己挑牌型就可能与 AI 计划里的牌型不同 → 两端出成不同的牌
+		if host_act_for_seat(seat, intent_type, payload) < 0:
+			break
+		steps += 1
+	return steps
 
 
 # ============================================================

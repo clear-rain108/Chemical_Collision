@@ -21,6 +21,7 @@ const ENetTransportScript = preload("res://scripts/net/ENetTransport.gd")
 
 const PORT_MAIN = 47821
 const PORT_FULL = 47824
+const PORT_AI = 47826            # G19 专用端口（47821/47824 已被 G1/G17 占用）
 const CONNECT_TIMEOUT_MS = 5000
 const IO_TIMEOUT_MS = 3000
 const PLAYER_COUNT = 3          # seat 0 = 房主，1 = 客人A，2 = 客人B
@@ -370,9 +371,100 @@ func _run() -> void:
 	host["s"]._host_on_ready(ready_peer, {"hash": 0, "events": 0})
 	_check(_count("host", "error") == err_before + 1, "G18 hash=0（大厅 / 未初始化）不当分叉")
 
+	# ---- G19 主机代 AI 座位动作（P11-C1-c Step 2 / 决策 D3）----
+	# 独立房间：3 人 1 AI → 座位 0/1 是人，座位 2 是 AI
+	# （is_seat_ai 的判定：seat >= player_count - ai_count）
+	var h3 = _make_peer("h3")
+	var e1 = _make_peer("e1")
+	_check(int(h3["s"].start_host(PORT_AI, 3, "AI房主")) == 0, "G19 第三个房间监听 %d" % PORT_AI)
+	_check(int(h3["s"].host_act_for_seat(2, "pass")) == NetProtocolScript.ERR_NOT_READY,
+		"G19 未开局时代打 → ERR_NOT_READY")
+	_check(int(h3["s"].host_step_ai()) == 0, "G19 未开局时 host_step_ai 返回 0")
+	_check(int(e1["s"].start_client("127.0.0.1", PORT_AI, "AI客人")) == 0, "G19 真人客人发起连接")
+	_check(_pump([h3, e1], func(): return e1["s"].my_seat == 1, CONNECT_TIMEOUT_MS),
+		"G19 真人客人拿到座位 1")
+	_check(int(h3["s"].start_game(3, 1)) == 0, "G19 start_game(3, 1) 成功（座位 2 = AI）")
+	_check(h3["s"].is_seat_ai(2) and not h3["s"].is_seat_ai(1) and not h3["s"].is_seat_ai(0),
+		"G19 主机判定：座位 2 是 AI，座位 0/1 是人")
+	_check(_pump([h3, e1], func(): return e1["s"].state == NetSessionScript.State.PLAYING, CONNECT_TIMEOUT_MS),
+		"G19 客人进入 PLAYING")
+	_check(e1["s"].is_seat_ai(2), "G19 客人端对 AI 座位的判定与主机一致")
+	_pump([h3, e1], func(): return h3["s"].all_seats_ready(), IO_TIMEOUT_MS)
+	_check(h3["s"].all_seats_ready(), "G19 客人 ready 后主机 all_seats_ready = true")
+
+	var h19: int = int(h3["s"].last_hash())
+	var ev19: int = int(h3["gm"].event_log.size())
+	_check(int(e1["s"].host_act_for_seat(2, "pass")) == NetProtocolScript.ERR_NOT_HOST,
+		"G19 客人端代打 → ERR_NOT_HOST")
+	_check(int(h3["s"].host_act_for_seat(1, "pass")) == NetProtocolScript.ERR_WRONG_SEAT,
+		"G19 主机代打人类座位 → ERR_WRONG_SEAT")
+	_check(int(h3["s"].host_act_for_seat(99, "pass")) == NetProtocolScript.ERR_WRONG_SEAT,
+		"G19 座位越界 → ERR_WRONG_SEAT")
+	_check(int(h3["s"].host_act_for_seat(-1, "pass")) == NetProtocolScript.ERR_WRONG_SEAT,
+		"G19 观战座位（-1）→ ERR_WRONG_SEAT")
+	_check(int(h3["s"].host_act_for_seat(2, "bogus")) == NetProtocolScript.ERR_BAD_EVENT,
+		"G19 未知意图类型 → ERR_BAD_EVENT")
+	_check(int(h3["s"].host_act_for_seat(2, "pass")) == NetProtocolScript.ERR_NOT_YOUR_TURN,
+		"G19 未轮到 AI 座位 → ERR_NOT_YOUR_TURN")
+	_check(int(h3["s"].last_hash()) == h19 and h3["gm"].event_log.size() == ev19,
+		"G19 所有被拒的代打都没动局面 / 事件日志")
+	_check(int(h3["s"].host_step_ai()) == 0, "G19 轮到人类（座位 0）时 host_step_ai 返回 0")
+
+	# 把牌权推到 AI 座位：座位 0 出单张 → 座位 1 跳过 → 座位 2（AI）
+	var u0 := _first_uid(h3["gm"], 0)
+	_check(int(h3["s"].submit("play", {"uids": [u0], "valences": {}, "pattern": -1})) == 0,
+		"G19 房主出单张（牌权 → 座位 1）")
+	_pump([h3, e1], func(): return h3["gm"].current_player_index == 1, IO_TIMEOUT_MS)
+	_check(int(e1["s"].submit("pass")) == 0, "G19 客人A 跳过（牌权 → 座位 2 / AI）")
+	_pump([h3, e1], func(): return h3["gm"].current_player_index == 2, IO_TIMEOUT_MS)
+	_check(h3["gm"].current_player_index == 2, "G19 牌权轮到 AI 座位 2")
+	_check(e1["s"].game.current_player_index == 2, "G19 客人端牌权同步到座位 2")
+
+	# 抢跑门控：客人还没 rebuild 完就替 AI 出手，客人重放必分叉
+	var hash_gate: int = int(h3["s"].last_hash())
+	h3["s"]._ready_seats[1] = false
+	_check(int(h3["s"].host_step_ai()) == 0, "G19 客人未 ready → host_step_ai 被门控（返回 0）")
+	_check(int(h3["s"].last_hash()) == hash_gate and h3["gm"].current_player_index == 2,
+		"G19 门控期间 AI 一步没走（局面不动）")
+	h3["s"]._ready_seats[1] = true
+
+	# 代打：AI 计划 → 一笔意图 → 与人类完全相同的裁决链 → 广播 applied
+	var applied_before: int = _count("e1", "applied")
+	var steps19: int = int(h3["s"].host_step_ai())
+	_check(steps19 >= 1, "G19 host_step_ai 替 AI 走了一手（%d 步）" % steps19)
+	_check(h3["gm"].event_log.size() > ev19 + 1, "G19 主机事件日志里多出 AI 那一笔")
+	_pump([h3, e1], func(): return _count("e1", "applied") > applied_before, IO_TIMEOUT_MS)
+	_check(_count("e1", "applied") > applied_before, "G19 客人收到 AI 那一笔的 applied 广播")
+	_check(e1["s"].last_hash() == h3["s"].last_hash(), "G19 代打后客人指纹与主机一致")
+	_check(e1["s"].game.event_log.size() == h3["gm"].event_log.size(),
+		"G19 两端事件日志条数一致（%d）" % h3["gm"].event_log.size())
+	var last_ai_ev = h3["gm"].event_log[h3["gm"].event_log.size() - 1]
+	_check(int(last_ai_ev.get("by", -1)) == 2, "G19 日志里那一笔的 by = 2（替 AI 座位发言）")
+	_check(not e1["s"].is_desynced(), "G19 代打全程未触发 desync")
+
+	# 两阶段：AI 座位自己出了顺序牌 → 主机同轮收窗，不干等 15s 超时
+	h3["s"]._update_pending_after_apply(2, 1)
+	_check(h3["s"].pending_seat() == 2, "G19 为 AI 座位开两阶段窗口")
+	_pump([h3, e1], func(): return e1["s"].pending_seat() == 2, IO_TIMEOUT_MS)
+	_check(e1["s"].pending_seat() == 2, "G19 客人同步到等待方 = 座位 2")
+	var skip_before: int = int(h3["gm"].event_log.size())
+	var skip_applied: int = _count("e1", "applied")
+	_check(int(h3["s"].host_step_ai()) >= 1, "G19 host_step_ai 立刻替 AI 收窗（不等超时）")
+	_check(h3["s"].pending_seat() == NetSessionScript.WATCHER_SEAT, "G19 窗口已关闭")
+	var skip_ev = h3["gm"].event_log[h3["gm"].event_log.size() - 1]
+	_check(h3["gm"].event_log.size() == skip_before + 1
+			and String(skip_ev.get("type", "")) == "sequence_skip"
+			and int(skip_ev.get("by", -1)) == 2,
+		"G19 收窗那一笔是 sequence_skip / by = 2")
+	_pump([h3, e1], func(): return e1["s"].pending_seat() == NetSessionScript.WATCHER_SEAT \
+		and _count("e1", "applied") > skip_applied, IO_TIMEOUT_MS)
+	_check(e1["s"].pending_seat() == NetSessionScript.WATCHER_SEAT, "G19 客人同步到窗口关闭")
+	_check(e1["s"].last_hash() == h3["s"].last_hash(), "G19 收窗后客人指纹仍一致")
+	_check(not h3["s"].is_my_sequence_pending(), "G19 主机自己不在待指定状态")
+
 	# ---- 收尾：全程无分叉 + close 幂等 ----
 	_check(_count("c1", "desync") == 0 and _count("c2", "desync") == 0, "全程没有出现状态分叉")
-	for p in [host, c1, c2, c3, h2, d1, d2]:
+	for p in [host, c1, c2, c3, h2, d1, d2, h3, e1]:
 		p["s"].close("测试结束")
 		p["s"].close("重复关闭")
 	_check(true, "close 可重复调用不炸")
