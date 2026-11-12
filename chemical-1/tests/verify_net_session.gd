@@ -24,6 +24,10 @@ const PORT_FULL = 47824
 const PORT_AI = 47826            # G19 专用端口（47821/47824 已被 G1/G17 占用）
 const PORT_CAP8 = 47830          # G21：8 座位房间
 const PORT_CAP3 = 47832          # G21：下限 3 座位房间
+const PORT_LOBBY = 47834         # G22：大厅 AI 补位数（D19）
+const PORT_BYE = 47836           # G23：房主收房广播（D20）
+const PORT_BYE2 = 47837          # G23②：房主真关服（bye 可能丢）
+const PORT_HB = 47838            # G24：心跳超时（D21）
 const CONNECT_TIMEOUT_MS = 5000
 const IO_TIMEOUT_MS = 3000
 const PLAYER_COUNT = 3          # seat 0 = 房主，1 = 客人A，2 = 客人B
@@ -571,9 +575,138 @@ func _run() -> void:
 	_check(int(h3b["gm"].get_player_count()) == 3,
 		"G21 玩家数 2 被抬到下限 3（实际 %d）" % int(h3b["gm"].get_player_count()))
 
+	# ---- G22 大厅 AI 补位数（D19）----
+	# 复刻真机问题：房主把空座位补成 AI，客人那边却还是 0 —— 座位卡写「空位」、
+	# 心里算的人数与房主不一致。AI 数必须从一开始就进会话状态并广播，不能只留在本地控件里。
+	var hl = _make_peer("hl")
+	var gl = _make_peer("gl")
+	_check(int(hl["s"].start_host(PORT_LOBBY, 4, "大厅房主")) == 0, "G22 大厅房主监听成功")
+	_check(int(gl["s"].start_client("127.0.0.1", PORT_LOBBY, "大厅客人")) == 0,
+		"G22 大厅客人发起连接")
+	_pump([hl, gl], func(): return gl["s"].my_seat == 1, CONNECT_TIMEOUT_MS)
+	_check(gl["s"].my_seat == 1, "G22 大厅客人拿到座位 1")
+	_check(int(hl["s"].lobby_ai_cap()) == 2,
+		"G22 AI 上限 = 容量 4 - 在线人类 2 = 2（实际 %d）" % int(hl["s"].lobby_ai_cap()))
+	_check(int(hl["s"].set_lobby_ai(3)) == 2,
+		"G22 房主要 3 个 AI 被压到上限（实际 %d）" % int(hl["s"].lobby_ai))
+	_pump([hl, gl], func(): return int(gl["s"].lobby_ai) == int(hl["s"].lobby_ai), IO_TIMEOUT_MS)
+	_check(int(gl["s"].lobby_ai) == 2,
+		"G22 客人同步到房主的 AI 数（实际 %d）" % int(gl["s"].lobby_ai))
+	hl["s"].set_lobby_ai(1)
+	_pump([hl, gl], func(): return int(gl["s"].lobby_ai) == 1, IO_TIMEOUT_MS)
+	_check(int(gl["s"].lobby_ai) == 1, "G22 房主改成 1，客人跟着改成 1")
+	# 客人只读：能调用也改不动，更不会污染房主
+	_check(int(gl["s"].set_lobby_ai(2)) == 1, "G22 客人 set_lobby_ai 是空操作")
+	_pump([hl, gl], func(): return false, 200)
+	_check(int(hl["s"].lobby_ai) == 1,
+		"G22 客人改不动房主的大厅 AI 数（实际 %d）" % int(hl["s"].lobby_ai))
+	# 第三个人坐下 → 上限降到 1，新人靠 welcome 字段直接拿到同一个值
+	var gl2 = _make_peer("gl2")
+	_check(int(gl2["s"].start_client("127.0.0.1", PORT_LOBBY, "大厅客人二")) == 0,
+		"G22 第三个客人发起连接")
+	_pump([hl, gl, gl2], func(): return gl2["s"].my_seat == 2, CONNECT_TIMEOUT_MS)
+	_check(gl2["s"].my_seat == 2, "G22 第三个客人拿到座位 2")
+	_check(int(hl["s"].lobby_ai_cap()) == 1,
+		"G22 3 人在线 → AI 上限 1（实际 %d）" % int(hl["s"].lobby_ai_cap()))
+	_check(int(hl["s"].lobby_ai) == 1,
+		"G22 上限收紧后房主的 AI 数仍在合法范围内（实际 %d）" % int(hl["s"].lobby_ai))
+	_pump([hl, gl, gl2], func(): return int(gl2["s"].lobby_ai) == int(hl["s"].lobby_ai), IO_TIMEOUT_MS)
+	_check(int(gl2["s"].lobby_ai) == int(hl["s"].lobby_ai),
+		"G22 后进来的客人直接拿到房主的大厅 AI 数（%d）" % int(gl2["s"].lobby_ai))
+	# 开局：大厅的 AI 数就地变成对局 AI 数，三端一致
+	_check(int(hl["s"].start_game(4, int(hl["s"].lobby_ai))) == 0, "G22 用大厅 AI 数开局成功")
+	_pump([hl, gl, gl2], func(): return gl["s"].state == NetSessionScript.State.PLAYING \
+		and gl2["s"].state == NetSessionScript.State.PLAYING, CONNECT_TIMEOUT_MS)
+	_check(gl["s"].state == NetSessionScript.State.PLAYING, "G22 客人进入 PLAYING")
+	_check(int(gl["s"].ai_count()) == int(hl["s"].ai_count()),
+		"G22 开局 AI 数两端一致（%d / %d）" % [int(gl["s"].ai_count()), int(hl["s"].ai_count())])
+	_check(int(gl["s"].lobby_ai) == int(gl["s"].ai_count()),
+		"G22 开局后 lobby_ai 与 ai_count 对齐（%d）" % int(gl["s"].lobby_ai))
+	_check(gl["s"].last_hash() == hl["s"].last_hash(), "G22 大厅 AI 数开局后指纹一致")
+
+	# ---- G23 房主收房：客人立刻拿到原因（D20）----
+	# 分两段测，因为真机上这是**两条不同的路**：
+	#   ① bye 包能到 → 「房主结束了本局」（局域网上多半能到）
+	#   ② bye 到不了 → 底层 ENet 失活被 ENetTransport 立刻识别 → 「与主机的连接已断开」
+	# 实测（Godot 4.7.2）：房主 close() 后，客人端的 ENetMultiplayerPeer 常常已经是
+	# 「状态 DISCONNECTED + 收包队列被清空」，bye 根本没机会进 NetSession —— 所以 ②
+	# 才是主路，① 是锦上添花。两条都必须在 1 秒级收尾，不能靠 12 秒心跳兜底。
+	var hb = _make_peer("hb")
+	var gb = _make_peer("gb")
+	_check(int(hb["s"].start_host(PORT_BYE, 3, "收房房主")) == 0, "G23 房主监听成功")
+	_check(int(gb["s"].start_client("127.0.0.1", PORT_BYE, "收房客人")) == 0,
+		"G23 客人发起连接")
+	_pump([hb, gb], func(): return gb["s"].my_seat == 1, CONNECT_TIMEOUT_MS)
+	_check(int(hb["s"].start_game(3, 1)) == 0, "G23 对局开始成功")
+	_pump([hb, gb], func(): return gb["s"].state == NetSessionScript.State.PLAYING, CONNECT_TIMEOUT_MS)
+	_check(gb["s"].state == NetSessionScript.State.PLAYING, "G23 客人进入 PLAYING")
+	# ① bye 包本身：房主直接在传输层发一条（等价于 close() 里那一条，但不关服），
+	#    这样断言只测「客人收到 bye 之后的行为」，不受 ENet 收尾时序影响。
+	hb["tr"].broadcast(NetProtocolScript.encode({
+		"type": NetProtocolScript.MSG_BYE, "reason": "离开房间",
+	}))
+	var bye_ok: bool = _pump([gb], func(): return gb["s"].state == NetSessionScript.State.CLOSED,
+		IO_TIMEOUT_MS)
+	_check(bye_ok, "G23 客人收到 bye 就关会话（不等 ENet 超时）")
+	var closed23 := _ev("gb", "closed")
+	_check(not closed23.is_empty() and String(closed23[closed23.size() - 1]["reason"]) == "房主结束了本局",
+		"G23 客人拿到的关闭原因写明房主收房（%s）"
+		% ("" if closed23.is_empty() else String(closed23[closed23.size() - 1]["reason"])))
+	_check(_count("gb", "desync") == 0, "G23 收房不会被误判成分叉")
+
+	# ② 房主真的收房（close() → ENet 关服，bye 可能丢）：客人也必须秒级收尾
+	var hb2 = _make_peer("hb2")
+	var gb2 = _make_peer("gb2")
+	_check(int(hb2["s"].start_host(PORT_BYE2, 3, "关服房主")) == 0, "G23 关服房主监听成功")
+	_check(int(gb2["s"].start_client("127.0.0.1", PORT_BYE2, "关服客人")) == 0,
+		"G23 关服客人发起连接")
+	_pump([hb2, gb2], func(): return gb2["s"].my_seat == 1, CONNECT_TIMEOUT_MS)
+	_check(int(hb2["s"].start_game(3, 1)) == 0, "G23 关服对局开始成功")
+	_pump([hb2, gb2], func(): return gb2["s"].state == NetSessionScript.State.PLAYING,
+		CONNECT_TIMEOUT_MS)
+	_check(gb2["s"].state == NetSessionScript.State.PLAYING, "G23 关服客人进入 PLAYING")
+	var t23b := Time.get_ticks_msec()
+	hb2["s"].close("离开房间")
+	var shut_ok: bool = _pump([gb2], func(): return gb2["s"].state == NetSessionScript.State.CLOSED,
+		IO_TIMEOUT_MS)
+	_check(shut_ok, "G23 房主关服后客人 %d ms 内收尾（不等 ENet / 心跳超时）"
+		% (Time.get_ticks_msec() - t23b))
+	var closed23b := _ev("gb2", "closed")
+	var reason23b := "" if closed23b.is_empty() else String(closed23b[closed23b.size() - 1]["reason"])
+	_check(reason23b != "" and (reason23b == "与主机的连接已断开" or reason23b == "房主结束了本局"),
+		"G23 关服后客人拿到明确的关闭原因（%s）" % reason23b)
+	_check(_count("gb2", "desync") == 0, "G23 关服不会被误判成分叉")
+
+	# ---- G24 心跳超时：房主异常退出（没有 bye）也能判失联（D21）----
+	var hh = _make_peer("hh")
+	var gh = _make_peer("gh")
+	_check(int(hh["s"].start_host(PORT_HB, 3, "心跳房主")) == 0, "G24 房主监听成功")
+	gh["s"].heartbeat_timeout_ms = 400          # 测试把 12 秒压到 0.4 秒
+	_check(int(gh["s"].start_client("127.0.0.1", PORT_HB, "心跳客人")) == 0,
+		"G24 客人发起连接")
+	_pump([hh, gh], func(): return gh["s"].my_seat == 1, CONNECT_TIMEOUT_MS)
+	_check(int(hh["s"].start_game(3, 1)) == 0, "G24 对局开始成功")
+	_pump([hh, gh], func(): return gh["s"].state == NetSessionScript.State.PLAYING, CONNECT_TIMEOUT_MS)
+	_check(gh["s"].state == NetSessionScript.State.PLAYING, "G24 客人进入 PLAYING")
+	# 房主不再 poll（= 进程被杀 / 断网）：客人只是收不到包，ENet 不会报 disconnected
+	var hb_t0 := Time.get_ticks_msec()
+	var hb_timeout: bool = _pump([gh],
+		func(): return gh["s"].state == NetSessionScript.State.CLOSED, 3000)
+	var hb_elapsed := Time.get_ticks_msec() - hb_t0
+	_check(hb_timeout, "G24 收不到包 %d ms 后客人自己关会话" % hb_elapsed)
+	_check(hb_elapsed >= 300,
+		"G24 没有过早误判（%d ms ≥ 400ms 心跳门槛附近）" % hb_elapsed)
+	var closed24 := _ev("gh", "closed")
+	_check(not closed24.is_empty() and String(closed24[closed24.size() - 1]["reason"]).find("心跳超时") >= 0,
+		"G24 关闭原因是心跳超时（%s）"
+		% ("" if closed24.is_empty() else String(closed24[closed24.size() - 1]["reason"])))
+	# 房主这端不受影响：它没有对端失联的概念
+	_check(hh["s"].state == NetSessionScript.State.PLAYING, "G24 房主端状态不受影响")
+
 	# ---- 收尾：全程无分叉 + close 幂等 ----
 	_check(_count("c1", "desync") == 0 and _count("c2", "desync") == 0, "全程没有出现状态分叉")
-	for p in [host, c1, c2, c3, h2, d1, d2, d3, h3, e1, h8, g8, h3b]:
+	for p in [host, c1, c2, c3, h2, d1, d2, d3, h3, e1, h8, g8, h3b, hl, gl, gl2, hb, gb,
+			hb2, gb2, hh, gh]:
 		p["s"].close("测试结束")
 		p["s"].close("重复关闭")
 	_check(true, "close 可重复调用不炸")

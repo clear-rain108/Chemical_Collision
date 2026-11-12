@@ -72,6 +72,14 @@ var pending_sequence_timeout_ms: int = DEFAULT_PENDING_TIMEOUT_MS
 var reconnect_grace_ms: int = DEFAULT_RECONNECT_GRACE_MS
 var allow_watchers: bool = true
 
+# ---- 心跳 / 失联检测（D21）----
+# 对局中房主每 heartbeat_ms 广播一条 MSG_PING；客人超过 heartbeat_timeout_ms
+# 一个包都没收到就判定失联。为什么需要：ENet 关服（房主杀进程 / 断网）不保证
+# 对端立刻收到 peer_disconnected，没有心跳时客人会一直停在「等待 X 行动…」，
+# 看起来就像卡死 —— 只有一条 D20 的 bye 兜不住异常退出。
+var heartbeat_ms: int = 1000
+var heartbeat_timeout_ms: int = 12000
+
 # ---- 房间 / 座位表 ----
 var my_seat: int = WATCHER_SEAT
 var room_code: String = ""
@@ -88,6 +96,9 @@ var _ready_seats: Dictionary = {}       # seat → true（仅主机维护）
 var _seed: int = -1
 var _player_count: int = 4
 var _ai_count: int = 0
+# 大厅 AI 补位数（D19）：开局前由房主定并广播给所有客人，开局那一刻落到 _ai_count。
+# 客人对它是只读的（set_lobby_ai 对非主机是空操作），界面显示同一份值。
+var lobby_ai: int = 0
 var _config: Dictionary = {}
 var _pending: Dictionary = {}           # 仅主机：{"seat":int, "seq":int, "deadline":int}
 var _pending_seat: int = WATCHER_SEAT   # 客户端视角：谁正在选牌型
@@ -97,6 +108,8 @@ var _my_token: String = ""
 var _desynced: bool = false
 var _last_hash: int = 0
 var _closed_reason: String = ""
+var _last_rx_ms: int = 0                # 最近一次收到任何包的时刻（心跳判活用）
+var _last_ping_ms: int = 0              # 仅主机：上次广播 ping 的时刻
 
 # ---- 诊断（--net-trace）----
 # 真机上没有控制台可看，最省事的排查手段是「每笔权威事件打一行指纹」：
@@ -208,8 +221,15 @@ func start_client_resume(address: String, port: int, token: String,
 func close(reason: String = "主动退出") -> void:
 	if state == State.CLOSED:
 		return
+	var was_host_live := role == Role.HOST and state != State.IDLE
 	_closed_reason = reason
-	state = State.CLOSED
+	state = State.CLOSED          # 先置 CLOSED：poll 回放的包一律被守卫挡掉
+	if was_host_live and transport != null:
+		# 房主收房（D20）：ENet 关服不保证对端立刻收到 peer_disconnected（局域网里
+		# 常见几秒延迟，甚至整个丢），所以先特意广播一条 bye 再 poll 一次把队列
+		# 刷出去。客人收到就立刻显示「联机已结束」，不必干等心跳超时。
+		_broadcast({"type": NetProtocolScript.MSG_BYE, "reason": reason})
+		transport.poll()
 	if transport != null:
 		transport.close()
 	_pending.clear()
@@ -238,6 +258,9 @@ func _reset_session() -> void:
 	_desynced = false
 	_last_hash = 0
 	_closed_reason = ""
+	lobby_ai = 0
+	_last_rx_ms = 0
+	_last_ping_ms = 0
 
 
 # ============================================================
@@ -295,6 +318,35 @@ func is_seat_ai(seat: int) -> bool:
 # 本局 AI 座位数（开局时由房主定下；AI 座位 = 最后 ai_count 个）
 func ai_count() -> int:
 	return _ai_count
+
+
+# 大厅里在线的人类座位数（AI 补位上限 = 容量 - 这个数）
+func online_humans() -> int:
+	var n := 0
+	for key in _seat_state.keys():
+		if int(_seat_state[key]) == SeatState.ONLINE:
+			n += 1
+	return n
+
+
+# 大厅 AI 补位上限：总座位 - 在线人类。真人坐满就一个 AI 也加不了
+func lobby_ai_cap() -> int:
+	return maxi(0, seat_capacity() - online_humans())
+
+
+# 房主在大厅设置 AI 补位数（D19：只有房主说了算）。
+# 内部 clamp 到 [0, 容量 - 在线人类]，变了就刷新界面 + 广播 MSG_LOBBY，返回生效值。
+# 非主机 / 非大厅阶段一律原值返回 —— 客人能点也不该改到自己的会话状态。
+func set_lobby_ai(n: int) -> int:
+	if role != Role.HOST or state != State.LOBBY:
+		return lobby_ai
+	var v := clampi(int(n), 0, lobby_ai_cap())
+	if v != lobby_ai:
+		lobby_ai = v
+		_trace("HOST lobby_ai=%d cap=%d humans=%d" % [lobby_ai, lobby_ai_cap(), online_humans()])
+		room_changed.emit()
+	_host_broadcast_lobby()
+	return lobby_ai
 
 
 func seat_of_peer(peer_id: int) -> int:
@@ -356,6 +408,8 @@ func poll() -> void:
 
 # ---- 传输层事件 ----
 func _on_peer_connected(peer_id: int) -> void:
+	if state == State.CLOSED:
+		return                    # 关服那一轮 poll 里可能还会冒事件，一律不理
 	if role == Role.CLIENT:
 		# 客人：连上就报身份；带 token 表示「我是回来重连的」
 		_send_hello(peer_id)
@@ -363,6 +417,15 @@ func _on_peer_connected(peer_id: int) -> void:
 
 
 func _on_peer_disconnected(peer_id: int) -> void:
+	if state == State.CLOSED:
+		return                    # close() 里的补 poll 会触发它，别把原因覆盖掉
+	# 客人：peer_id 1 恒为主机。这一支必须先判，不能走座位表 —— 客人的
+	# _seat_peer / _peer_seat 只由主机侧维护（座位是主机分配的），查表只会得到
+	# WATCHER_SEAT 被当成陌生 peer 忽略，客人就永远不知道房主已经走了。
+	# 真机表现：房主退出，客人一直盯着「等待 X 行动」。
+	if role == Role.CLIENT and peer_id == HOST_PEER_ID:
+		close("与主机的连接已断开")
+		return
 	var seat := seat_of_peer(peer_id)
 	if seat == WATCHER_SEAT:
 		return
@@ -371,10 +434,7 @@ func _on_peer_disconnected(peer_id: int) -> void:
 	if role == Role.HOST:
 		_handle_seat_offline(seat)
 		return
-	# 客人视角
-	if peer_id == HOST_PEER_ID:
-		close("与主机的连接已断开")
-		return
+	# 客人视角：其他座位掉线只标灰，局面由主机继续
 	_seat_state[seat] = SeatState.OFFLINE
 	room_changed.emit()
 
@@ -382,6 +442,7 @@ func _on_peer_disconnected(peer_id: int) -> void:
 func _on_packet(peer_id: int, data: PackedByteArray) -> void:
 	if state == State.CLOSED:
 		return
+	_last_rx_ms = Time.get_ticks_msec()    # 任何包都算「主机还活着」（含 ping）
 	var msg := NetProtocolScript.decode(data)
 	if msg.is_empty():
 		return
@@ -424,6 +485,12 @@ func _dispatch(peer_id: int, msg: Dictionary) -> void:
 		NetProtocolScript.MSG_PEER_JOINED:
 			if role == Role.CLIENT:
 				_client_on_peer_joined(msg)
+		NetProtocolScript.MSG_LOBBY:
+			if role == Role.CLIENT:
+				_client_on_lobby(peer_id, msg)
+		NetProtocolScript.MSG_BYE:
+			if role == Role.CLIENT:
+				_client_on_bye(peer_id, msg)
 		_:
 			if role == Role.HOST:
 				error_raised.emit(NetProtocolScript.ERR_UNKNOWN_MESSAGE, "未知消息: " + mtype)
@@ -532,6 +599,10 @@ func _bind_peer(peer_id: int, seat: int, peer_name: String, token: String) -> vo
 		"name": peer_name,
 	})
 	peer_joined.emit(seat, peer_name)
+	# 多了一个真人 → AI 补位上限变小：把房主的 AI 数压回合法范围，
+	# 再把大厅状态统一广播一次（D19）。新人和老人都靠这一条对齐。
+	lobby_ai = clampi(lobby_ai, 0, lobby_ai_cap())
+	_host_broadcast_lobby()
 
 
 # ---- 主机：welcome（+ 已开局时紧跟一条 snapshot）----
@@ -546,6 +617,7 @@ func _send_welcome(to_peer: int, seat: int, token: String, resume: bool,
 		"room_code": room_code,
 		"resume": resume,
 		"max_players": max_players,
+		"ai_count": lobby_ai,            # 大厅 AI 补位数（D19）：新进来的人立刻显示同一个值
 		"started": state != State.LOBBY,
 		"seats": _seat_list(),
 		"config": _config,
@@ -608,6 +680,8 @@ func _client_on_welcome(peer_id: int, msg: Dictionary) -> void:
 		_my_token = new_token
 	room_code = String(msg.get("room_code", ""))
 	max_players = int(msg.get("max_players", DEFAULT_MAX_PLAYERS))
+	lobby_ai = clampi(int(msg.get("ai_count", lobby_ai)), 0,
+		clampi(max_players, MIN_PLAYERS, MAX_PLAYERS))
 	_take_config(msg.get("config", null))
 	_sync_seat_list(msg.get("seats", []))
 	_pending_seat = WATCHER_SEAT
@@ -722,6 +796,27 @@ func _client_on_peer_joined(msg: Dictionary) -> void:
 	peer_joined.emit(seat, seat_name(seat))
 
 
+# 客人：房主改了大厅 AI 补位数 / 座位表（D19）。开局后一律不认 —— 那时的
+# AI 数由 game_start 定，中途再变就和已落地的玩家数对不上了。
+func _client_on_lobby(peer_id: int, msg: Dictionary) -> void:
+	if peer_id != HOST_PEER_ID or state == State.PLAYING:
+		return
+	max_players = int(msg.get("max_players", max_players))
+	lobby_ai = clampi(int(msg.get("ai_count", lobby_ai)), 0,
+		clampi(max_players, MIN_PLAYERS, MAX_PLAYERS))
+	_sync_seat_list(msg.get("seats", []))
+	room_changed.emit()
+
+
+# 客人：房主主动收房（D20）。比等 ENet 的 disconnected 靠谱：局域网里通常
+# 立刻到；真拿不到时还有 D21 的心跳超时兜底。
+func _client_on_bye(peer_id: int, msg: Dictionary) -> void:
+	if peer_id != HOST_PEER_ID or state == State.CLOSED:
+		return
+	_trace("CLIENT bye reason=%s" % String(msg.get("reason", "")))
+	close("房主结束了本局")
+
+
 func _client_on_rejected(msg: Dictionary) -> void:
 	var seq := int(msg.get("seq", 0))
 	var code := int(msg.get("code", 0))
@@ -750,6 +845,7 @@ func start_game(player_count: int = 4, ai_count: int = 0) -> int:
 		return -1
 	_player_count = clampi(player_count, MIN_PLAYERS, MAX_PLAYERS)
 	_ai_count = clampi(ai_count, 0, _player_count - 1)
+	lobby_ai = _ai_count            # 大厅选的 AI 数就地转为本局 AI 数，房间页重进时显示同一个值
 	_config = _make_config()
 	if not _apply_config_and_init():
 		return -1
@@ -838,6 +934,19 @@ func _broadcast(msg: Dictionary) -> void:
 	if transport == null:
 		return
 	transport.broadcast(NetProtocolScript.encode(msg))
+
+
+# 大厅状态广播（D19）：AI 补位数 + 容量 + 座位表一次给全，
+# 客户端不必自己拼，也不会有「座位表变了但 AI 数没变」的中间态。
+func _host_broadcast_lobby() -> void:
+	if role != Role.HOST:
+		return
+	_broadcast({
+		"type": NetProtocolScript.MSG_LOBBY,
+		"ai_count": lobby_ai,
+		"max_players": max_players,
+		"seats": _seat_list(),
+	})
 
 
 # 提交一笔意图：主机当场裁决并广播，客人发给主机等 applied
@@ -1059,6 +1168,7 @@ func _client_on_game_start(msg: Dictionary) -> void:
 	_seed = int(msg.get("seed", -1))
 	_player_count = int(msg.get("player_count", 4))
 	_ai_count = int(msg.get("ai_count", 0))
+	lobby_ai = _ai_count
 	_take_config(msg.get("config", null))
 	if _seed < 0 or not _apply_config_and_init():
 		error_raised.emit(NetProtocolScript.ERR_DESYNC, "开局：init_game 失败")
@@ -1193,10 +1303,18 @@ func _take_over_pending(seat: int) -> void:
 
 
 # 主机每帧检查：① 两阶段超时 → 托管；② 掉线宽限到期 → 清计时器（座位仍保留）
+# 客人每帧检查：心跳超时 → 判失联（D21）
 func _poll_timeouts() -> void:
+	var now := Time.get_ticks_msec()
+	if role == Role.CLIENT:
+		_client_check_heartbeat(now)
+		return
 	if role != Role.HOST:
 		return
-	var now := Time.get_ticks_msec()
+	# 对局中每秒广播一次 ping：客人的失联判定全靠它，没有它就只能等 ENet 报错
+	if state == State.PLAYING and now - _last_ping_ms >= heartbeat_ms:
+		_last_ping_ms = now
+		_broadcast({"type": NetProtocolScript.MSG_PING})
 	if state == State.PLAYING and pending_seat() != WATCHER_SEAT \
 			and int(_pending.get("deadline", 0)) <= now:
 		_take_over_pending(pending_seat())
@@ -1204,6 +1322,19 @@ func _poll_timeouts() -> void:
 	for key in _offline_deadline.keys():
 		if int(_offline_deadline[key]) <= now:
 			_offline_deadline.erase(key)
+
+
+# 客人：对局中超过 heartbeat_timeout_ms 一个包都没收到 → 判失联并关会话。
+# 首次检查只记起点：_last_rx_ms 可能还停在开局前最后一条大厅消息上。
+func _client_check_heartbeat(now: int) -> void:
+	if state != State.PLAYING:
+		return
+	if _last_rx_ms <= 0:
+		_last_rx_ms = now
+		return
+	if now - _last_rx_ms < heartbeat_timeout_ms:
+		return
+	close("与主机的连接已断开（心跳超时 %d 秒）" % maxi(1, int(heartbeat_timeout_ms / 1000)))
 
 
 # ============================================================

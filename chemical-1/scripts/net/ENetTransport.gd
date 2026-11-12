@@ -30,6 +30,7 @@ const DEFAULT_PORT := 47800
 var _peer: ENetMultiplayerPeer = null
 var _pending: Array = []            # [["connected"/"packet"/"disconnected", id, data], ...]
 var _peers: Dictionary = {}         # peer_id → true（ENetMultiplayerPeer 无 get_peers）
+var _was_connected: bool = false    # 曾经连上过：区分「根本连不上」与「连上后又断了」
 
 
 func host(port: int, max_players: int = 4) -> int:
@@ -68,6 +69,7 @@ func close() -> void:
 		peer.close()
 	_peers.clear()
 	_pending.clear()
+	_was_connected = false
 	mode = Mode.NONE
 	local_id = 1
 
@@ -76,18 +78,34 @@ func close() -> void:
 func poll() -> void:
 	if _peer == null:
 		return
-	_peer.poll()
-	# 客人：连上后才拿得到自己的随机 id。抢在派发信号之前填好，
-	# 上层在 peer_connected 回调里读 local_id 就已经是有效值。
-	if mode == Mode.CLIENT and local_id <= 0 \
-			and _peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
-		local_id = _peer.get_unique_id()
+	# 对端整机消失（房主杀进程 / 断网 / 关服）时，引擎会把 ENet 置成「未激活」：
+	# 之后再 poll() / put_packet() 只会每帧刷
+	# "multiplayer instance isn't currently active"，而且客人**永远等不到掉线事件**
+	# （peer_disconnected 只有服务端才会收到）。这种情况要补派发一次「对端掉线」，
+	# 客人的会话才能立刻收尾；D21 的心跳只是兜底。
+	# 「未激活」= 状态已经是 DISCONNECTED（含从没连上的情形），两种都不该再 poll()。
+	var dead := _peer.get_connection_status() == MultiplayerPeer.CONNECTION_DISCONNECTED
+	if not dead:
+		_peer.poll()
+		# 客人：连上后才拿得到自己的随机 id。抢在派发信号之前填好，
+		# 上层在 peer_connected 回调里读 local_id 就已经是有效值。
+		if mode == Mode.CLIENT and local_id <= 0 \
+				and _peer.get_connection_status() == MultiplayerPeer.CONNECTION_CONNECTED:
+			local_id = _peer.get_unique_id()
+	# 收包必须排在「判失活」之后、收尾之前：引擎在客人掉线时只是把 peer 置为
+	# 未激活，**已经收进队列的包还在**（房主 close() 前刷出去的 BYE 就在里面）。
+	# 抢在 _reap_inactive() 前面搬走，客人才能拿到「房主结束了本局」而不是笼统的掉线。
 	while _peer != null and _peer.get_available_packet_count() > 0:
 		# 必须先取 peer 再取包：get_packet() 会推进接收队列
 		var from := _peer.get_packet_peer()
 		var data := _peer.get_packet()
 		if data.size() > 0:
 			_pending.append(["packet", from, data])
+	# 只有「连上过又断了」才补派发掉线：IP 写错 / 端口没人听时 _was_connected 恒为 false，
+	# 那种情况要把判断留给 UI 的连接超时提示，不能被这里一帧就关掉会话。
+	if dead and _was_connected:
+		_reap_inactive()        # 内部补派发 disconnected 并统一 drain
+		return
 	_drain()
 
 
@@ -131,13 +149,37 @@ func _bind(peer: ENetMultiplayerPeer) -> void:
 	peer.peer_disconnected.connect(_on_peer_disconnected)
 	_peers.clear()
 	_pending.clear()
+	_was_connected = false
 	_peer = peer
+
+
+# 底层 ENet 已被引擎置为未激活：把「对端掉线」补进待派发队列再收尾。
+# 顺序很重要 —— 先摘 _peer 再 close()，否则之后的 poll() 会刷引擎报错。
+func _reap_inactive() -> void:
+	var peer := _peer
+	_peer = null
+	var gone: Array = []
+	if mode == Mode.CLIENT:
+		gone.append(1)                  # 客人视角：唯一对端就是房主（peer_id 恒为 1）
+	else:
+		for pid in _peers.keys():
+			gone.append(int(pid))
+	_peers.clear()
+	for pid in gone:
+		_pending.append(["disconnected", int(pid)])
+	mode = Mode.NONE
+	local_id = 1
+	_was_connected = false
+	if peer != null:
+		peer.close()
+	_drain()
 
 
 func _on_peer_connected(peer_id: int) -> void:
 	var pid := int(peer_id)
 	if _peers.has(pid):
 		return
+	_was_connected = true
 	_peers[pid] = true
 	_pending.append(["connected", pid])
 

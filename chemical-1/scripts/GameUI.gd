@@ -663,6 +663,9 @@ func _show_start_page() -> void:
 	_close_supp_rules()   # 从结束页 / 帮助页回来时不能还停在上一次打开的小页上
 	# Step 4：回开始页 = 离开房间（关会话 + 断开装配，D13）。没有会话时是空操作
 	_close_room_page()
+	# 回开始页 = 开新局：上一个房间 / 上一局的联机终止提示一律作废
+	_clear_net_over_notice()
+	_hide_warning_toast()
 	if start_page: start_page.visible = true
 	if game_page: game_page.visible = false
 	if end_page: end_page.visible = false
@@ -802,6 +805,11 @@ var _room_mode: int = RoomMode.IDLE
 var _room_connect_wait: float = 0.0
 var _room_join_target: String = ""        # 只用于「连不上 xxx」的提示文案
 var _room_closing: bool = false           # 主动关会话时的重入闸（close 会同步发 session_closed）
+# 联机终止的原因（房主收房 / 失联 / 状态分叉）：钉在界面上直到回开始页。
+# 为什么单独存一份（D20）：toast 2.5 秒就消失，而 card_info 每帧都被回合提示覆盖，
+# 房主退出后客人只会看到「等待 X 行动…」，看起来就是卡死。
+var _net_over_notice: String = ""
+var _room_ai_sync: bool = false           # 往 AI 微调框里写值时的重入闸（会触发 value_changed）
 var _room_seat_cards: Array = []          # 最多 8 张座位卡（Panel），按容量显隐
 var _room_seat_nos: Array = []            # 座位卡上的「座位 N」Label
 var _room_seat_names: Array = []          # 座位卡上的昵称 Label
@@ -2578,6 +2586,7 @@ func _on_start_game() -> void:
 	if net_session != null:
 		_show_info("联机对局请从房间页开局（本页仅用于单机 / 教程）")
 		return
+	_clear_net_over_notice()       # 单机新局：清掉上一局（房间 / 联机）留下的终止提示
 	var total = int(player_spin.value) if player_spin else 4
 	var ai = int(ai_spin.value) if ai_spin else 3
 	if total < GameManagerScript.MIN_PLAYERS or total > GameManagerScript.MAX_PLAYERS:
@@ -3963,8 +3972,21 @@ func _update_log_label() -> void:
 	_layout_log_panel()
 
 
+# 清掉「联机已终止」的常驻提示（D20 / D21）。
+# 四个入口共用：回开始页 / 单机新局 / 联机开局 / 离开房间。
+# 单独抽成函数是为了能直接验证「清干净」：提示文本还挂在 card_info_label 上，
+# 下一局一进牌桌就会顶着上一局的告警。
+func _clear_net_over_notice() -> void:
+	_net_over_notice = ""
+
+
 func _update_card_info_label() -> void:
 	if not card_info_label or not game_manager: return
+	# 联机终止（房主收房 / 失联 / 状态分叉）：这句优先于一切回合提示。
+	# 不挡的话下一帧就被「等待 X 行动…」盖掉，原因只剩 toast 里闪 2.5 秒（D20）
+	if _net_over_notice != "":
+		card_info_label.text = "⚠ " + _net_over_notice
+		return
 	var pi: int = game_manager.get_current_player_index()
 	var cp = game_manager.get_current_player()
 	if cp == null:
@@ -6536,13 +6558,17 @@ func _show_info(text: String) -> void:
 # 右栏警告 toast（黄底橙红边，2.5 秒自动消失）
 # 位置固定在右栏上部空白格，不再压在手牌 / 操作区 / 卡牌信息之上。
 # 单例复用：连续报错只更新文本并重置计时，不叠框、也不会被上一次的计时器提前熄灭。
-func _show_center_warning(text: String) -> void:
+func _show_center_warning(text: String, sticky: bool = false) -> void:
 	_ensure_warning_toast()
 	if not is_instance_valid(_warning_toast) or not is_instance_valid(_warning_label):
 		return
 	_warning_label.text = text
 	_warning_toast.visible = true
 	_warning_seq += 1
+	# sticky = 终局提示（联机终止 / 状态分叉）：不挂自动消失的计时器。
+	# seq 已经自增，上一条未到期的计时器会自行作废，不会把它提前熄灭。
+	if sticky:
+		return
 	var seq := _warning_seq
 	var timer := get_tree().create_timer(TOAST_DURATION)
 	timer.timeout.connect(func():
@@ -6851,7 +6877,11 @@ func _online_on_session_closed(reason: String) -> void:
 		_room_teardown()
 		_room_hint(msg)
 		return
+	# 牌桌上房主退出 / 失联：把原因钉在界面上（D20）。只弹 toast 的话 2.5 秒后
+	# 就只剩「等待 X 行动…」，看起来像卡死 —— 这正是真机反馈的那个问题。
+	_net_over_notice = msg
 	_show_info(msg)
+	_show_center_warning(msg, true)
 	# 单机 / 房间页关着：只有真的有一局在打才刷新（0 玩家时刷 = 读空局面）
 	if game_manager != null and game_manager.get_player_count() > 0:
 		_refresh_ui()
@@ -6860,7 +6890,10 @@ func _online_on_session_closed(reason: String) -> void:
 func _online_on_desync(local_hash: int, host_hash: int) -> void:
 	# 分叉后不再推进，弹窗留着只会让人以为还能选
 	_hide_sequence_overlay()
-	_show_info("状态分叉（本端 %d / 主机 %d），已停止推进" % [int(local_hash), int(host_hash)])
+	_net_over_notice = "状态分叉（本端 %d / 主机 %d），已停止推进" % [int(local_hash), int(host_hash)]
+	_show_info(_net_over_notice)
+	# 终局提示必须常驻：toast 2.5 秒就没，牌桌上看不出「这局已经停了」（D20）
+	_show_center_warning(_net_over_notice, true)
 	_refresh_ui()
 
 
@@ -6943,6 +6976,7 @@ func _enter_online_game() -> void:
 	# 这里只隐藏、绝不 teardown —— 开局后会话还要用
 	if _room_page != null and is_instance_valid(_room_page):
 		_room_page.visible = false
+	_clear_net_over_notice()       # 新一局开局：上一局的终止提示作废
 	_hide_warning_toast()
 	_hotseat_ready_seat = -1
 	log_lines.clear()
@@ -7256,11 +7290,20 @@ func _room_refresh() -> void:
 	_room_layout_seats(capacity)
 
 	# AI 上限 = 剩下的空座位（总座位 = 本房间容量）：真人坐满就一个 AI 也加不了
+	# D19：在房里时 AI 数由房主定（NetSession.lobby_ai 广播同步），客人只读同一份值
 	if _room_ai_spin != null:
 		var ai_cap := maxi(0, capacity - online)
+		var want := mini(int(_room_ai_spin.value), ai_cap)
+		var follows_host: bool = net_session != null and net_session.has_method("set_lobby_ai")
+		if follows_host:
+			want = mini(int(net_session.lobby_ai), ai_cap)
+		_room_ai_sync = true                  # 写值会触发 value_changed，先挡住回推
 		_room_ai_spin.max_value = ai_cap
-		if int(_room_ai_spin.value) > ai_cap:
-			_room_ai_spin.value = ai_cap      # Range 会把超限值压回 max
+		if int(_room_ai_spin.value) != want:
+			_room_ai_spin.value = want        # Range 会把超限值压回 max
+		_room_ai_sync = false
+		# 大厅 AI 数只有房主能定：客人能点却改了不生效，比根本点不动更误导
+		_room_ai_spin.editable = not follows_host or net_session.is_host()
 	var ai := _room_ai_value()
 	var planned := online + ai
 
@@ -7442,6 +7485,7 @@ func _room_teardown() -> void:
 	_room_mode = RoomMode.IDLE
 	_room_connect_wait = 0.0
 	_room_join_target = ""
+	_clear_net_over_notice()       # 离开房间 = 终止提示作废（房间页有自己的常驻提示行）
 	var s = net_session
 	if s != null:
 		s.close("离开房间")
@@ -7586,7 +7630,13 @@ func _room_on_peer_left(seat: int, peer_name: String, grace_ms: int) -> void:
 	_room_refresh()
 
 
+# 房主改 AI 数：先落到会话（clamp + 广播 MSG_LOBBY），再由 room_changed 回来刷新界面。
+# 客人这份是只读的（_room_refresh 里 editable = false），就算走到这里也会被 set_lobby_ai 挡掉。
 func _on_room_ai_changed(_value: float) -> void:
+	if _room_ai_sync:
+		return                       # _room_refresh 同步值引起的回调，不要回推给会话
+	if net_session != null and net_session.has_method("set_lobby_ai"):
+		net_session.set_lobby_ai(_room_ai_value())
 	_room_refresh()
 
 

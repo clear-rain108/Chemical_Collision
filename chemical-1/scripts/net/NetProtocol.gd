@@ -24,6 +24,9 @@ const MSG_PONG = "pong"
 const MSG_READY = "ready"                # C→S：快照重放完，附本地指纹供主机核对
 const MSG_PEER_LEFT = "peer_left"        # S→all：某座位掉线，座位保留等待重连
 const MSG_PEER_JOINED = "peer_joined"    # S→all：某座位（重新）上线
+# P11-C1-d 增补：大厅状态 / 房主收房
+const MSG_LOBBY = "lobby"                # S→all：房主改了大厅 AI 补位数（带容量 + 座位表）
+const MSG_BYE = "bye"                    # S→all：房主主动收房（先广播再断，客人立刻拿到原因）
 
 # ---- 客户端意图类型（与 GameManager.apply_event 的 type 完全一致）----
 const INTENT_PLAY = "play"
@@ -61,6 +64,7 @@ static func is_known_message(msg_type: String) -> bool:
 		MSG_HELLO, MSG_WELCOME, MSG_GAME_START, MSG_INTENT, MSG_APPLIED,
 		MSG_REJECTED, MSG_TURN, MSG_PENDING_SEQUENCE, MSG_SNAPSHOT,
 		MSG_PING, MSG_PONG, MSG_READY, MSG_PEER_LEFT, MSG_PEER_JOINED,
+		MSG_LOBBY, MSG_BYE,
 	]
 
 

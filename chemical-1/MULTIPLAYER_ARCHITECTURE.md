@@ -953,3 +953,89 @@ adb logcat -s godot:V
 ```bat
 aapt2 dump permissions <apk>   :: 必须同时看到 INTERNET 与 VIBRATE
 ```
+
+### D.13 真机三个体验问题的收口：大厅 AI 数 / 房主收房 / 心跳失联（D19 · D20 · D21）
+
+`chemical-pre1005.3-debug.apk` 三人真机局暴露的问题，本质是**同一件事的三个切面**：大厅里的状态没有唯一真值，会话终止也没有可靠通知。
+
+| 真机现象 | 真因 | 修法（决策） |
+|---|---|---|
+| 客人也能改 AI 数，改完两边不一致 | AI 数只活在 `RoomAiSpin` 这个控件里，`NetSession` 完全不知道它的存在 | 大厅 AI 数搬进会话（D19）：`NetSession.lobby_ai`，房主唯一可写 |
+| 房主把空位补成 AI，客人座位卡还是「空位」 | 同上 —— 客人那份控件没人给它写值 | `MSG_LOBBY` 广播 + welcome 带 `ai_count`（D19） |
+| 房主退出，客人牌桌还停在「等待 X 行动…」 | ① 客人侧从来没登记「座位 0 ↔ 主机 peer」，`_on_peer_disconnected` 直接当陌生 peer 忽略；② BYE 包在引擎关服时被连队列一起清掉 | 先因优先判主机 + BYE 兜底 + 底层失活立刻收尾（D20） |
+| 房主杀进程 / 断网，客人同样卡住 | ENet 客人在服务端消失时**不保证**收到 `peer_disconnected`，只能等到 ENet 自己的超时（几十秒～几分钟） | 心跳 12s 兜底 + `_reap_inactive` 立刻派发（D21） |
+
+#### D19：大厅 AI 补位数以会话为准
+
+| 环节 | 行为 |
+|---|---|
+| 存储 | `NetSession.lobby_ai`（默认 0）。**只由房主写**，客人读同一份 |
+| 写入 | `set_lobby_ai(n)`：非 `HOST` 或非 `LOBBY` **原值返回、什么也不做**；房主写入时 clamp 到 `[0, lobby_ai_cap()]`，`lobby_ai_cap() = seat_capacity() - online_humans()` |
+| 下发 | 变了就 `_host_broadcast_lobby()` → `MSG_LOBBY{ai_count, max_players, seats}`；`welcome` 也带 `ai_count`，**新进来的人一步到位**，不用等下一轮广播 |
+| 接收 | `_client_on_lobby()` 只认 `peer_id == HOST_PEER_ID` 且 `state != PLAYING`（开局后 AI 数由 `game_start` 定，中途再变会和已落地的玩家数打架） |
+| 开局 | `start_game()` 里 `lobby_ai = _ai_count`：大厅里选的值就地变成本局 AI 数，房间页重进时显示同一个数 |
+| 有人加入 | `_bind_peer()` 里先 `lobby_ai = clampi(lobby_ai, 0, lobby_ai_cap())` 再广播 —— 真人不许被 AI 顶掉 |
+| 界面 | `_room_refresh()` 读 `net_session.lobby_ai` 写进微调框（`_room_ai_sync` 挡住 `value_changed` 回推），客人 `editable = false`：能点却改不动，比根本点不动更误导 |
+
+`has_method("set_lobby_ai")` 是真的兜底，不是摆设：`verify_room_page` 的 `RoomFake` 刻意只实现用到的接口，缺这个方法时房间页退回「本地微调框说了算」的老行为，不会炸。
+
+#### D20：房主收房，客人当场知道
+
+`NetSession.close(reason)` 的主机分支做三件事，顺序不能换：
+
+```gdscript
+state = State.CLOSED                                   # ① 先关闸：之后回放的包一律被守卫挡掉
+_broadcast({"type": MSG_BYE, "reason": reason})        # ② 广播
+transport.poll()                                       #    补 poll 一次把队列刷出去，再关服
+transport.close()
+```
+
+`transport.poll()` 那一行是关键：只 `broadcast` 不 `poll`，包还躺在 ENet 发送队列里，紧跟着的 `close()` 会把它一起丢掉。客人侧 `_client_on_bye()` → `close("房主结束了本局")`，UI 侧钉一句常驻提示。
+
+**但 BYE 只是锦上添花**。实测（Godot 4.7.2，同一台机器）：房主 `close()` 之后，客人那端的 `ENetMultiplayerPeer` 往往已经是「状态 `DISCONNECTED` + 收包队列被清空」，BYE 根本没机会进 `NetSession`。所以真正兜底的是下一条。
+
+#### 客人侧掉线的三条路（按生效顺序）
+
+| 顺序 | 触发 | 代码 | 时延 |
+|---|---|---|---|
+| 1 | 底层 ENet 被引擎置为未激活（房主 `close()` / 杀进程 / 断网） | `ENetTransport.poll()` 发现 `_was_connected and get_connection_status() == CONNECTION_DISCONNECTED` → `_reap_inactive()` 补派发一次 `disconnected` | 同一帧 |
+| 2 | 收到由 `close()` 刷出的 BYE | `NetSession._client_on_bye()` | 同一帧（能到的话） |
+| 3 | 12 秒一个包都没收到 | `NetSession._poll_timeouts()` → `_client_check_heartbeat()` | `heartbeat_timeout_ms` |
+
+两个坑写在这里免得后人再踩：
+
+1. **`_on_peer_disconnected()` 必须在查座位表之前判「客人 + peer 1」。** 客人的 `_peer_seat` / `_seat_peer` 只由主机侧维护（座位是主机分配的），查表只会得到 `WATCHER_SEAT` 被当成陌生 peer 忽略 —— 这正是 D20 之前「房主退出、客人一直等待」的真因，光加 BYE 是修不掉的。
+2. **`_reap_inactive()` 里先摘 `_peer` 再 `peer.close()`**，并且要把**已经收进队列的包先搬进 `_pending`** 再补发 `disconnected`。抢在补发前面 drain，客人拿到的就是「房主结束了本局」；顺序反了就只能给笼统的「与主机的连接已断开」。
+
+`_was_connected` 用来区分「连上后又断了」和「IP 写错、根本没连上」：后者必须留给界面自己的 8 秒连接超时提示，不然一 `poll()` 就把会话关掉，用户连原因都看不到。
+
+#### D21：心跳（异常退出 / 丢包的最后一道网）
+
+房主在对局中每 `heartbeat_ms = 1000` 广播一条 `MSG_PING`；客人任何包（含 ping）都刷新 `_last_rx_ms`，超过 `heartbeat_timeout_ms = 12000` 没刷新就 `close("与主机的连接已断开（心跳超时 12 秒）")`。12 秒是「比 ENet 自己的超时短一个数量级、又不至于把一次卡顿判成掉线」的折中；测试把它压到 400ms 跑（G24）。
+
+心跳**不参与任何裁决**：它只更新 `_last_rx_ms` 与 `disconnected` 判定，不进 `event_log`、不进 `state_hash`，所以不会引入新的分叉面。
+
+#### 界面：终止提示要钉住，不能被回合文本盖掉
+
+`GameUI` 的四处改动：
+
+| 改动 | 理由 |
+|---|---|
+| `_net_over_notice`（`session_closed` / `desync_detected` 时写入） | 只弹 toast 的话 2.5 秒后就只剩「等待 X 行动…」，看起来像卡死 —— 真机反馈的就是这个 |
+| `_update_card_info_label()` 一进来先看 `_net_over_notice`，非空就显示 `⚠ <原因>` 并**直接 return** | 卡牌信息栏每帧都在按回合重算，晚一步就被覆盖 |
+| `_show_center_warning(text, sticky = true)` | sticky 不挂自动消失计时器；`_warning_seq` 自增让上一条未到期的计时器自行作废 |
+| `_clear_net_over_notice()` | 回开始页 / 单机新局 / 联机开局 / 离开房间四个入口共用，避免下一局顶着上一局的告警 |
+
+#### 测试
+
+| 套件 | 新增 | 覆盖 |
+|---|---|---|
+| `verify_net_session` G22（19 项） | 大厅 AI 数 | clamp 到 `容量 - 在线人类`、客人同步、客人 `set_lobby_ai` 是空操作且污染不了房主、第三人加入后上限收紧、`welcome.ai_count` 一步到位、开局后 `lobby_ai == ai_count` 且三端指纹一致 |
+| `verify_net_session` G23（14 项） | 收房 / 关服两条路 | ① 传输层发 BYE → 客人 `close("房主结束了本局")`；② `host.close()` → 客人 0ms 内收尾（原因二选一），两条都不许误报分叉 |
+| `verify_net_session` G24（8 项） | 心跳 | 阈值压到 400ms、房主不再 `poll()`（模拟杀进程）、客人在 400ms 后自己关会话且原因是心跳超时、房主端状态不受影响 |
+| `verify_room_page` 5c（10 项） | 客人只读 | 房主改 → 回推会话 → 座位卡长 AI；会话值变 → 微调框同步且不回推；客人 `editable = false`、硬改被挡回 |
+| `verify_ui_online` 9b（5 项）+ 分叉（3 项） | 提示常驻 | `session_closed` 后 `_net_over_notice` / sticky toast / 卡牌信息栏 `⚠ …`，整页刷新后仍是终止提示；分叉同样钉住；`_clear_net_over_notice()` 后回到回合文本 |
+
+现状：`verify_net_session` 221 项、`verify_room_page` 199 项、`verify_ui_online` 101 项，全绿。
+
+真机判读顺序：客人改 AI 数点不动 → 房主补 2 个 AI 客人立刻看到 `AI 1 / AI 2` → 房主页点「离开房间」客人 1 秒内出现 `⚠ 联机已结束` → 换成房主直接杀进程，客人应在同一帧收尾（拿不到就等 12 秒心跳，仍应出现同样提示）。

@@ -15,6 +15,7 @@ const NetTransportScript = preload("res://scripts/net/ENetTransport.gd")
 const NetSessionScript = preload("res://scripts/net/NetSession.gd")
 
 var fails: int = 0
+var checks: int = 0
 
 
 # ------------------------------------------------------------
@@ -110,6 +111,7 @@ func _init() -> void:
 
 
 func _check(cond: bool, msg: String) -> void:
+	checks += 1
 	if cond:
 		print("PASS: " + msg)
 	else:
@@ -145,6 +147,7 @@ func _run() -> void:
 	_test_watcher(scene, fake)
 	await _test_polling(scene, fake)
 	_test_quit(scene, fake)
+	_test_net_over_notice(scene)
 
 	# A 段收尾：把假会话场景摘掉，再跑 B 段（真 ENet，3 个进程内实例）
 	scene.queue_free()
@@ -152,9 +155,9 @@ func _run() -> void:
 	await _test_real_enet()
 
 	if fails == 0:
-		print("ALL UI ONLINE TESTS PASSED")
+		print("ALL UI ONLINE TESTS PASSED (%d checks)" % checks)
 	else:
-		print("%d TEST(S) FAILED" % fails)
+		print("%d/%d TEST(S) FAILED" % [fails, checks])
 	quit(0 if fails == 0 else 1)
 
 
@@ -369,6 +372,18 @@ func _test_sequence(scene, fake) -> void:
 	_check(scene._seq_overlay != null, "分叉前：顺序牌型弹窗已弹出")
 	fake.desync_detected.emit(11, 22)
 	_check(scene._seq_overlay == null, "状态分叉：顺序牌型弹窗被收掉（不留遮罩）")
+	# D20：分叉原因必须钉在卡牌信息栏，不能下一帧就被回合提示盖掉
+	scene.call("_update_card_info_label")
+	var info_after_desync := String(scene.card_info_label.text)
+	_check(info_after_desync.begins_with("⚠ ") and info_after_desync.find("状态分叉") >= 0,
+		"状态分叉：卡牌信息栏显示「⚠ 状态分叉…」（实际 %s）" % info_after_desync)
+	_check(scene._warning_toast != null and scene._warning_toast.visible,
+		"状态分叉：toast 就地弹出（不挂 2.5 秒计时器）")
+	# 清掉，免得污染后面的用例（真实流程里由新局 / 回开始页清）
+	scene.call("_clear_net_over_notice")
+	scene.call("_update_card_info_label")
+	_check(not String(scene.card_info_label.text).begins_with("⚠ "),
+		"清掉提示后卡牌信息栏回到回合文本（实际 %s）" % String(scene.card_info_label.text))
 	fake.pending = -1
 	fake.sequence_cleared.emit()
 
@@ -403,7 +418,35 @@ func _test_polling(scene, fake) -> void:
 
 
 # ------------------------------------------------------------
-# 9) 退出：联机路径只关会话，不写 game.phase
+# 9b) 终局提示常驻（D20 / D21）：房主退出 / 失联 / 分叉的原因不能只闪 2.5 秒
+#     真机反馈：房主退出后，客人牌桌只剩「等待 玩家 1 行动…」，看起来像卡死。
+# ------------------------------------------------------------
+func _test_net_over_notice(scene) -> void:
+	scene.call("_online_on_session_closed", "与主机的连接已断开")
+	var notice := String(scene._net_over_notice)
+	_check(notice.find("联机已结束") >= 0 and notice.find("与主机的连接已断开") >= 0,
+		"会话关闭 → 原因写进常驻提示（%s）" % notice)
+	_check(scene._warning_toast != null and scene._warning_toast.visible
+			and String(scene._warning_label.text).find("联机已结束") >= 0,
+		"会话关闭 → toast 显示原因（sticky，不自动消失）")
+	var info := String(scene.card_info_label.text)
+	_check(info.begins_with("⚠ ") and info.find("联机已结束") >= 0,
+		"卡牌信息栏被终止提示占住（实际 %s）" % info)
+	# 继续收包 / 每帧刷新都不能把这句话顶掉
+	scene.call("_update_card_info_label")
+	scene.call("_refresh_ui")
+	scene.call("_update_card_info_label")
+	_check(String(scene.card_info_label.text).find("联机已结束") >= 0,
+		"刷新之后仍是终止提示（实际 %s）" % String(scene.card_info_label.text))
+	# 回开始页 / 新局：这句必须清掉，否则下一局一进牌桌就顶着上一局的告警
+	scene.call("_clear_net_over_notice")
+	scene.call("_update_card_info_label")
+	_check(not String(scene.card_info_label.text).begins_with("⚠ "),
+		"清掉后不再显示「⚠ …」（实际 %s）" % String(scene.card_info_label.text))
+
+
+# ------------------------------------------------------------
+# 10) 退出：联机路径只关会话，不写 game.phase
 # ------------------------------------------------------------
 func _test_quit(scene, fake) -> void:
 	var gm = scene.game_manager

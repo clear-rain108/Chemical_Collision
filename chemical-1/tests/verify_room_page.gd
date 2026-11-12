@@ -14,6 +14,7 @@ const GameManagerScript = preload("res://scripts/GameManager.gd")
 const NetSessionScript = preload("res://scripts/net/NetSession.gd")
 
 var fails: int = 0
+var checks: int = 0
 
 
 # ------------------------------------------------------------
@@ -47,12 +48,33 @@ class RoomFake:
 	var reconnect_grace_ms: int = 15000
 	var start_calls: Array = []
 	var capacity: int = 4                 # 房间座位数（D17：3~8，建房时定）
+	var lobby_ai: int = 0                 # 大厅 AI 补位数（D19：房主定、客人只读）
+	var ai_set_calls: Array = []          # 每次 set_lobby_ai 的入参，用来断言回推次数
 
 	func is_host() -> bool:
 		return role == 1
 
 	func seat_capacity() -> int:
 		return clampi(capacity, 3, 8)
+
+	# 与 NetSession 同语义：在线人类占掉的座位不能再补 AI
+	func lobby_ai_cap() -> int:
+		var online_n := 0
+		for i in range(names.size()):
+			if i < online.size() and bool(online[i]):
+				online_n += 1
+		return maxi(0, seat_capacity() - online_n)
+
+	# 非主机一律空操作：客人点得动也改不到自己的会话状态
+	func set_lobby_ai(n: int) -> int:
+		ai_set_calls.append(int(n))
+		if not is_host():
+			return lobby_ai
+		var v := clampi(int(n), 0, lobby_ai_cap())
+		if v != lobby_ai:
+			lobby_ai = v
+			room_changed.emit()
+		return lobby_ai
 
 	func ai_count() -> int:
 		return 0
@@ -122,6 +144,7 @@ func _init() -> void:
 
 
 func _check(cond: bool, msg: String) -> void:
+	checks += 1
 	if cond:
 		print("PASS: " + msg)
 	else:
@@ -131,9 +154,9 @@ func _check(cond: bool, msg: String) -> void:
 
 func _finish() -> void:
 	if fails == 0:
-		print("ALL ROOM PAGE TESTS PASSED")
+		print("ALL ROOM PAGE TESTS PASSED (%d checks)" % checks)
 	else:
-		print("%d ROOM PAGE TESTS FAILED" % fails)
+		print("%d/%d ROOM PAGE TESTS FAILED" % [fails, checks])
 	quit(1 if fails > 0 else 0)
 
 
@@ -184,6 +207,7 @@ func _run() -> void:
 	_test_gate_pure(scene)
 	await _test_fake_session(scene)
 	await _test_seat_capacity(scene)
+	await _test_lobby_ai_sync(scene)
 	await _test_leave(scene)
 	await _test_single_player_red_line(scene)
 	await _test_real_enet()
@@ -544,7 +568,10 @@ func _test_seat_capacity(scene) -> void:
 	small.online = [true, true, false]
 	small.ai_flags = [false, false, false]
 	scene.call("_room_bind_session", small)
-	scene._room_ai_spin.value = 1
+	# D19：AI 数的真值在会话里（微调框只是控制器），直接改会话再让 UI 刷新。
+	# 注意别再用「设 spin.value」的方式改：值没变时 Range 不发 value_changed，
+	# 也就不会回推会话，测出来的就是旧值。
+	small.lobby_ai = 1
 	small.room_changed.emit()
 	await process_frame
 	visible = 0
@@ -562,6 +589,71 @@ func _test_seat_capacity(scene) -> void:
 		"容量 3：3 座位正好坐满，放行")
 	_check(scene._room_start_block_reason(4, 0, true, lobby, 0, 3) != "",
 		"容量 3 却来了 4 人 → 拦住")
+	scene.call("_room_teardown")
+	await process_frame
+
+
+# ------------------------------------------------------------
+# 5c) 大厅 AI 补位数（D19）：会话里存一份，房主可改、客人只读
+#     真机问题：房主把空座位补成 AI，客人那边 AI 数还是 0 —— 座位卡写着「空位」，
+#     心里算的人数与房主对不上。修法就是让这份值只存在会话里，两边都读它。
+# ------------------------------------------------------------
+func _test_lobby_ai_sync(scene) -> void:
+	# ---- 房主：改微调框 → 回推会话 → 座位卡跟着长 AI ----
+	var host := RoomFake.new()
+	host.names = ["房主", "阿明"]
+	host.online = [true, true]
+	host.ai_flags = [false, false]
+	scene.call("_room_bind_session", host)
+	host.room_changed.emit()
+	await process_frame
+	_check(scene._room_ai_spin.editable, "房主的 AI 微调框可改")
+	var base_calls := host.ai_set_calls.size()
+	scene._room_ai_spin.value = 2
+	await process_frame
+	_check(host.ai_set_calls.size() == base_calls + 1
+			and int(host.ai_set_calls[base_calls]) == 2,
+		"房主改 AI 数会回推到会话（+%d 次，入参 %s）"
+		% [host.ai_set_calls.size() - base_calls, str(host.ai_set_calls)])
+	_check(int(host.lobby_ai) == 2, "会话里的 lobby_ai = 2（实际 %d）" % int(host.lobby_ai))
+	_check(_seat_name(scene, 2) == "AI 1" and _seat_name(scene, 3) == "AI 2",
+		"AI 座位卡按会话值补位（%s / %s）" % [_seat_name(scene, 2), _seat_name(scene, 3)])
+
+	# ---- 会话值在别处被改（例如房主广播回来 / 布局重排）→ 界面跟着走且不回推 ----
+	host.lobby_ai = 1
+	host.room_changed.emit()
+	await process_frame
+	_check(int(scene._room_ai_spin.value) == 1,
+		"lobby_ai 变了 → 微调框同步（实际 %d）" % int(scene._room_ai_spin.value))
+	_check(host.ai_set_calls.size() == base_calls + 1,
+		"同步写微调框不会回推给会话（仍 %d 次）" % host.ai_set_calls.size())
+	_check(_seat_name(scene, 3) == "空位",
+		"AI 数降到 1 → 第 2 张 AI 卡回到「空位」（%s）" % _seat_name(scene, 3))
+	scene.call("_room_teardown")
+	await process_frame
+
+	# ---- 客人：同一份值，只读 ----
+	var guest := RoomFake.new()
+	guest.role = 2                        # 2 = 客人
+	guest.my_seat = 1
+	guest.names = ["房主", "客人"]
+	guest.online = [true, true]
+	guest.ai_flags = [false, false]
+	guest.lobby_ai = 2
+	scene.call("_room_bind_session", guest)
+	guest.room_changed.emit()
+	await process_frame
+	_check(not scene._room_ai_spin.editable, "客人的 AI 微调框是只读的")
+	_check(int(scene._room_ai_spin.max_value) == 2,
+		"客人端 AI 上限 = 容量 4 - 在线 2 = 2（实际 %d）" % int(scene._room_ai_spin.max_value))
+	_check(_seat_name(scene, 2) == "AI 1" and _seat_name(scene, 3) == "AI 2",
+		"客人看得到房主补的 2 个 AI（%s / %s）" % [_seat_name(scene, 2), _seat_name(scene, 3)])
+	# 客人就算硬改微调框（误触 / 键盘输入），也只会被会话挡回来
+	scene._room_ai_spin.value = 0
+	await process_frame
+	_check(int(guest.lobby_ai) == 2 and int(scene._room_ai_spin.value) == 2,
+		"客人硬改 AI 数被挡回（会话 %d / 界面 %d）"
+		% [int(guest.lobby_ai), int(scene._room_ai_spin.value)])
 	scene.call("_room_teardown")
 	await process_frame
 
