@@ -24,8 +24,8 @@
 #   --host                 当房主（监听端口）
 #   --join <ip>            当客人（连房主）
 #   --port <n>             端口，默认 47800
-#   --seats <n>            座位数，默认 3；< 3 会被抬到 3（GameManager 硬下限）
-#   --ai <n>               AI 座位数，默认 0（AI 代打要等 P11-C1-c 的 API）
+#   --seats <n>            座位数，默认 3；3~8（超出会被 clamp，< 3 抬到 3）
+#   --ai <n>               AI 座位数，默认 0（AI 座位排在人类之后，容量 8 时可到 7）
 #   --name <文本>          昵称，默认取计算机名
 #   --duration <秒>        自动打牌的时间上限，默认 60
 #   --connect <秒>         等别人加入 / 等开局的超时，默认 60
@@ -49,6 +49,7 @@ const HintAdvisorScript = preload("res://scripts/HintAdvisor.gd")
 
 const DEFAULT_PORT := 47800
 const HARD_MIN_SEATS := 3      # PlayerManager.MIN_PLAYERS：2 人开不了局
+const HARD_MAX_SEATS := 8      # PlayerManager.MAX_PLAYERS / NetSession.MAX_PLAYERS（D17）
 const TICK_MS := 5             # 每次 poll 之间的间隔
 
 var _opt: Dictionary = {}
@@ -158,7 +159,7 @@ func _parse_args() -> Dictionary:
 		out["seats"] = HARD_MIN_SEATS
 		print("[smoke] 座位数下限 %d（PlayerManager.MIN_PLAYERS），已抬到 %d"
 			% [HARD_MIN_SEATS, HARD_MIN_SEATS])
-	out["seats"] = clampi(int(out["seats"]), HARD_MIN_SEATS, 4)   # NetSession 线上最多 4 座
+	out["seats"] = clampi(int(out["seats"]), HARD_MIN_SEATS, HARD_MAX_SEATS)   # D17：线上 3~8 座
 	out["ai"] = clampi(int(out["ai"]), 0, int(out["seats"]) - 1)
 	return out
 
@@ -170,7 +171,7 @@ net_smoke.gd - 真机联机冒烟（最少 3 人，因为 GameManager.MIN_PLAYER
   godot --headless --path . --script tests/net_smoke.gd -- --host [--port 47800]
   godot --headless --path . --script tests/net_smoke.gd -- --join <房主IP> [--port 47800]
 
-可选：--seats 3|4  --ai 0  --name 昵称  --duration 60  --connect 60
+可选：--seats 3~8  --ai 0  --name 昵称  --duration 60  --connect 60
       --linger 1200  --manual  --help
 
 判读：三端 applied#N ... hash=H 逐行一致，末尾 final_hash 相同即通过。

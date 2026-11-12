@@ -22,6 +22,8 @@ const ENetTransportScript = preload("res://scripts/net/ENetTransport.gd")
 const PORT_MAIN = 47821
 const PORT_FULL = 47824
 const PORT_AI = 47826            # G19 专用端口（47821/47824 已被 G1/G17 占用）
+const PORT_CAP8 = 47830          # G21：8 座位房间
+const PORT_CAP3 = 47832          # G21：下限 3 座位房间
 const CONNECT_TIMEOUT_MS = 5000
 const IO_TIMEOUT_MS = 3000
 const PLAYER_COUNT = 3          # seat 0 = 房主，1 = 客人A，2 = 客人B
@@ -135,6 +137,17 @@ func _first_uid(gm, seat: int) -> int:
 	for c in gm.players[seat].hand:
 		return int(c.uid)
 	return -1
+
+
+# 追踪缓冲末行的指纹段（"hash=xxxxxxxx" 之后的 8 位）；空缓冲 → ""
+func _trace_hash_tail(s) -> String:
+	if s.trace_log.is_empty():
+		return ""
+	var line := String(s.trace_log[s.trace_log.size() - 1])
+	var at := line.find("hash=")
+	if at < 0:
+		return ""
+	return line.substr(at + 5, 8)
 
 
 # ============================================================
@@ -337,19 +350,24 @@ func _run() -> void:
 	_check(c3["s"].game.event_log.size() == host["gm"].event_log.size(), "G16 观战者日志条数一致")
 
 	# ---- G17 满员 + 禁止观战 → 明确拒绝 ----
+	# 容量下限是 3（D17），所以「满员」= 房主 + 2 客人，第 3 个客人才该被拒。
 	var h2 = _make_peer("h2")
 	var d1 = _make_peer("d1")
 	var d2 = _make_peer("d2")
+	var d3 = _make_peer("d3")
 	h2["s"].allow_watchers = false
-	_check(int(h2["s"].start_host(PORT_FULL, 2, "房主2")) == 0, "G17 第二个房间监听 %d" % PORT_FULL)
+	_check(int(h2["s"].start_host(PORT_FULL, 3, "房主2")) == 0, "G17 第二个房间监听 %d" % PORT_FULL)
 	_check(int(d1["s"].start_client("127.0.0.1", PORT_FULL, "D1")) == 0, "G17 第一个客人发起连接")
 	_check(_pump([h2, d1], func(): return d1["s"].my_seat == 1, CONNECT_TIMEOUT_MS),
-		"G17 第一个客人拿到座位 1（房间满）")
+		"G17 第一个客人拿到座位 1")
 	_check(int(d2["s"].start_client("127.0.0.1", PORT_FULL, "D2")) == 0, "G17 第二个客人发起连接")
-	var refused := _pump([h2, d1, d2], func(): return d2["s"].state == NetSessionScript.State.CLOSED, CONNECT_TIMEOUT_MS)
+	_check(_pump([h2, d1, d2], func(): return d2["s"].my_seat == 2, CONNECT_TIMEOUT_MS),
+		"G17 第二个客人拿到座位 2（3 座位坐满）")
+	_check(int(d3["s"].start_client("127.0.0.1", PORT_FULL, "D3")) == 0, "G17 第三个客人发起连接")
+	var refused := _pump([h2, d1, d2, d3], func(): return d3["s"].state == NetSessionScript.State.CLOSED, CONNECT_TIMEOUT_MS)
 	_check(refused, "G17 房间满 + 禁止观战 → 新客人被拒绝")
-	_check(d2["s"].my_seat == NetSessionScript.WATCHER_SEAT, "G17 被拒的客人没有座位")
-	_check(_count("d2", "closed") >= 1, "G17 被拒的客人收到 session_closed")
+	_check(d3["s"].my_seat == NetSessionScript.WATCHER_SEAT, "G17 被拒的客人没有座位")
+	_check(_count("d3", "closed") >= 1, "G17 被拒的客人收到 session_closed")
 	_check(d1["s"].my_seat == 1, "G17 被拒事件不影响已有客人")
 
 	# ---- G18 ready 比对的时序（真机三进程冒烟抓到的误报）----
@@ -462,9 +480,100 @@ func _run() -> void:
 	_check(e1["s"].last_hash() == h3["s"].last_hash(), "G19 收窗后客人指纹仍一致")
 	_check(not h3["s"].is_my_sequence_pending(), "G19 主机自己不在待指定状态")
 
+	# ---- G20 诊断追踪（--net-trace，D1）----
+	# 目的：真机上逐笔比对「主机 HOST 行」与「客人 CLIENT 行」，定位第一笔分叉。
+	# 这里断言三件事：默认零输出、开关能落到缓冲、两端末行指纹一致。
+	_check(not host["s"].trace_enabled and host["s"].trace_log.is_empty(),
+		"G20 默认不追踪（trace_enabled=false，缓冲为空）")
+	_check(host["s"]._hash_text(255) == "000000ff",
+		"G20 指纹显示为 8 位十六进制（%s）" % host["s"]._hash_text(255))
+	host["s"].enable_trace(true)
+	c1["s"].enable_trace(true)
+	var actor20: int = int(host["gm"].current_player_index)
+	var seat_sessions := {0: host["s"], 1: c1["s"], 2: c2["s"]}
+	var c1_applied_before: int = _count("c1", "applied")
+	var c2_applied_before: int = _count("c2", "applied")
+	# 跟出可以「过」，首出只能出牌 —— 先试 pass，不为 0 再退回出单张
+	var code20: int = int(seat_sessions[actor20].submit("pass"))
+	if code20 != 0:
+		var uid20 := _first_uid(host["gm"], actor20)
+		code20 = int(seat_sessions[actor20].submit("play",
+			{"uids": [uid20], "valences": {}, "pattern": -1}))
+	_check(code20 == 0, "G20 追踪期间推进了一笔权威事件（座位 %d）" % actor20)
+	_pump(peers, func(): return _count("c1", "applied") > c1_applied_before \
+		and _count("c2", "applied") > c2_applied_before, IO_TIMEOUT_MS)
+	_check(_count("c1", "applied") > c1_applied_before, "G20 客人A 收到该笔 applied")
+	var host_lines: Array = host["s"].trace_log
+	var c1_lines: Array = c1["s"].trace_log
+	_check(host_lines.size() >= 1
+			and String(host_lines[host_lines.size() - 1]).begins_with("HOST seat="),
+		"G20 主机每笔权威事件留一行 HOST（实得 %d 行）" % host_lines.size())
+	_check(c1_lines.size() >= 1
+			and String(c1_lines[c1_lines.size() - 1]).begins_with("CLIENT seat="),
+		"G20 客人每笔回放留一行 CLIENT（实得 %d 行）" % c1_lines.size())
+	_check(_trace_hash_tail(host["s"]) == _trace_hash_tail(c1["s"])
+			and _trace_hash_tail(host["s"]).length() == 8,
+		"G20 两端末行指纹一致（%s）" % _trace_hash_tail(host["s"]))
+	host["s"].enable_trace(false)
+	_check(not host["s"].trace_enabled and host["s"].trace_log.is_empty(),
+		"G20 关掉追踪会清空缓冲")
+
+	# ---- G21 座位容量 3~8（D17：房间人数可调，默认 4）----
+	# 规则层本来就吃 3~8，这里守的是「联机层不再把 start_host / start_game clamp 到 4」。
+	var h8 = _make_peer("h8")
+	var g8 = _make_peer("g8")
+	_check(int(h8["s"].start_host(PORT_CAP8, 8, "八人房主")) == 0,
+		"G21 start_host(8) 成功")
+	_check(int(h8["s"].seat_capacity()) == 8,
+		"G21 房主容量 = 8（实际 %d）" % int(h8["s"].seat_capacity()))
+	_check(int(g8["s"].start_client("127.0.0.1", PORT_CAP8, "八人客人")) == 0,
+		"G21 客人发起连接")
+	_check(_pump([h8, g8], func(): return g8["s"].my_seat == 1, CONNECT_TIMEOUT_MS),
+		"G21 客人拿到座位 1")
+	_check(int(g8["s"].seat_capacity()) == 8,
+		"G21 客人从 welcome 同步容量 8（实际 %d）" % int(g8["s"].seat_capacity()))
+	_check(int(h8["s"].start_game(9, 7)) == 0, "G21 start_game(9, 7) 成功")
+	_check(int(h8["gm"].get_player_count()) == 8,
+		"G21 玩家数 9 被压到上限 8（实际 %d）" % int(h8["gm"].get_player_count()))
+	_check(int(h8["s"].ai_count()) == 7, "G21 AI 7 个（实际 %d）" % int(h8["s"].ai_count()))
+	_check(_pump([h8, g8], func(): return g8["s"].state == NetSessionScript.State.PLAYING \
+		and h8["s"].all_seats_ready(), CONNECT_TIMEOUT_MS),
+		"G21 8 座位客人进入 PLAYING 且 ready")
+	_check(int(g8["s"].game.get_player_count()) == 8, "G21 客人端也是 8 个玩家")
+	_check(g8["s"].last_hash() == h8["s"].last_hash(), "G21 8 座位开局指纹一致")
+
+	# 7 个 AI 座位：房主出单张后连推几步，逐笔同步到客人并与指纹对齐
+	var u8 := _first_uid(h8["gm"], 0)
+	_check(int(h8["s"].submit("play", {"uids": [u8], "valences": {}, "pattern": -1})) == 0,
+		"G21 房主出单张（牌权 → 座位 1 / AI）")
+	var advanced := 0
+	for i in range(8):
+		if h8["gm"].is_game_over() or int(h8["gm"].current_player_index) == 0:
+			break
+		advanced += int(h8["s"].host_step_ai(4))
+		_pump([h8, g8], func(): return g8["s"].game.event_log.size() \
+			>= h8["gm"].event_log.size(), IO_TIMEOUT_MS)
+	_check(advanced >= 2, "G21 host_step_ai 在 7 个 AI 座位间推了 %d 步" % advanced)
+	_pump([h8, g8], func(): return g8["s"].game.event_log.size() \
+		== h8["gm"].event_log.size(), IO_TIMEOUT_MS)
+	_check(g8["s"].last_hash() == h8["s"].last_hash(), "G21 推几步后两端指纹仍一致")
+	_check(g8["s"].game.event_log.size() == h8["gm"].event_log.size(),
+		"G21 8 座位事件流条数一致（%d）" % h8["gm"].event_log.size())
+	_check(not g8["s"].is_desynced(), "G21 8 座位全程未分叉")
+
+	# 下限：容量 3 + start_game(2) → 压到 3（2 座位会让 init_game 直接失败）
+	var h3b = _make_peer("h3b")
+	_check(int(h3b["s"].start_host(PORT_CAP3, 1, "三人房主")) == 0,
+		"G21 start_host(1) 仍能建房（下限自动抬到 3）")
+	_check(int(h3b["s"].seat_capacity()) == 3,
+		"G21 容量下限 = 3（实际 %d）" % int(h3b["s"].seat_capacity()))
+	_check(int(h3b["s"].start_game(2, 0)) == 0, "G21 start_game(2, 0) 成功")
+	_check(int(h3b["gm"].get_player_count()) == 3,
+		"G21 玩家数 2 被抬到下限 3（实际 %d）" % int(h3b["gm"].get_player_count()))
+
 	# ---- 收尾：全程无分叉 + close 幂等 ----
 	_check(_count("c1", "desync") == 0 and _count("c2", "desync") == 0, "全程没有出现状态分叉")
-	for p in [host, c1, c2, c3, h2, d1, d2, h3, e1]:
+	for p in [host, c1, c2, c3, h2, d1, d2, d3, h3, e1, h8, g8, h3b]:
 		p["s"].close("测试结束")
 		p["s"].close("重复关闭")
 	_check(true, "close 可重复调用不炸")

@@ -2,7 +2,7 @@
 
 > 用途：每一步开工前**复查**这里的范围与验收标准，收工时勾选并记 commit。
 > 计划正文与设计理由见 [`MULTIPLAYER_ARCHITECTURE.md`](MULTIPLAYER_ARCHITECTURE.md) §9.2 / §10 / 附录 D。
-> 最后更新：2026-11-11
+> 最后更新：2026-11-12
 
 ---
 
@@ -26,7 +26,9 @@
 | 3a | **视图归属（防作弊）** | `GameUI`：`_hand_view_player` / `_view_player` / `_sel_cards` / `_hotseat_handoff_pending` / AI 调度 gate / 面板禁用 / `_process → _update_net()` | 联机只看得到自己手牌；非我方回合显示「等待 X」；单机 41 套 + `verify_touch_ui` / `verify_hand_view` 零回归 | ✅ 已完成（`verify_ui_online` A 段 69 项；全量 45 套绿） |
 | 3b | **动作收口 + 信号接线** | 10 处动作改走 `ActionRouter`（`_router()` 惰性装配）；会话信号 8 个接线；主机 `host_step_ai()` 节流代打 | 单机全量零回归；联机 3 端打完一局 hash 全程一致 | ✅ 已完成（B 段 3 实例真 ENet：24 项；单机全量零回归） |
 | 4 | **房间页** | `GameUI._build_room_page()`（代码建页 + 6 个 helper）<br>`tests/verify_room_page.gd`（新） | 开房 / 加入 / 座位表 / 开始按钮状态正确；不改 `.tscn` 结构 | ✅ 已完成（151 项：A 段零网络 120 项 + B 段 3 实例真 ENet 31 项；全量 46 套绿） |
-| 5 | **真机联调 + 文档收口** | 3 端真窗口一局；文档 §9.2 → §9.1、§10 打勾、附录 D 补「UI 接线」 | 真窗口 3 人打完一局无报错、无分叉；文档与代码一致 | ⬜ 未开始 |
+| 4b | **房间人数 3~8（D17）** | `NetSession` `MIN_PLAYERS/MAX_PLAYERS/seat_capacity()/ai_count()`<br>`GameUI` 座位数微调框 + 8 张座位卡按容量显隐/等分<br>`tests/verify_room_page.gd`（+35 项，含容量 8 三端真 ENet）<br>`tests/verify_net_session.gd` G21（+20 项） | 3~8 全档可建房；`start_game(9)` → 8、`start_game(2)` → 3；8 座位三端玩家数与指纹一致；6~8 人牌桌状态区不越界 | ✅ 已完成（`verify_room_page` 186 项、`verify_net_session` 180 项、全量 46 套绿） |
+| 4c | **真机联调前置：INTERNET 权限 + 诊断开关（D18）** | `export_presets.cfg` `permissions/internet=true`（pre1005.2）<br>`NetSession` 追踪 API + `GameUI --net-trace`<br>`tests/verify_net_session.gd` G20（+8 项） | `aapt2 dump permissions` 能看到 `android.permission.INTERNET`；`--net-trace` 下两端 trace 行逐笔同指纹 | ✅ 已完成（`chemical-pre1005.2-debug.apk`；无设备，真机复测待接线） |
+| 5 | **真机联调 + 文档收口** | 3 端真窗口一局；文档 §9.2 → §9.1、§10 打勾、附录 D 补「UI 接线」 | 真窗口 3 人打完一局无报错、无分叉；文档与代码一致 | 🟨 进行中（APK `pre1005.2` / `pre1005.3` 已出，等手机插线走拓扑 A） |
 
 状态图例：⬜ 未开始 ｜ 🟨 进行中 ｜ ✅ 已完成 ｜ ⛔ 受阻（写明原因）
 
@@ -43,15 +45,17 @@
 | D5 | 房间页用**代码建页**（照 `_build_supp_rules_page()`），不动 `Main.tscn` | 现有页面全是代码建；改 tscn 会拖累 UI 布局测试 | `GameUI.gd` |
 | D6 | 联机视图恒为**本地座位**：手牌视角、可用牌型、`_sel_cards()` 全按 `my_seat` 取，与 `get_current_player()` 无关 | 用当前行动者的下标去查 `get_available_patterns()` / 手牌就是白送情报；客人选中的索引来自自己的手牌按钮，拿去索引别人的手牌会取成另一张牌 | `GameUI._hand_view_player()` / `_view_player()` / `_sel_cards()` / `_update_card_info_label()` |
 | D7 | 挂了会话就**不再是热座**：`_is_hotseat()` 恒 false，装配时清空 `_hotseat_ready_seat` / `_hand_read_only` | 每个玩家盯自己那块屏；同屏交接遮罩会把 3 真人局直接卡死 | `GameUI._is_hotseat()` / `attach_session()` |
-| D8 | UI 里的 AI 计时器在联机**关掉**，AI 只由主机 `_update_net() → host_step_ai()` 按 1.2s 节流代打（客人还没 ready 时不推进） | 客人本地跑那个计时器＝私自 `play_cards`，立刻与主机分叉；主机不代打则 AI 回合永远停住 | `GameUI._update_hand_buttons()` / `_update_net()` / `_ai_auto_play()` |
+| D8 | UI 里的 AI 计时器在联机**关掉**，AI 只由主机 `_update_net() → host_step_ai()` 按节流代打（客人还没 ready 时不推进）。节流默认 1.2s，AI ≥3 个降到 0.8s、≥5 个降到 0.6s（D17：8 座位最多 7 个 AI，1.2s 走一轮要 8 秒多） | 客人本地跑那个计时器＝私自 `play_cards`，立刻与主机分叉；主机不代打则 AI 回合永远停住 | `GameUI._update_hand_buttons()` / `_update_net()` / `_net_ai_delay()` / `_ai_auto_play()` |
 | D9 | 联机分支一律「先预检再提交」，界面状态只认会话回调：客人返回 0 仅表示**已发出**，面板停在「已提交，等待主机裁决…」 | 与 D1 同一语义在 UI 侧的落地：飞牌 / 清选中 / 写日志都必须等 `state_applied` 回来 | `GameUI._dispatch_result()` |
 | D10 | 顺序牌型弹窗只在 `sequence_pending(seat == my_seat)` 时弹；`pick / skip` 走 `ActionRouter`，收窗统一走 `sequence_cleared → _hide_sequence_overlay()` | 客人弹了不该自己选的窗＝替别人做决定；不统一收窗会在超时 / 掉线 / 会话结束时留个遮罩挡住操作 | `GameUI._online_on_sequence_pending()` / `_show_sequence_constraint_dialog()` / `_hide_sequence_overlay()` |
 | D11 | 联机退出 = `session.close(reason)` + 结算页，**不写** `game.phase` | 本端写 phase 只是本地作废，主机那份局面不受影响，客人却以为自己结束了 | `GameUI._on_quit_game()` |
 | D12 | 大厅**没有 ready 握手**：`MSG_READY` 的语义是「快照重建完成（带 `events` 计数）」，只在开局后发；房间里 `all_seats_ready()` 恒为 false | 拿 ready 做开局门控 = 永远开不了局（`NetSession` 从没在大厅收过 ready）。闸门只能是「在线人类 + AI ∈ [3,4]」，掉线座位另算 | `GameUI._room_start_block_reason()` / `_room_start_disabled_reason()` |
 | D13 | 会话只有**一个装配口** `_room_bind_session()` → `attach_session()`；离开房间一律走 `_room_teardown()`（`close()` + `attach_session(null)` + 丢掉大厅那份空 `GameManager`） | 闭着的会话若留在 `net_session` 上，单机「开始游戏」会被 `_on_start_game()` 的联机分支拦成「请从房间页开局」；大厅那份 `GameManager` 的 players 为空，留着会污染下一次单机开局 | `GameUI._room_bind_session()` / `_room_teardown()` / `_room_leave()` / `_close_room_page()` |
 | D14 | `room_code` 只是**辨认用的 4 位数**，不代表任何地址：页面副标题写死「房号仅用于辨认，客人需填房主 IP」，房主页直接显示本机 IPv4 列表 | 房间码 → 地址需要信令服务器（P11-C2）；让用户以为「输房号就能连」是最贵的误解 | `GameUI._room_ip_text()` / `_room_local_ips()` / `RoomSubtitle` |
-| D15 | 房间**最少 3 座位**：`GameManager.MIN_PLAYERS = 3`，`NetSession.start_game()` 把 total clamp 到 2..4 —— 2 座位会在 `init_game` 里直接失败；AI 只能补到 `4 - 在线人类数` | 少于 3 人开局必然初始化失败，不如在按钮上就拦住并写清「至少 3 个（当前 N）」 | `GameUI._room_refresh()`（`ai_cap`）/ `_room_start_block_reason()` |
+| D15 | 房间**最少 3 座位、最多可到 capacity**：`GameManager.MIN_PLAYERS = 3`，`NetSession.start_game()` 把 total clamp 到 `[3, 8]` —— 2 座位会在 `init_game` 里直接失败；AI 只能补到 `capacity - 在线人类数`（capacity 见 D17） | 少于 3 人开局必然初始化失败，不如在按钮上就拦住并写清「至少 3 个（当前 N）」 | `GameUI._room_refresh()`（`ai_cap`）/ `_room_start_block_reason()` |
 | D16 | 开始页入场动画的名单提成常量 `START_INTRO_ORDER`，**必须在开始页加按钮时同步登记** | 名单漏登的节点不淡入也不上浮，页面淡入一结束就以终态"抢先"出现 —— Step 4 的 `RoomEntryBtn` 就这么漏过一次，肉眼现象是「这颗按钮没有动画」。测试用「开始页直接子节点里的 Button 必须全在名单里」兜底 | `GameUI.START_INTRO_ORDER` / `verify_room_page._test_intro_animation()` |
+| D17 | 房间座位数**建房时可选 3~8（默认 4），创建后固定**：`NetSession.start_host()` 记下 `max_players`，welcome 把它下发给客人；`seat_capacity()` 是唯一读数口。ENet 连接名额 = `capacity + RECONNECT_SLACK`（4），开局后不再改 | 规则层本来就吃 3~8（`PlayerManager.MIN/MAX_PLAYERS`），4 只是联机层的旧上限；容量固定在建房时 = 重连名额 / 满员拒绝 / 座位卡张数三处判断永远一致，不会出现「中途改人数后 ENet 名额不够」 | `NetSession.start_host()` / `seat_capacity()` / `GameUI._room_seat_capacity()` / `ROOM_DEFAULT_SEATS` |
+| D18 | 联机诊断开关 `--net-trace`：每个会话把**每笔权威事件的指纹**打成一行 `HOST seat=… tick=… ev=… hash=…` / `CLIENT …`，同时留 512 行内存副本 `trace_log`；默认关闭 | 真机没有控制台，`adb logcat -s godot:V` 只能看到 print；两端逐笔对齐才能定位「第几笔开始分叉」。缓冲让无头测试不必抓 stdout | `NetSession.enable_trace()` / `_trace_line()` / `GameUI.net_trace_requested()` |
 
 ---
 
@@ -88,6 +92,8 @@ godot --headless --path . --script tests\net_smoke.gd -- --host --port 47800 --d
 | 2026-11-11 | Step 3 UI 联机化 | `GameUI` 加 `net_session / action_router` 装配口 `attach_session()`：视图归属（D6）/ 热座关闭（D7）/ AI 计时器联机门控（D8）/ 结果分派（D9）/ 弹窗收窗（D10）/ 退出只关会话（D11）；10 处动作改走 `ActionRouter`（`_router()` 惰性装配，单机路径逐字等价）；`_process → _update_net()` 每帧 poll + 主机 `host_step_ai(1)` 1.2s 节流；新增 `verify_ui_online` 93 项（A 段假会话 69 项 + B 段 3 实例真 ENet 24 项：三端 hash / event_log 一致、客人提交不动本地局面、AI 座位由主机代打广播）；全量 45 套绿 | `25d0007` |
 | 2026-11-11 | Step 4 房间页 | `GameUI` 新增 `_build_room_page()`（代码建页，不动 `.tscn`）：标题 / 副标题（写死 D14「房号仅用于辨认」）/ 建房卡（昵称 + 端口 + 本机 IP + 创建 + 房号）/ 加入卡（昵称 + 端口 + 房主 IP + 加入 + 离开）/ 4 张固定座位卡 / AI 人数 / 开始对局 / 提示区；闸门纯函数 `_room_start_block_reason(online, ai, is_host, state, offline)`（D12 不看 ready、D15 只认 3~4）；`_room_bind_session()` 唯一装配口 + `_room_teardown()` 唯一收尾口（D13）；`_room_refresh()` 派生 AI 上限与三颗按钮状态；本机 IP 过滤回环 / 链路本地 / IPv6；新增 `tests/verify_room_page.gd` 151 项（A 段零网络 120 项：结构 / 开始页按钮几何 / 入场名单覆盖性 + 真播一遍 / 开关页 / 闸门边界 / 假会话座位表与信号 / 离开收尾 / 单机红线；B 段 3 实例真 ENet 31 项：页面建房 → 2 客人从页面加入 → 昵称 + 房号 + 座位表 → 3 人 + 1 AI 开局 → 三端进牌桌 4 玩家 → 客人离开后座位保留掉线）；B 段端口改为 47855 起逐个探测（并发跑不再假失败）；全量 46 套绿 | 本次提交 |
 | 2026-11-12 | 修「联机对战」没有入场动画 | 真因：`_animate_start_page()` 的入场名单硬编码，Step 4 新加的 `RoomEntryBtn` 没登记 → 它不淡入也不上浮，页面淡入一结束就以终态"抢先"出现。修法：名单提成常量 `START_INTRO_ORDER`（D16）并补登在 `StartButton` 之前。`verify_room_page` 新增 9 项（名单覆盖性 / 不陈旧 / 视觉顺序 / 真播一遍首帧 a=0 & y=500 + 落位 a=1 & y=486）；负向验证：临时拿掉登记会立刻 4 项 FAIL。顺带修 `联机对战 124x52` 的精确比较（高度会落到 52.00012）→ 改容差，B 段端口 47855 起探测（并发跑两遍不再假失败） | 本次提交 |
+| 2026-11-12 | 真机联机卡点：APK 没有 INTERNET 权限（D18） | 复盘 `chemical-pre1005.1-debug.apk`：`aapt2 dump permissions` 只有 `VIBRATE` → `export_presets.cfg: permissions/internet=false`，Android 上 ENet 的 UDP socket 建不起来（表现是永远 CONNECTING）。改成 `true` 重新导出 `chemical-pre1005.2-debug.apk`，aapt2 复核到 `android.permission.INTERNET` + `VIBRATE`，包名仍是 `com.clearrain.chemicalcollision`。同时补 `--net-trace`（打包进 `pre1005.3`）：`NetSession.enable_trace()` 把每笔权威事件打成 `HOST/CLIENT seat=… tick=… ev=… hash=…` 并留 512 行 `trace_log`；`GameUI._ready()` 扫 `--net-trace`（与 `--touch-ui` 同一套参数扫描）并在 `attach_session()` 打开；`verify_net_session` G20 8 项（默认关 / 8 位十六进制 / 两端末行同指纹 / 关闭清空） | 本次提交 |
+| 2026-11-12 | 房间人数 3~8（D17） | 规则层早已支持 3~8，只有联机层 `start_host()` / `start_game()` 把人数 clamp 在 `[2,4]`、房间页写死 `ROOM_MAX_SEATS = 4`。改法：`NetSession` 加 `MIN_PLAYERS=3 / MAX_PLAYERS=8 / DEFAULT_MAX_PLAYERS=4` + `seat_capacity()` / `ai_count()`；`GameUI` 加「座位数」微调框（3~8，默认 4，进房锁定）、8 张座位卡按容量显隐（3~4 沿用 24+i*256/240×122，5~8 等分 1012px、8 张各 119px、昵称 16px+clip_text）、AI 上限 = capacity − 在线人类、闸门加 `capacity` 参数（默认 4 保持老调用可用）、`_format_player_status()` 名字链每 4 人换行 + AI 手牌行每 4 条换行且总行数 ≤4（6~8 人不再压到「桌面: …」）；主机 AI 节流按人数缩短（≥5 个 AI → 0.6s/手）。测试：`verify_room_page` +35 项（8 张卡 / 等分几何 / 「2/4」「3/3」「3/8」/ 闸门 3·8·9 边界 / 容量 8 三端真 ENet 8 玩家指纹一致），`verify_net_session` G21 +20 项（`start_host(8)` 同步容量、`start_game(9)`→8、`start_game(2)`→3、8 座位 7 AI 事件流指纹一致）；全量 46 套绿 | 本次提交 |
 
 ---
 

@@ -25,6 +25,10 @@ enum State { IDLE, CONNECTING, LOBBY, PLAYING, OVER, CLOSED }
 enum SeatState { EMPTY, ONLINE, OFFLINE }
 
 # ---- 默认参数 ----
+# 座位数由房主在房间里定（D17）：3~8，创建后固定。规则层本来就支持 3~8
+# （GameManager.MIN_PLAYERS / MAX_PLAYERS），这里只是把联机层的硬上限放开。
+const MIN_PLAYERS = 3
+const MAX_PLAYERS = 8
 const DEFAULT_MAX_PLAYERS = 4
 const DEFAULT_PENDING_TIMEOUT_MS = 15000    # 顺序牌型两阶段的等待上限
 const DEFAULT_RECONNECT_GRACE_MS = 60000    # 掉线后座位保留时长
@@ -94,6 +98,15 @@ var _desynced: bool = false
 var _last_hash: int = 0
 var _closed_reason: String = ""
 
+# ---- 诊断（--net-trace）----
+# 真机上没有控制台可看，最省事的排查手段是「每笔权威事件打一行指纹」：
+# 主机与客人各一份，逐笔对齐就能定位到第几笔开始分叉。
+# trace_log 是同一批行的内存副本：无头测试不用抓 stdout 也能断言两端逐笔同指纹。
+# 默认关闭 —— 单机 / 普通对局一行都不打，绝不改变既有输出。
+const TRACE_LOG_LIMIT = 512
+var trace_enabled: bool = false
+var trace_log: Array = []
+
 
 # ============================================================
 # 一、生命周期
@@ -108,7 +121,41 @@ func setup(game_manager, net_transport) -> void:
 		transport.packet_received.connect(_on_packet)
 
 
+# ============================================================
+# 一之二、诊断：--net-trace
+# ============================================================
+# 开 / 关追踪。关掉时顺手清空缓冲，避免上一局的旧行混进新一局的断言。
+func enable_trace(on: bool = true) -> void:
+	trace_enabled = bool(on)
+	if not trace_enabled:
+		trace_log.clear()
+
+
+# 一行 = 角色 / 座位 / 第几笔 / 事件类型 / 指纹（8 位十六进制，方便肉眼逐笔对齐）
+func _trace_line(tag: String, seat: int, ev: Dictionary, hash_value: int) -> String:
+	return "%s seat=%d tick=%d ev=%s hash=%s" % [
+		tag, int(seat), _local_event_count(),
+		String(ev.get("type", "?")), _hash_text(hash_value),
+	]
+
+
+func _trace(text: String) -> void:
+	if not trace_enabled:
+		return
+	trace_log.append(text)
+	if trace_log.size() > TRACE_LOG_LIMIT:
+		trace_log.pop_front()
+	print("[net] " + text)
+
+
+# 指纹取低 32 位显示：state_hash() 是 64 位整数，打全串反而不好逐笔比对
+static func _hash_text(value: int) -> String:
+	return "%08x" % (int(value) & 0xFFFFFFFF)
+
+
 # 房主：监听端口，自己是 seat 0
+# player_slots = 房间座位数（3~8），开局后不可改：ENet 连接名额按它算，
+# 中途改会让「重连名额」与「超编拒绝」的判断前后矛盾。
 func start_host(port: int, player_slots: int = DEFAULT_MAX_PLAYERS,
 		host_name: String = "房主") -> int:
 	if transport == null or game == null:
@@ -116,7 +163,7 @@ func start_host(port: int, player_slots: int = DEFAULT_MAX_PLAYERS,
 	_reset_session()
 	role = Role.HOST
 	local_name = host_name
-	max_players = clampi(player_slots, 2, 4)
+	max_players = clampi(player_slots, MIN_PLAYERS, MAX_PLAYERS)
 	if transport.host(port, max_players + RECONNECT_SLACK) != 0:
 		role = Role.NONE
 		return -1
@@ -224,6 +271,12 @@ func seat_count() -> int:
 	return _seat_state.size()
 
 
+# 房间座位上限（= 建房时定下的容量）。UI 用它决定画几张座位卡、
+# AI 能补到几、闸门卡在哪一格；客人靠 welcome 里的 max_players 同步到同一个值。
+func seat_capacity() -> int:
+	return clampi(int(max_players), MIN_PLAYERS, MAX_PLAYERS)
+
+
 func seat_name(seat: int) -> String:
 	return String(_seat_name.get(seat, ""))
 
@@ -237,6 +290,11 @@ func is_seat_ai(seat: int) -> bool:
 	if game == null or seat < 0:
 		return false
 	return seat >= _player_count - _ai_count
+
+
+# 本局 AI 座位数（开局时由房主定下；AI 座位 = 最后 ai_count 个）
+func ai_count() -> int:
+	return _ai_count
 
 
 func seat_of_peer(peer_id: int) -> int:
@@ -601,6 +659,8 @@ func _client_on_snapshot(msg: Dictionary) -> void:
 			"快照重建失败（重放返回 %d，共 %d 条）" % [applied, events.size()])
 		return
 	_last_hash = game.state_hash()
+	_trace("CLIENT snapshot rebuild players=%d ai=%d tick=%d hash=%s" % [
+		_player_count, _ai_count, _local_event_count(), _hash_text(_last_hash)])
 	_sync_seat_list(msg.get("seats", []))
 	_sync_pending_from(msg)
 	state = State.PLAYING
@@ -688,13 +748,15 @@ func _client_on_pending_sequence(msg: Dictionary) -> void:
 func start_game(player_count: int = 4, ai_count: int = 0) -> int:
 	if role != Role.HOST or state != State.LOBBY or game == null:
 		return -1
-	_player_count = clampi(player_count, 2, 4)
+	_player_count = clampi(player_count, MIN_PLAYERS, MAX_PLAYERS)
 	_ai_count = clampi(ai_count, 0, _player_count - 1)
 	_config = _make_config()
 	if not _apply_config_and_init():
 		return -1
 	state = State.PLAYING
 	_last_hash = game.state_hash()
+	_trace("HOST game_start players=%d ai=%d hash=%s" % [
+		_player_count, _ai_count, _hash_text(_last_hash)])
 	_broadcast({
 		"type": NetProtocolScript.MSG_GAME_START,
 		"seed": _seed,
@@ -942,6 +1004,7 @@ func _host_apply(seat: int, ev: Dictionary) -> int:
 	if result < 0:
 		return result
 	_last_hash = game.state_hash()
+	_trace(_trace_line("HOST", seat, ev, _last_hash))
 	_broadcast({
 		"type": NetProtocolScript.MSG_APPLIED,
 		"by": seat,
@@ -1004,6 +1067,8 @@ func _client_on_game_start(msg: Dictionary) -> void:
 	_pending_seat = WATCHER_SEAT
 	state = State.PLAYING
 	_last_hash = game.state_hash()
+	_trace("CLIENT game_start players=%d ai=%d hash=%s" % [
+		_player_count, _ai_count, _hash_text(_last_hash)])
 	_send_ready()
 	room_changed.emit()
 	game_started.emit()
@@ -1023,10 +1088,15 @@ func _client_on_applied(msg: Dictionary) -> void:
 	var result: int = int(game.apply_event(ev))
 	_last_hash = game.state_hash()
 	var host_hash := int(msg.get("hash", 0))
+	_trace(_trace_line("CLIENT", int(ev.get("by", WATCHER_SEAT)), ev, _last_hash))
 	if result < 0:
+		_trace("CLIENT apply failed result=%d ev=%s local=%s host=%s" % [
+			result, String(ev.get("type", "?")), _hash_text(_last_hash), _hash_text(host_hash)])
 		_desync_detected(host_hash)
 		return
 	if host_hash != 0 and _last_hash != host_hash:
+		_trace("CLIENT mismatch ev=%s local=%s host=%s" % [
+			String(ev.get("type", "?")), _hash_text(_last_hash), _hash_text(host_hash)])
 		_desync_detected(host_hash)
 		return
 	state_applied.emit(ev, int(msg.get("result", result)))
@@ -1038,6 +1108,8 @@ func _desync_detected(host_hash: int) -> void:
 	if _desynced:
 		return
 	_desynced = true
+	_trace("DESYNC local=%s host=%s tick=%d" % [
+		_hash_text(_last_hash), _hash_text(host_hash), _local_event_count()])
 	desync_detected.emit(_last_hash, host_hash)
 
 

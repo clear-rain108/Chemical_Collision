@@ -161,6 +161,7 @@ const TOUCH_DRAG_GHOST_ALPHA := 0.9
 #   32px 的工具行只有 21dp（Android 建议 ≥48dp），必须放大。
 var _touch_ui: bool = false             # 触屏档案开关（_ready 里按平台特性 / 命令行置位）
 var _touch_ui_manual: bool = false      # 玩家在开始页手动拨过开关（P14-D，仅用于提示文案 / 测试断言）
+var _net_trace: bool = false            # --net-trace：会话装配时打开逐笔指纹追踪（真机排障）
 var _quit_confirm_pending: bool = false # 触屏「退出游戏」二次确认（防误触直接跳结算页）
 var _ap_refit_left: int = 2             # A6-2：出牌面板被最小尺寸夹住时的剩余重算次数（防死循环）
 const TOUCH_BTN_MIN_H := 48             # 触控目标最小高度（≈32dp）
@@ -198,6 +199,16 @@ static func touch_profile_args() -> Array:
 	args.append_array(OS.get_cmdline_args())
 	args.append_array(OS.get_cmdline_user_args())
 	return args
+
+
+# 联机诊断开关（--net-trace）：装配会话时打开「逐笔事件 + 指纹」追踪。
+# 真机上拿不到控制台输出，只能靠 adb logcat 收 print；打开后每笔权威事件一行。
+# 与触屏档共用同一套参数扫描（自带参数 + `--` 之后的用户参数）。
+static func net_trace_requested(args: Array) -> bool:
+	for raw in args:
+		if String(raw) == "--net-trace":
+			return true
+	return false
 
 
 
@@ -286,6 +297,10 @@ const WARNING_TOAST_RECT := Rect2(824, 62, 312, 116)
 # 它只负责常驻状态（玩家链 / AI 手牌 / 补充规则 / 方向）；一次性消息一律走右栏 toast，
 # 两边同时显示还会撞行（P14-E）。
 const INFO_LABEL_MAX_LINES := 4
+# 8 座位时一行绝对放不下 8 个名字（460px / 14px ≈ 32 字），所以名字链每 4 人强制换行。
+# AI 手牌行同样每 4 条换行；两者加起来最多 4 行，超出的「补充规则 / 方向」不再追加
+# —— 宁可少显示次要信息，也不能把状态栏挤进下面 y=152 的「桌面: …」。
+const PLAYER_STATUS_PER_LINE := 4
 
 # 三个层容器（GamePage 的直接子节点，_ensure_layers() 幂等创建）
 var content_layer: Control = null
@@ -323,6 +338,10 @@ func _ready() -> void:
 	_touch_ui = resolve_touch_profile(is_mobile, touch_profile_args())
 	if _touch_ui != is_mobile:
 		print("[UI] 触屏档案 = %s（命令行强制；平台 mobile=%s）" % [str(_touch_ui), str(is_mobile)])
+	# 联机诊断：只在显式 --net-trace 时开，默认零输出
+	_net_trace = net_trace_requested(touch_profile_args())
+	if _net_trace:
+		print("[net] 追踪已开启（--net-trace）：每笔权威事件打一行，可用 adb logcat -s godot:V 收")
 	_ensure_page_backdrop()   # 必须先于任何页面淡入，否则第一帧会闪出窗口清屏色
 	_setup_pages()
 	_show_start_page()
@@ -765,14 +784,16 @@ var _supp_element_stats: Label = null
 var _supp_element_chips: Dictionary = {}
 
 # ------------------------------------------------------------
-# 房间页（P11-C1-c Step 4，决策 D12~D15 见 MULTIPLAYER_TASKS.md）
-#   · 座位只能是 3~4：GameManager.MIN_PLAYERS = 3，而 NetSession.start_game()
-#     把 player_count clamp 到 2..4 —— 2 座位会在 init_game 里直接失败。
+# 房间页（P11-C1-c Step 4，决策 D12~D17 见 MULTIPLAYER_TASKS.md）
+#   · 座位数 3~8，建房时由房主选（默认 4），创建后固定（D17）：
+#     规则层本来就吃 3~8（GameManager.MIN_PLAYERS / MAX_PLAYERS），
+#     联机层只是过去把 start_host / start_game 硬 clamp 到 4。
 #   · 大厅没有 ready 握手：客人的 MSG_READY 是「快照重建完成」，开局后才发。
-#     所以开局闸门是「在线人类数 + AI 数 ∈ [3,4]」，不是 all_seats_ready()。
+#     所以开局闸门是「在线人类数 + AI 数 ∈ [3, capacity]」，不是 all_seats_ready()。
 # ------------------------------------------------------------
 const ROOM_MIN_SEATS := 3                 # = GameManager.MIN_PLAYERS
-const ROOM_MAX_SEATS := 4                 # = NetSession.DEFAULT_MAX_PLAYERS
+const ROOM_MAX_SEATS := 8                 # = NetSession.MAX_PLAYERS / GameManager.MAX_PLAYERS
+const ROOM_DEFAULT_SEATS := 4             # 默认仍是 4：老玩家的牌桌手感不变
 const ROOM_DEFAULT_PORT := 47800          # = ENetTransport.DEFAULT_PORT
 const ROOM_CONNECT_TIMEOUT_S := 8.0       # create_client 是异步的，连不上没有任何回调
 enum RoomMode { IDLE, HOSTING, CONNECTING, JOINED }
@@ -781,7 +802,8 @@ var _room_mode: int = RoomMode.IDLE
 var _room_connect_wait: float = 0.0
 var _room_join_target: String = ""        # 只用于「连不上 xxx」的提示文案
 var _room_closing: bool = false           # 主动关会话时的重入闸（close 会同步发 session_closed）
-var _room_seat_cards: Array = []          # 4 张座位卡（Panel）
+var _room_seat_cards: Array = []          # 最多 8 张座位卡（Panel），按容量显隐
+var _room_seat_nos: Array = []            # 座位卡上的「座位 N」Label
 var _room_seat_names: Array = []          # 座位卡上的昵称 Label
 var _room_seat_states: Array = []         # 座位卡上的状态 Label
 var _room_code_label: Label = null
@@ -797,6 +819,7 @@ var _room_join_btn: Button = null
 var _room_leave_btn: Button = null
 var _room_start_btn: Button = null
 var _room_ai_spin: SpinBox = null
+var _room_seat_spin: SpinBox = null        # 座位数 3~8（建房前可调，进房后锁定）
 
 
 func _build_start_page() -> void:
@@ -3315,32 +3338,43 @@ func _update_status_bar() -> void:
 func _format_player_status() -> String:
 	if game_manager == null or game_manager.get_player_count() == 0:
 		return "等待游戏初始化..."
-	var parts: Array = []
+	var n: int = int(game_manager.get_player_count())
 	var cp_idx = game_manager.get_current_player_index()
-	for i in range(game_manager.get_player_count()):
+	# 名字链：每 PLAYER_STATUS_PER_LINE 人一行（3~4 人仍是 1 行，6~8 人才换行）
+	var chain_lines: Array = []
+	var row: Array = []
+	for i in range(n):
 		var p = game_manager.get_players()[i]
 		var is_current = (i == cp_idx)
 		var ai_tag = "(AI)" if p.is_ai else ""
 		var cooling = "❄" if p.clan_bomb_cooling else ""
 		var pass_tag = "⏸" if p.has_passed else ""
 		var highlight = " ◄" if is_current else ""
-		var label = "%s %s%s%s%s" % [p.player_name, ai_tag, cooling, pass_tag, highlight]
-		parts.append(label)
-	if parts.is_empty(): return "等待游戏初始化..."
-	var result = "● %s" % parts[0]
-	for j in range(1, parts.size()):
-		result += " → ● %s" % parts[j]
-	# 自己的手牌数已在顶部状态栏显示，这里只列 AI 的，避免信息重复
+		row.append("%s %s%s%s%s" % [p.player_name, ai_tag, cooling, pass_tag, highlight])
+		if row.size() >= PLAYER_STATUS_PER_LINE or i == n - 1:
+			chain_lines.append("● " + " → ● ".join(row))
+			row = []
+	if chain_lines.is_empty():
+		return "等待游戏初始化..."
+	var lines: Array = chain_lines
+	# AI 手牌：自己的手牌数已在顶部状态栏显示，这里只列 AI 的，避免信息重复
 	var counts: Array = []
-	for i in range(game_manager.get_player_count()):
+	for i in range(n):
 		var pl = game_manager.get_players()[i]
-		if not pl.is_ai: continue
+		if not pl.is_ai:
+			continue
 		counts.append("%s: %d张" % [pl.player_name, pl.get_hand_count()])
-	if not counts.is_empty():
-		result += "\n手牌: " + " | ".join(counts)
-	# 补充规则状态
-	if game_manager.get_organic_rules_enabled() or game_manager.get_sequence_rules_enabled() \
-			or game_manager.get_halogen_exchange_allowed() or game_manager.get_element_limit_enabled():
+	var ci := 0
+	while ci < counts.size():
+		var seg: Array = counts.slice(ci, mini(ci + PLAYER_STATUS_PER_LINE, counts.size()))
+		lines.append(("手牌: " if ci == 0 else "　　　") + " | ".join(seg))
+		ci += PLAYER_STATUS_PER_LINE
+	# 补充规则 / 方向：只在还留得下行数时追加（8 座位时这两行会被挤掉）
+	var has_rules: bool = game_manager.get_organic_rules_enabled() \
+		or game_manager.get_sequence_rules_enabled() \
+		or game_manager.get_halogen_exchange_allowed() \
+		or game_manager.get_element_limit_enabled()
+	if has_rules and lines.size() < INFO_LABEL_MAX_LINES - 1:
 		var rules_list: Array = []
 		if game_manager.get_organic_rules_enabled(): rules_list.append("有机物胜利")
 		if game_manager.get_sequence_rules_enabled(): rules_list.append("顺序牌型")
@@ -3349,10 +3383,10 @@ func _format_player_status() -> String:
 			var extras: Array = game_manager.get_allowed_extra_elements()
 			var extra_txt := "无额外元素" if extras.is_empty() else "/".join(extras)
 			rules_list.append("元素限制（前20号 + %s）" % extra_txt)
-		result += "\n【补充规则】" + " + ".join(rules_list)
-	if not game_manager.get_direction_clockwise():
-		result += "\n方向: ← 逆时针"
-	return result
+		lines.append("【补充规则】" + " + ".join(rules_list))
+	if lines.size() < INFO_LABEL_MAX_LINES and not game_manager.get_direction_clockwise():
+		lines.append("方向: ← 逆时针")
+	return "\n".join(lines)
 
 
 var table_card_buttons: Array = []
@@ -6643,6 +6677,9 @@ func attach_session(session) -> void:
 	if action_router == null:
 		action_router = ActionRouterScript.new()
 	action_router.setup(game_manager, session)
+	# --net-trace：每个新装配的会话都打开追踪（重建 / 重连后的新会话也不会漏）
+	if session != null and _net_trace:
+		session.enable_trace(true)
 	# 换座 / 重连后残留的热座认领与只读态必须清零（D7）
 	_hotseat_ready_seat = -1
 	_hand_read_only = false
@@ -6871,12 +6908,23 @@ func _update_net(delta: float) -> void:
 		_net_ai_wait = 0.0
 		return
 	_net_ai_wait += delta
-	if _net_ai_wait < NET_AI_DELAY_S:
+	if _net_ai_wait < _net_ai_delay():
 		return
 	_net_ai_wait = 0.0
 	# host_step_ai 内部走 host_act_for_seat → _host_apply → state_applied，
 	# 界面刷新由 _online_on_state_applied 负责，这里不再重复刷
 	net_session.host_step_ai(1)
+
+
+# AI 节流按人数缩短（D17）：8 座位最多 7 个 AI，还按 1.2s 走一轮要 8 秒多，
+# 真人对局里那是纯等待。3~4 个 AI 保持接近单机手感，5 个以上再压一档。
+func _net_ai_delay() -> float:
+	var ai := int(net_session.ai_count()) if net_session != null else 0
+	if ai >= 5:
+		return NET_AI_DELAY_S * 0.5          # 7 个 AI → 0.6s/手，一轮约 4 秒
+	if ai >= 3:
+		return NET_AI_DELAY_S * 0.66         # 3~4 个 AI → 0.8s/手
+	return NET_AI_DELAY_S
 
 
 # -------- 进牌桌（联机版 _on_start_game：局面由会话给，不在这里 new GameManager）--------
@@ -6947,7 +6995,7 @@ func _build_room_page() -> void:
 	# D14：房号只是辨认用的 4 位数，不代表任何地址（发现层在 P11-C2）。
 	# 副标题必须写死这句，别让人以为「输房号就能连」
 	page.add_child(_room_label("RoomSubtitle",
-		"局域网 / Tailscale 直连 · 3~4 人 · 房号仅用于辨认，客人需填房主 IP",
+		"局域网 / Tailscale 直连 · 3~8 人（房主可调座位数） · 房号仅用于辨认，客人需填房主 IP",
 		Vector2(0, 110), Vector2(1152, 20), START_FS_META, START_C_MUTED,
 		HORIZONTAL_ALIGNMENT_CENTER))
 
@@ -6967,6 +7015,17 @@ func _build_room_page() -> void:
 	_room_ai_spin.tooltip_text = "空座位由 AI 补上（人类座位在前，AI 在后）"
 	_room_ai_spin.value_changed.connect(_on_room_ai_changed)
 	page.add_child(_room_ai_spin)
+
+	# D17：座位数建房前由房主定（3~8，默认 4），进房后锁定（客人只读显示房主的设置）
+	page.add_child(_room_label("RoomSeatLabel", "座位数", Vector2(340, 592), Vector2(110, 34),
+		START_FS_LABEL, START_C_TITLE, HORIZONTAL_ALIGNMENT_LEFT))
+	_room_seat_spin = _start_make_spin(ROOM_MIN_SEATS, ROOM_MAX_SEATS, ROOM_DEFAULT_SEATS,
+		"RoomSeatSpin")
+	_room_seat_spin.position = Vector2(456, 590)
+	_room_seat_spin.size = Vector2(150, 38)
+	_room_seat_spin.tooltip_text = "本房间总座位数（3~8）：创建后固定，人类坐满后空位由 AI 补"
+	_room_seat_spin.value_changed.connect(_on_room_seat_changed)
+	page.add_child(_room_seat_spin)
 
 	_room_start_btn = _page_primary_btn("开始对局", _room_start, Vector2(260, 50), "RoomStartBtn", 20)
 	_room_start_btn.position = Vector2(846, 586)
@@ -7094,9 +7153,9 @@ func _room_join_card(page: Control) -> void:
 
 
 
-# -------- 座位表：固定 4 张卡（max_players 恒为 4）--------
-# 为什么不用动态重建：座位数只在 1..4 之间变，4 张卡直接摆好改文字最省事，
-# 测试也能按名字 "RoomSeatName_0" 稳定取到，不用担心重建时机。
+# -------- 座位表：一次建 8 张卡，按「当前容量」显隐 + 重排（D17）--------
+# 为什么先全建再显隐：容量只在建房前变（3~8），重建节点会让测试按名字取控件
+# 变得时序敏感；8 张卡一次性建好，刷新时只改 visible / 位置 / 字号最稳。
 func _room_seats_panel(page: Control) -> void:
 	var panel := Panel.new()
 	panel.name = "RoomSeatsPanel"
@@ -7112,6 +7171,7 @@ func _room_seats_panel(page: Control) -> void:
 		HORIZONTAL_ALIGNMENT_LEFT))
 
 	_room_seat_cards.clear()
+	_room_seat_nos.clear()
 	_room_seat_names.clear()
 	_room_seat_states.clear()
 	for i in range(ROOM_MAX_SEATS):
@@ -7126,9 +7186,10 @@ func _room_seats_panel(page: Control) -> void:
 		sc.add_theme_stylebox_override("panel", ss)
 		panel.add_child(sc)
 
-		sc.add_child(_room_label("RoomSeatNo_%d" % i, "座位 %d" % (i + 1),
+		var no := _room_label("RoomSeatNo_%d" % i, "座位 %d" % (i + 1),
 			Vector2(14, 8), Vector2(212, 18), START_FS_META, START_C_MUTED,
-			HORIZONTAL_ALIGNMENT_LEFT))
+			HORIZONTAL_ALIGNMENT_LEFT)
+		sc.add_child(no)
 		var nm := _room_label("RoomSeatName_%d" % i, "空位",
 			Vector2(14, 30), Vector2(212, 30), 20, START_C_MUTED,
 			HORIZONTAL_ALIGNMENT_LEFT)
@@ -7138,8 +7199,48 @@ func _room_seats_panel(page: Control) -> void:
 			HORIZONTAL_ALIGNMENT_LEFT)
 		sc.add_child(stt)
 		_room_seat_cards.append(sc)
+		_room_seat_nos.append(no)
 		_room_seat_names.append(nm)
 		_room_seat_states.append(stt)
+	_room_layout_seats(ROOM_DEFAULT_SEATS)
+
+
+# 座位卡按容量重排：
+#   3~4 张沿用老位置（24 + i*256，240×122）—— 牌桌手感 / 老截图 / 老测试都不变
+#   5~8 张挤成一行（等分 1012px，间距 8）：n=8 时每张 119px，昵称 16px + 裁切
+func _room_layout_seats(capacity: int) -> void:
+	var n := clampi(int(capacity), ROOM_MIN_SEATS, ROOM_MAX_SEATS)
+	var tight := n > 4
+	var gap := 8.0 if tight else 16.0
+	var w := 240.0
+	if tight:
+		w = floorf((1012.0 - float(n - 1) * gap) / float(n))
+	var pad := 8.0 if tight else 14.0
+	for i in range(_room_seat_cards.size()):
+		var card = _room_seat_cards[i]
+		if not (card is Control) or not is_instance_valid(card):
+			continue
+		card.visible = i < n
+		if not card.visible:
+			continue
+		var x := 24.0 + float(i) * (w + gap) if tight else float(24 + i * 256)
+		card.position = Vector2(x, 38.0)
+		card.size = Vector2(w, 122.0)
+		if i < _room_seat_nos.size():
+			var no = _room_seat_nos[i]
+			no.position = Vector2(pad, 8)
+			no.size = Vector2(w - pad * 2.0, 18)
+		if i < _room_seat_names.size():
+			var nm = _room_seat_names[i]
+			nm.position = Vector2(pad, 30)
+			nm.size = Vector2(w - pad * 2.0, 30)
+			nm.clip_text = true
+			nm.add_theme_font_size_override("font_size", 16 if tight else 20)
+		if i < _room_seat_states.size():
+			var stt = _room_seat_states[i]
+			stt.position = Vector2(pad, 72)
+			stt.size = Vector2(w - pad * 2.0, 20)
+			stt.clip_text = true
 
 
 # -------- 整页刷新：座位表 / 房号 / 提示 / 4 颗按钮的可用态 --------
@@ -7150,17 +7251,20 @@ func _room_refresh() -> void:
 	var offline := _room_offline_humans()
 	var seat_total := int(net_session.seat_count()) if net_session != null else 0
 	var my_seat := int(net_session.my_seat) if net_session != null else -1
+	var capacity := _room_seat_capacity()
+	var tight := capacity > 4
+	_room_layout_seats(capacity)
 
-	# AI 上限 = 剩下的空座位（总座位最多 4）：3 个真人在线就一个 AI 也加不了
+	# AI 上限 = 剩下的空座位（总座位 = 本房间容量）：真人坐满就一个 AI 也加不了
 	if _room_ai_spin != null:
-		var ai_cap := maxi(0, ROOM_MAX_SEATS - online)
+		var ai_cap := maxi(0, capacity - online)
 		_room_ai_spin.max_value = ai_cap
 		if int(_room_ai_spin.value) > ai_cap:
 			_room_ai_spin.value = ai_cap      # Range 会把超限值压回 max
 	var ai := _room_ai_value()
 	var planned := online + ai
 
-	for i in range(ROOM_MAX_SEATS):
+	for i in range(capacity):
 		var name_text := "空位"
 		var state_text := "—"
 		var taken := false
@@ -7170,7 +7274,7 @@ func _room_refresh() -> void:
 			if name_text == "":
 				name_text = "玩家 %d" % (i + 1)
 			if not net_session.seat_is_online(i):
-				state_text = "掉线中 · 座位保留"
+				state_text = "掉线·保留" if tight else "掉线中 · 座位保留"
 			elif i == 0 and net_session.is_host():
 				state_text = "房主 · 你" if my_seat == i else "房主"
 			elif my_seat == i:
@@ -7198,6 +7302,9 @@ func _room_refresh() -> void:
 		_room_host_ip_label.text = _room_ip_text()
 
 	var joined := net_session != null
+	if _room_seat_spin != null:
+		_room_seat_spin.value = capacity
+		_room_seat_spin.editable = not joined   # 进房后锁定：容量在建房时就定了
 	if _room_create_btn != null:
 		_room_create_btn.disabled = joined
 	if _room_join_btn != null:
@@ -7212,7 +7319,7 @@ func _room_refresh() -> void:
 		elif joined and not net_session.is_host():
 			_room_start_btn.text = "等待房主开始"
 		elif joined:
-			_room_start_btn.text = "开始对局 · %d/%d 座位" % [mini(planned, ROOM_MAX_SEATS), ROOM_MAX_SEATS]
+			_room_start_btn.text = "开始对局 · %d/%d 座位" % [mini(planned, capacity), capacity]
 		else:
 			_room_start_btn.text = "开始对局"
 	# 掉线提示只在提示区空着时补一句（否则会盖掉「xxx 加入了」这类操作反馈）
@@ -7248,29 +7355,32 @@ func _room_ip_text() -> String:
 	return "本机 IP：%s（客人填这一串）" % txt
 
 
-# -------- 开局闸门（D12 / D15）--------
-# 纯函数：只吃 5 个数，不碰会话 / 控件，测试可以逐格喂边界。
+# -------- 开局闸门（D12 / D15 / D17）--------
+# 纯函数：只吃几个数，不碰会话 / 控件，测试可以逐格喂边界。
+# capacity = 本房间座位数（3~8，默认 4 保持老行为）
 # 返回 "" = 可以开局；其余 = 直接显示给用户的原因
 func _room_start_block_reason(online_humans: int, ai_count: int, is_host: bool,
-		room_state: int, offline_seats: int = 0) -> String:
+		room_state: int, offline_seats: int = 0,
+		capacity: int = ROOM_DEFAULT_SEATS) -> String:
 	if not is_host:
 		return "等待房主开始"
 	if room_state == NetSessionScript.State.PLAYING:
 		return "对局已开始"
 	if room_state != NetSessionScript.State.LOBBY:
 		return "房间未就绪"
+	var cap := clampi(int(capacity), ROOM_MIN_SEATS, ROOM_MAX_SEATS)
 	var total := int(online_humans) + int(ai_count)
 	if total < ROOM_MIN_SEATS:
 		return "座位不足：至少 %d 个（当前 %d）" % [ROOM_MIN_SEATS, total]
-	if total > ROOM_MAX_SEATS:
-		return "座位超限：最多 %d 个（当前 %d）" % [ROOM_MAX_SEATS, total]
+	if total > cap:
+		return "座位超限：最多 %d 个（当前 %d）" % [cap, total]
 	if int(offline_seats) > 0:
 		return "有玩家掉线，等重连后再开局"
 	return ""
 
 
 # 会话 → 闸门参数。state 用 is_playing() 反推，不去读会话内部字段
-# （假会话只需要实现 is_host / is_playing / seat_count / seat_is_online 这几条查询）
+# （假会话只需要实现 is_host / is_playing / seat_count / seat_is_online / seat_capacity）
 func _room_start_disabled_reason() -> String:
 	if net_session == null:
 		return "还没加入房间"
@@ -7278,7 +7388,7 @@ func _room_start_disabled_reason() -> String:
 	if net_session.is_playing():
 		st = NetSessionScript.State.PLAYING
 	return _room_start_block_reason(_room_online_humans(), _room_ai_value(),
-		net_session.is_host(), st, _room_offline_humans())
+		net_session.is_host(), st, _room_offline_humans(), _room_seat_capacity())
 
 
 func _room_can_start() -> bool:
@@ -7364,6 +7474,7 @@ func _room_start_host() -> void:
 		_room_hint("已经在房间里了：先「离开房间」再新建")
 		return
 	var port := int(_room_host_port_spin.value) if _room_host_port_spin != null else ROOM_DEFAULT_PORT
+	var capacity := _room_seat_capacity()
 	var nm := "房主"
 	if _room_host_name_edit != null and _room_host_name_edit.text.strip_edges() != "":
 		nm = _room_host_name_edit.text.strip_edges()
@@ -7372,16 +7483,16 @@ func _room_start_host() -> void:
 	_apply_start_page_rules(game_manager)
 	var s = NetSessionScript.new()
 	s.setup(game_manager, ENetTransportScript.new())
-	s.max_players = ROOM_MAX_SEATS
+	s.max_players = capacity
 	# 观战者 UI 还没做（见 MULTIPLAYER_TASKS §5）：满员直接拒，别给个看不见的观战位
 	s.allow_watchers = false
 	_room_bind_session(s)
-	if s.start_host(port, ROOM_MAX_SEATS, nm) != 0:
+	if s.start_host(port, capacity, nm) != 0:
 		_room_teardown()
 		_room_hint("端口 %d 建不起来（多半被占用）：换一个端口再试" % port)
 		return
 	_room_mode = RoomMode.HOSTING
-	_room_hint("房间已创建：把本机 IP + 端口 %d 告诉客人" % port)
+	_room_hint("房间已创建（%d 座位）：把本机 IP + 端口 %d 告诉客人" % [capacity, port])
 	_room_refresh()
 
 
@@ -7406,7 +7517,8 @@ func _room_join() -> void:
 	_apply_start_page_rules(game_manager)
 	var s = NetSessionScript.new()
 	s.setup(game_manager, ENetTransportScript.new())
-	s.max_players = ROOM_MAX_SEATS
+	# 客人还不知道房主的容量：先填默认值，收 welcome 时会被 max_players 覆盖成房主那档
+	s.max_players = ROOM_DEFAULT_SEATS
 	s.allow_watchers = false
 	_room_bind_session(s)
 	if s.start_client(addr, port, nm) != 0:
@@ -7476,6 +7588,25 @@ func _room_on_peer_left(seat: int, peer_name: String, grace_ms: int) -> void:
 
 func _on_room_ai_changed(_value: float) -> void:
 	_room_refresh()
+
+
+# 座位数改了：AI 上限 / 座位卡张数 / 开局按钮文案都要跟着重算（D17）
+func _on_room_seat_changed(_value: float) -> void:
+	_room_refresh()
+
+
+# 当前房间的座位容量：
+#   在房里 → 会话定下的容量（客人靠 welcome 的 max_players 同步，和房主一致）
+#   还没建房 → 座位数微调框的值（默认 4）
+func _room_seat_capacity() -> int:
+	if net_session != null:
+		# has_method 兜底：测试里的假会话只实现自己用到的查询，缺这条就退回默认容量
+		if net_session.has_method("seat_capacity"):
+			return clampi(int(net_session.seat_capacity()), ROOM_MIN_SEATS, ROOM_MAX_SEATS)
+		return ROOM_DEFAULT_SEATS
+	if _room_seat_spin != null:
+		return clampi(int(_room_seat_spin.value), ROOM_MIN_SEATS, ROOM_MAX_SEATS)
+	return ROOM_DEFAULT_SEATS
 
 
 

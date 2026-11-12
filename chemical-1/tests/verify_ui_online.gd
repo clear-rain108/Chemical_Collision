@@ -46,6 +46,10 @@ class FakeSession:
 	var ai_calls: int = 0
 	var closed_reason: String = ""
 
+	# 联机 UI 会按 AI 人数调节流（D17）；假会话只需要给出一个数
+	func ai_count() -> int:
+		return 0
+
 	func is_playing() -> bool:
 		return playing
 

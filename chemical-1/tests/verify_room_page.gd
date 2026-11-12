@@ -46,9 +46,16 @@ class RoomFake:
 	var ai_flags: Array = [false, false]
 	var reconnect_grace_ms: int = 15000
 	var start_calls: Array = []
+	var capacity: int = 4                 # 房间座位数（D17：3~8，建房时定）
 
 	func is_host() -> bool:
 		return role == 1
+
+	func seat_capacity() -> int:
+		return clampi(capacity, 3, 8)
+
+	func ai_count() -> int:
+		return 0
 
 	func is_playing() -> bool:
 		return playing
@@ -176,9 +183,11 @@ func _run() -> void:
 	_test_open_close(scene)
 	_test_gate_pure(scene)
 	await _test_fake_session(scene)
+	await _test_seat_capacity(scene)
 	await _test_leave(scene)
 	await _test_single_player_red_line(scene)
 	await _test_real_enet()
+	await _test_real_enet_capacity8()
 	_finish()
 
 
@@ -199,12 +208,24 @@ func _test_structure(scene) -> void:
 			"RoomCodeLabel", "RoomHintLabel", "RoomHostIpLabel",
 			"RoomHostNameEdit", "RoomPortSpin", "RoomCreateBtn",
 			"RoomJoinNameEdit", "RoomJoinPortSpin", "RoomAddrEdit",
-			"RoomJoinBtn", "RoomLeaveBtn", "RoomAiSpin", "RoomStartBtn",
-			"RoomSeatCard_0", "RoomSeatCard_3"]:
+			"RoomJoinBtn", "RoomLeaveBtn", "RoomAiSpin", "RoomSeatSpin", "RoomStartBtn",
+			"RoomSeatCard_0", "RoomSeatCard_3", "RoomSeatCard_7"]:
 		# 卡片里的控件不是页的直接子节点：一律走 _start_child 递归找
 		_check(scene._start_child(n) != null, "房间页含 %s" % n)
-	_check(scene._room_seat_names.size() == 4 and scene._room_seat_states.size() == 4,
-		"座位卡数组各 4 项（实际 %d / %d）" % [scene._room_seat_names.size(), scene._room_seat_states.size()])
+	_check(scene._room_seat_names.size() == 8 and scene._room_seat_states.size() == 8,
+		"座位卡数组各 8 项（实际 %d / %d）" % [scene._room_seat_names.size(), scene._room_seat_states.size()])
+	# D17：默认容量 4 → 只露前 4 张卡，后 4 张建好但隐藏
+	var visible_cards := 0
+	for c in scene._room_seat_cards:
+		if c.visible:
+			visible_cards += 1
+	_check(visible_cards == 4, "默认容量 4 → 可见座位卡 4 张（实际 %d）" % visible_cards)
+	_check(int(scene._room_seat_spin.value) == 4 and int(scene._room_seat_spin.min_value) == 3
+			and int(scene._room_seat_spin.max_value) == 8,
+		"座位数微调框 = 3~8，默认 %d" % int(scene._room_seat_spin.value))
+	_check(_vec_eq(scene._room_seat_cards[0].position, Vector2(24, 38))
+			and _vec_eq(scene._room_seat_cards[3].position, Vector2(24 + 3 * 256, 38)),
+		"3~4 张时沿用老几何（24+i*256）")
 	for i in range(4):
 		var nm = scene._start_child("RoomSeatName_%d" % i)
 		var txt := "-" if nm == null else String(nm.text)
@@ -218,7 +239,8 @@ func _test_structure(scene) -> void:
 		"房主 IP 默认 127.0.0.1（实际 %s）" % String(scene._room_addr_edit.text))
 	_check(int(scene._room_ai_spin.value) == 0, "AI 人数默认 0")
 	_check(int(scene._room_ai_spin.min_value) == 0 and int(scene._room_ai_spin.max_value) == 4,
-		"AI 人数范围 0~4（实际 %d~%d）" % [int(scene._room_ai_spin.min_value), int(scene._room_ai_spin.max_value)])
+		"AI 人数上限 = 容量 4 - 在线 0 = 4（实际 %d~%d）"
+		% [int(scene._room_ai_spin.min_value), int(scene._room_ai_spin.max_value)])
 	# 副标题必须写死「客人填房主 IP」（D14），否则客人会以为输房号就能连
 	var sub = page.get_node_or_null("RoomSubtitle")
 	_check(sub != null and String(sub.text).find("IP") >= 0, "副标题提示客人要填房主 IP（D14）")
@@ -456,6 +478,95 @@ func _seat_state(scene, i: int) -> String:
 
 
 # ------------------------------------------------------------
+# 5b) 座位数 3~8（D17）：座位卡张数 / 等分几何 / AI 上限 / 闸门 / 按钮文案
+# ------------------------------------------------------------
+func _test_seat_capacity(scene) -> void:
+	var lobby: int = NetSessionScript.State.LOBBY
+
+	# ---- 容量 8：8 张卡全露，挤成一行 ----
+	var fake := RoomFake.new()
+	fake.capacity = 8
+	fake.names = ["房主", "阿明", "小刚"]
+	fake.online = [true, true, true]
+	fake.ai_flags = [false, false, false]
+	scene.call("_room_bind_session", fake)
+	scene._room_ai_spin.value = 0
+	fake.room_changed.emit()
+	await process_frame
+	var visible := 0
+	for c in scene._room_seat_cards:
+		if c.visible:
+			visible += 1
+	_check(visible == 8, "容量 8 → 8 张座位卡全可见（实际 %d）" % visible)
+	_check(int(scene._room_seat_spin.value) == 8 and not scene._room_seat_spin.editable,
+		"进房后座位数锁定成房主定的 8，且不可再改")
+	_check(scene._room_seat_capacity() == 8, "会话容量 = 8（实际 %d）" % scene._room_seat_capacity())
+	# 一行等分：w = (1012 - 7*8) / 8 = 119，最后一张右边缘不出面板
+	var w := float(scene._room_seat_cards[7].size.x)
+	_check(is_equal_approx(w, 119.0), "8 座位时每张卡等分到 119px（实际 %.1f）" % w)
+	var last_right := float(scene._room_seat_cards[7].position.x) + w
+	_check(last_right <= 1060.0 - 24.0, "第 8 张卡右边缘不出面板（右 = %.1f ≤ 1036）" % last_right)
+	_check(_vec_eq(scene._room_seat_cards[1].position, Vector2(24 + 119 + 8, 38)),
+		"5~8 张时按 8px 间隙等分（第 2 张 x = %.1f）" % float(scene._room_seat_cards[1].position.x))
+	_check(int(scene._room_ai_spin.max_value) == 5,
+		"容量 8 + 3 人在线 → AI 上限 5（实际 %d）" % int(scene._room_ai_spin.max_value))
+	_check(scene._room_can_start(), "容量 8、3 人在线 → 3 ≥ 下限，可开局")
+
+	# ---- AI 补到容量 ----
+	scene._room_ai_spin.value = 5
+	await process_frame
+	_check(_seat_name(scene, 3) == "AI 1" and _seat_name(scene, 7) == "AI 5",
+		"容量 8 时 AI 补满剩余 5 个座位（%s … %s）" % [_seat_name(scene, 3), _seat_name(scene, 7)])
+	_check(scene._room_can_start(), "3 人 + 5 AI = 8 = 容量 → 可开局")
+
+	# 掉线时按钮写明 planned/capacity（这条同时覆盖「3/8」文案）
+	scene._room_ai_spin.value = 1
+	fake.online = [true, true, false]
+	scene._room_hint("")
+	fake.room_changed.emit()
+	await process_frame
+	_check(scene._room_start_btn.disabled, "有座位掉线 → 开局按钮禁用")
+	_check(String(scene._room_start_btn.text).find("3/8") >= 0,
+		"禁用时按钮写「3/8」（实际 %s）" % String(scene._room_start_btn.text))
+
+	# ---- 闸门边界（容量 8）----
+	_check(scene._room_start_block_reason(3, 0, true, lobby, 0, 8) == "",
+		"容量 8：3 座位 = 下限，放行")
+	_check(scene._room_start_block_reason(8, 0, true, lobby, 0, 8) == "",
+		"容量 8：8 座位 = 上限，放行")
+	var over: String = scene._room_start_block_reason(9, 0, true, lobby, 0, 8)
+	_check(over.find("8") >= 0, "容量 8：9 座位超限 → 拦住（%s）" % over)
+
+	# ---- 容量 3：只有 3 张卡，仍是老几何 ----
+	var small := RoomFake.new()
+	small.capacity = 3
+	small.names = ["房主", "阿明", "小刚"]
+	small.online = [true, true, false]
+	small.ai_flags = [false, false, false]
+	scene.call("_room_bind_session", small)
+	scene._room_ai_spin.value = 1
+	small.room_changed.emit()
+	await process_frame
+	visible = 0
+	for c in scene._room_seat_cards:
+		if c.visible:
+			visible += 1
+	_check(visible == 3, "容量 3 → 只可见 3 张卡（实际 %d）" % visible)
+	_check(is_equal_approx(float(scene._room_seat_cards[0].size.x), 240.0),
+		"容量 3 时卡宽仍是 240（实际 %.1f）" % float(scene._room_seat_cards[0].size.x))
+	_check(int(scene._room_ai_spin.max_value) == 1,
+		"容量 3 + 2 人在线 → AI 上限 1（实际 %d）" % int(scene._room_ai_spin.max_value))
+	_check(String(scene._room_start_btn.text).find("3/3") >= 0,
+		"容量 3 + 掉线 1 时按钮写「3/3」（实际 %s）" % String(scene._room_start_btn.text))
+	_check(scene._room_start_block_reason(3, 0, true, lobby, 0, 3) == "",
+		"容量 3：3 座位正好坐满，放行")
+	_check(scene._room_start_block_reason(4, 0, true, lobby, 0, 3) != "",
+		"容量 3 却来了 4 人 → 拦住")
+	scene.call("_room_teardown")
+	await process_frame
+
+
+# ------------------------------------------------------------
 # 6) 离开房间：close + attach_session(null) + 丢掉空局面 GameManager（D13）
 # ------------------------------------------------------------
 func _test_leave(scene) -> void:
@@ -650,5 +761,69 @@ func _test_real_enet() -> void:
 		_check(int(host.net_session.seat_count()) == 3, "B：掉线不删座位（仍是 3 个）")
 
 	_free_all(uis)
+
+
+# ============================================================
+# C 段：容量 8 的真实链路（D17）
+#   房主把「座位数」拨到 8 → 建房 → 2 客人握手 → AI 补满 5 个座位
+#   → 开局 → 三端都是 8 个玩家、指纹一致、容量同步
+#   这一段专门守「联机层 clamp 是不是真的放开了」：只要有人把 3~8 改回 3~4，
+#   start_game(8, 5) 就会被压成 4 人，三端的玩家数与指纹断言立刻红。
+# ============================================================
+func _test_real_enet_capacity8() -> void:
+	var uis: Array = []
+	for i in range(3):
+		uis.append(_make_ui())
+	await process_frame
+	await process_frame
+
+	var host = uis[0]
+	host.call("_open_room_page")
+	host._room_seat_spin.value = 8
+	var port: int = _pick_free_port(host)
+	_check(port > 0 and host.net_session != null,
+		"C8：容量 8 建房成功（端口 %d，提示：%s）" % [port, String(host._room_hint_label.text)])
+	if port <= 0 or host.net_session == null:
+		_free_all(uis)
+		return
+	_check(int(host.net_session.seat_capacity()) == 8,
+		"C8：会话容量 = 8（实际 %d）" % int(host.net_session.seat_capacity()))
+
+	for i in range(1, 3):
+		var guest = uis[i]
+		guest.call("_open_room_page")
+		guest._room_join_name_edit.text = "客%d" % i
+		guest._room_join_port_spin.value = port
+		guest._room_addr_edit.text = "127.0.0.1"
+		guest.call("_room_join")
+
+	var ok: bool = _pump_until(uis, func() -> bool: return _all_joined(uis), ROOM_CONNECT_TIMEOUT_MS)
+	_check(ok, "C8：两端客人都握手完成并拿到座位")
+	if not ok:
+		_free_all(uis)
+		return
+	_check(int(uis[1].net_session.seat_capacity()) == 8,
+		"C8：客人从 welcome 同步到容量 8（实际 %d）" % int(uis[1].net_session.seat_capacity()))
+	_check(int(host._room_ai_spin.max_value) == 5,
+		"C8：3 人在线 → AI 上限 5（实际 %d）" % int(host._room_ai_spin.max_value))
+
+	host._room_ai_spin.value = 5
+	await process_frame
+	_check(host._room_can_start(), "C8：3 人 + 5 AI = 8 = 容量 → 闸门放行")
+	host.call("_room_start")
+	ok = _pump_until(uis, func() -> bool: return _all_playing(uis), ROOM_PLAY_TIMEOUT_MS)
+	_check(ok, "C8：开局 → 三端都进入对局")
+	if ok:
+		_check(int(host.game_manager.get_players().size()) == 8,
+			"C8：8 个玩家（实际 %d）" % int(host.game_manager.get_players().size()))
+		_check(_count_ai(host.game_manager) == 5,
+			"C8：AI 座位 5 个（实际 %d）" % _count_ai(host.game_manager))
+		_check(int(uis[2].game_manager.get_players().size()) == 8,
+			"C8：客人也重建出 8 个玩家")
+		_check(int(uis[1].net_session.last_hash()) == int(host.net_session.last_hash())
+				and int(uis[2].net_session.last_hash()) == int(host.net_session.last_hash()),
+			"C8：三端开局指纹一致")
+	_free_all(uis)
+
 
 

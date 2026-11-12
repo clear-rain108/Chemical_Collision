@@ -1,7 +1,7 @@
 # 化学碰撞（Chemical Collision）联机架构设计文档
 
 > 版本：v1.2 ｜ 状态：**设计定稿；P11-B 地基、P11-C1-a 传输、P11-C1-b 会话层均已实现；P11-C1-c Step 0 真机冒烟脚本已就绪**
-> 适用范围：3~4 人朋友局，跨局域网 P2P（无端口映射条件）
+> 适用范围：3~8 人朋友局（默认 4），跨局域网 P2P（无端口映射条件）
 > 相关文档：[`ARCHITECTURE.md`](ARCHITECTURE.md)（单机架构）、[`GAMEPLAY_RULES.md`](GAMEPLAY_RULES.md)（规则）、[`UI_POLISH_PLAN.md`](UI_POLISH_PLAN.md)（UI 计划）
 
 ---
@@ -45,7 +45,7 @@ P11-C1-b 追加交付物（会话层）：
 
 | # | 目标 | 理由 |
 |---|---|---|
-| G1 | 3~4 人朋友局，房主建局、房间码加入 | 玩法定位（非公开对战） |
+| G1 | 3~8 人朋友局（默认 4，建房时定），房主建局、房间码加入 | 玩法定位（非公开对战）+ D17 可调座位数 |
 | G2 | **零侵入**：联机代码不改变单机任何行为 | 现有 19 套测试必须继续通过 |
 | G3 | 传输层可替换（ENet / WebRTC / 未来 Steam） | 环境会变（今天 Tailscale，明天 WebRTC） |
 | G4 | 任何一步都可校验一致性 | 化学牌型判定复杂，静默分歧 = 灾难 |
@@ -458,8 +458,9 @@ func shuffle(rng_seed: int = -1) -> void
 | **P11-C1-b 会话层** ✅ | `NetSession`（房间 / 座位 / 主机权威 / 两阶段冻结 / 托管 / 重连 / 观战）+ 真实 ENet 三方测试 | 111 项断言全绿；`state_hash` 逐事件一致 | 已完成 |
 | **P11-C1-c Step 0 冒烟** ✅ | `tests/net_smoke.gd`：3 个独立进程真机联机，逐笔打印 `applied#N ... hash=H`，末尾打 `final_hash` 供三端比对 | 三端 `final_hash` 相同；本机实测整局 32 笔事件、0 拒绝、0 分叉 | 已完成 |
 | **P11-C1-c Step 3 UI 联机化** ✅ | `GameUI.attach_session()` 装配口（视图归属 D6 / 热座关闭 D7 / AI 计时器门控 D8 / 结果分派 D9 / 弹窗收窗 D10 / 退出 D11）+ 10 处动作走 `ActionRouter`；`verify_ui_online` 93 项 | A 段假会话 69 项 + B 段 3 实例真 ENet 24 项全绿；单机全量零回归 | 已完成 |
-| **P11-C1-c Step 4 房间页** ✅ | `GameUI._build_room_page()`（代码建页）：建房 / 加入 / 4 张座位卡 / AI 补位 / 开局闸门 / 离开收尾；`verify_room_page` 151 项 | A 段零网络 120 项 + B 段 3 实例真 ENet 31 项（页面建房 → 2 客人加入 → 3 人 + 1 AI 开局 → 三端进牌桌）全绿；不改 `.tscn`，全量 46 套零回归 | 已完成 |
-| **P11-C1 局域网** | `ActionRouter` + 房间页 + 接真机 UI；配 Tailscale 跨网直连 | 同 WiFi / Tailscale 下 3~4 人打完一整局，`state_hash` 全程一致 | 剩 ~2 天 |
+| **P11-C1-c Step 4 房间页** ✅ | `GameUI._build_room_page()`（代码建页）：建房 / 加入 / 座位卡 / AI 补位 / 开局闸门 / 离开收尾；`verify_room_page` 151 项 | A 段零网络 120 项 + B 段 3 实例真 ENet 31 项（页面建房 → 2 客人加入 → 3 人 + 1 AI 开局 → 三端进牌桌）全绿；不改 `.tscn`，全量 46 套零回归 | 已完成 |
+| **P11-C1-c Step 4b 人数 3~8（D17）+ 4c INTERNET/--net-trace（D18）** ✅ | `NetSession` `MIN/MAX_PLAYERS` + `seat_capacity()` / `ai_count()`；`GameUI` 座位数微调框 + 8 张座位卡按容量显隐等分 + 状态区每 4 人换行 + AI 节流按人数缩短；`export_presets.cfg` 开 INTERNET（pre1005.2）；`--net-trace` 逐笔指纹 | `verify_room_page` 186 项（含容量 8 三端真 ENet 8 玩家指纹一致）、`verify_net_session` 180 项（G20 追踪 / G21 容量边界）、全量 46 套绿；`aapt2 dump permissions` 见 INTERNET | 已完成 |
+| **P11-C1 局域网** | `ActionRouter` + 房间页 + 接真机 UI；配 Tailscale 跨网直连 | 同 WiFi / Tailscale 下 3~8 人打完一整局，`state_hash` 全程一致 | 剩 ~2 天 |
 | **P11-C2 跨 NAT** | `webrtc-native` 插件 + 信令 + TURN 兜底 | 异地 2 人（无端口映射）输入房间码即可开局，失配自动修复 | 3~5 天 |
 | **P11-D 打磨** | 超时自动 pass、断线重连、RTT 显示、回放、房间码 UI 优化 | 拔网线 30s 内可恢复；回放可完整重现一局 | 2~3 天 |
 
@@ -859,13 +860,21 @@ StartPage
    │                                 RoomCreateBtn / RoomCodeLabel
    ├─ RoomJoinCard                ← RoomJoinNameEdit / RoomJoinPortSpin / RoomAddrEdit /
    │                                 RoomJoinBtn / RoomLeaveBtn
-   ├─ RoomSeatsPanel              ← 固定 4 张 RoomSeatCard_i（RoomSeatName_i / RoomSeatState_i）
+   ├─ RoomSeatsPanel              ← 最多 8 张 RoomSeatCard_i（RoomSeatName_i / RoomSeatState_i），按容量显隐
    ├─ RoomHintLabel               ← 操作反馈（「xx 加入了」「座位不足…」）
-   ├─ RoomAiSpin                  ← 0 ~ (4 - 在线人类)
+   ├─ RoomAiSpin                  ← 0 ~ (capacity - 在线人类)
+   ├─ RoomSeatSpin                ← 3~8 座位数（建房前可调，进房后锁定）
    └─ RoomStartBtn                ← 房主才可用（D12 闸门）
 ```
 
-座位卡**固定 4 张、只改文字**：座位数只在 1..4 之间变，动态重建既麻烦又让测试取节点不稳（改名只在 `RoomSeatName_i` / `RoomSeatState_i`）。
+座位卡**一次建 8 张，只按容量显隐 + 重排**（D17）：容量只在建房前变（3~8），重建节点既麻烦又让测试取节点不稳（名字恒为 `RoomSeatCard_i` / `RoomSeatName_i` / `RoomSeatState_i`）。
+
+| 容量 | 几何 | 昵称字号 |
+|---|---|---|
+| 3~4 | 沿用老位置 `24 + i×256`，每张 240×122（手感 / 老截图不变） | 20 |
+| 5~8 | 一行等分：`w = floor((1012 - (n-1)×8) / n)`，间距 8；n=8 → 119px/张，右边缘 1032 ≤ 1036 | 16 + `clip_text` |
+
+`_room_layout_seats(capacity)` 是唯一的几何入口，`_room_refresh()` 每次都调它（幂等）；状态文案在窄卡上退化成短词（「掉线·保留」），否则 119px 一定被裁成半句。
 
 **开始页入场名单**（`START_INTRO_ORDER`，`GameUI.gd:1428`）——**在开始页加按钮必须同步登记**：
 
@@ -882,13 +891,15 @@ const START_INTRO_ORDER := [
 
 | 派生项 | 规则 |
 |---|---|
-| 座位名 / 状态 | 人类按 `seat_name(i)`，`online == false` → 「掉线中 · 座位保留」；AI 排在人类之后 → 「AI k」+「AI 托管」 |
+| 座位卡张数 | `capacity = _room_seat_capacity()`（会话 `seat_capacity()` / 未建房时取微调框值），只露前 capacity 张并重排 |
+| 座位名 / 状态 | 人类按 `seat_name(i)`，`online == false` → 「掉线中 · 座位保留」（窄卡「掉线·保留」）；AI 排在人类之后 → 「AI k」+「AI 托管」 |
 | 房号 | `"房号 " + room_code`（空则「房号 ----」） |
 | 本机 IP | `_room_local_ips()` 过滤 IPv6 / `127.*` / `169.254.*`，空则提示用 127.0.0.1 自测 |
-| AI 上限 | `maxi(0, 4 - 在线人类数)`；`max_value` 压小后 Range 会把 `value` 一起压回 |
-| 三颗按钮 | 进房间后「创建 / 加入」禁用、「离开」可用；开局按钮文本 = `开始对局` / `等待房主开始` / `开始对局 · N/4 座位` |
+| AI 上限 | `maxi(0, capacity - 在线人类数)`；`max_value` 压小后 Range 会把 `value` 一起压回 |
+| 座位数微调框 | 值 = capacity；进房间后 `editable = false`（容量在建房时定死，客人只读显示房主的设置） |
+| 三颗按钮 | 进房间后「创建 / 加入」禁用、「离开」可用；开局按钮文本 = `开始对局` / `等待房主开始` / `开始对局 · N/capacity 座位` |
 
-**开局闸门是纯函数**（`_room_start_block_reason(online_humans, ai_count, is_host, room_state, offline_seats)`，返回 `""` 才放行）：非房主 → 「等待房主开始」；`PLAYING` → 「对局已开始」；非 `LOBBY` → 「房间未就绪」；`total < 3` / `> 4` → 座位数不足 / 超限；有掉线座位 → 等重连。**不看 `all_seats_ready()`**（D12：大厅里它恒为 false）。
+**开局闸门是纯函数**（`_room_start_block_reason(online_humans, ai_count, is_host, room_state, offline_seats = 0, capacity = ROOM_DEFAULT_SEATS)`，返回 `""` 才放行）：非房主 → 「等待房主开始」；`PLAYING` → 「对局已开始」；非 `LOBBY` → 「房间未就绪」；`total < 3` / `> capacity` → 座位数不足 / 超限；有掉线座位 → 等重连。**不看 `all_seats_ready()`**（D12：大厅里它恒为 false）。`capacity` 带默认值 4，所以老的 5 参数调用照样编译、语义不变（`verify_room_page` 的纯函数段就是这么逐格喂边界的）。
 
 **收尾只有一条路**：`_room_teardown()` = `close(reason)` → `attach_session(null)` → 丢掉 `players` 为空的大厅 `GameManager` → 清提示 → `_room_refresh()`；`_room_closing` 闸门防止 `close()` 同步回的 `session_closed` 递归进来。`_room_leave()` / `_close_room_page()` / `_show_start_page()` 都走它。
 
@@ -897,3 +908,48 @@ const START_INTRO_ORDER := [
 1. 开始页入场补间会把子节点 `position.y` 先 +14 再落回，量几何前必须等它播完（`_settle_start_page()`），且比较用距离容差（`_vec_eq()`）而不是 `==`，收尾会留下 1e-4 级残差。
 2. 卡片里的控件不是页的直接子节点（`RoomCreateBtn` 在 `RoomHostCard` 里、`RoomSeatName_i` 在 `RoomSeatsPanel/RoomSeatCard_i` 里），断言一律走 `_start_child()` 递归查找，别用 `page.get_node_or_null("RoomCreateBtn")`。
 3. 3 个在线人类**已经够开局**（D15 下限是 3），B 段别再断言「3 人 + 0 AI 被拦」——要拦只能靠 2 人或掉线座位。
+4. 容量 ≥5 时座位卡几何会变（等分 / 字号 / clip_text）：断言卡宽、卡位、可见张数一律按 `capacity` 算，别写死 240。
+
+### D.12 房间人数 3~8（D17）与诊断开关 --net-trace（D18）
+
+**为什么原来只有 4**：规则层一直支持 3~8（`PlayerManager.MIN_PLAYERS = 3` / `MAX_PLAYERS = 8`，开局页单机选项也是 3~8、牌库 182 张够 8 人各 22 张），只有联机层在 `NetSession.start_host()` / `start_game()` 里把人数 `clampi(..., 2, 4)`，房间页又把 `ROOM_MAX_SEATS` 写死成 4。
+
+**现在的链路**
+
+| 环节 | 行为 |
+|---|---|
+| 建房 | `GameUI._room_start_host()` 取 `_room_seat_capacity()`（微调框 3~8，默认 `ROOM_DEFAULT_SEATS = 4`）→ `s.max_players = capacity` → `start_host(port, capacity, nm)`，后者自己再 clamp 一次 `[MIN_PLAYERS, MAX_PLAYERS]` |
+| ENet 名额 | `capacity + RECONNECT_SLACK(4)`：容量 8 → 12 个连接名额，重连 / 观战不会被 ENet 直接拒 |
+| 下发 | welcome 带 `max_players`，客人 `_client_on_welcome()` 覆盖自己的 `max_players` → `seat_capacity()` 两端一致 |
+| 开局 | `start_game(total, ai)` 里 `_player_count = clampi(total, 3, 8)`；容量 8 + 5 AI = 8 人 |
+| 改容量 | 只在建房前；进房后微调框 `editable = false`。**中途改会让「ENet 名额 / 满员拒绝 / 座位卡张数」三处判断前后矛盾**，所以不提供 |
+
+**6~8 人牌桌的状态区约束**：`InfoLabel` 只有 460×88 / 14px / 最多 4 行（`INFO_LABEL_MAX_LINES`），下面是 y=152 的 `TableLabel`。`_format_player_status()` 因此改成：名字链每 `PLAYER_STATUS_PER_LINE = 4` 人强制换行；AI 手牌行同样每 4 条换行；两者加起来若已占满 4 行，「补充规则 / 方向」不再追加（宁可少显示次要信息，也不能压到桌面行）。3~4 人时输出与旧版逐字相同。
+
+**AI 节流按人数缩短**（`GameUI._net_ai_delay()`）：默认 1.2s，`ai_count >= 3` → 0.8s，`>= 5` → 0.6s。7 个 AI 一轮从 8.4s 压到约 4.2s。
+
+**`--net-trace`（D18）**
+
+```bat
+:: 桌面双开（拓扑 A：手机当房主时，PC 两开当客人）
+godot --path . --net-trace --position 0,0
+godot --path . --net-trace --position 1200,0
+:: Android：命令行参数走 intent extra 不方便，默认在 UI 里断开再连即可；
+:: 需要抓时用 adb shell am start 附 --es ... 或在导出预设里带参数
+adb logcat -s godot:V
+```
+
+每笔权威事件一行，主机 / 客人各一份：
+
+```
+[net] HOST seat=0 tick=4 ev=pass hash=12a5f271
+[net] CLIENT seat=0 tick=4 ev=pass hash=12a5f271
+```
+
+`tick` = 本地 `event_log.size()`，`hash` = `state_hash()` 的低 32 位。**两端从第一笔开始逐行对齐**：第一行 `tick`/`hash` 就对不上 → 开局配置 / 洗牌分叉；中间某行开始不同 → 那一笔的 `ev` 就是元凶；出现 `CLIENT mismatch` / `DESYNC` 行则是逐笔比对已经失败（`_client_on_applied` 里判定）。`trace_log` 是同批行的内存副本（上限 512 行，`enable_trace(false)` 清空），无头测试直接断言它，不必抓 stdout。
+
+**Android 权限**：ENet 要建 UDP socket，APK 必须有 `android.permission.INTERNET`。`export_presets.cfg` 里跑 `permissions/internet=false` 时，表现是「房间建得起来、客人永远 CONNECTING」，且 logcat 里没有权限拒绝的显式报错 —— 这是 `pre1005.1` 真机联调卡住的真因。导出后一定要复核：
+
+```bat
+aapt2 dump permissions <apk>   :: 必须同时看到 INTERNET 与 VIBRATE
+```
