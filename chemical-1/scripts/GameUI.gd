@@ -1422,14 +1422,20 @@ func _start_make_toggle(node_name: String, text: String, pos: Vector2) -> Button
 
 
 # -------- 动效：入场错峰淡入 + 装饰牌缓慢浮动（只动子节点，不动页面级 modulate）--------
+# 入场名单必须覆盖开始页上每一个可见节点（顺序 = 视觉从上到下 / 从左到右）。
+# 漏登记 = 那个节点不淡入也不上浮，页面淡入一结束就"抢先"以终态出现（Step 4 的
+# RoomEntryBtn 就这么漏过一次）—— 测试 START_INTRO_ORDER 覆盖性断言会拦住这类遗漏。
+const START_INTRO_ORDER := [
+	"StartTitle", "StartSubtitle", "StartAccent", "StartMeta", "DecorCards",
+	"SettingsCard", "StartRuleHint", "RoomEntryBtn", "StartButton", "TutorialBtn", "ExitButton",
+]
+
+
 func _animate_start_page() -> void:
 	if not start_page:
 		return
 	_page_deco_float(start_page)
-	_animate_page_intro(start_page, [
-		"StartTitle", "StartSubtitle", "StartAccent", "StartMeta", "DecorCards",
-		"SettingsCard", "StartRuleHint", "StartButton", "TutorialBtn", "ExitButton",
-	])
+	_animate_page_intro(start_page, START_INTRO_ORDER)
 
 
 # 通用：任意页面子节点错峰淡入（第 i 个节点延迟 i×50ms；每个节点一条独立补间，

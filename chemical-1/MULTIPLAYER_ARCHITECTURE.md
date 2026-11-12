@@ -458,7 +458,7 @@ func shuffle(rng_seed: int = -1) -> void
 | **P11-C1-b 会话层** ✅ | `NetSession`（房间 / 座位 / 主机权威 / 两阶段冻结 / 托管 / 重连 / 观战）+ 真实 ENet 三方测试 | 111 项断言全绿；`state_hash` 逐事件一致 | 已完成 |
 | **P11-C1-c Step 0 冒烟** ✅ | `tests/net_smoke.gd`：3 个独立进程真机联机，逐笔打印 `applied#N ... hash=H`，末尾打 `final_hash` 供三端比对 | 三端 `final_hash` 相同；本机实测整局 32 笔事件、0 拒绝、0 分叉 | 已完成 |
 | **P11-C1-c Step 3 UI 联机化** ✅ | `GameUI.attach_session()` 装配口（视图归属 D6 / 热座关闭 D7 / AI 计时器门控 D8 / 结果分派 D9 / 弹窗收窗 D10 / 退出 D11）+ 10 处动作走 `ActionRouter`；`verify_ui_online` 93 项 | A 段假会话 69 项 + B 段 3 实例真 ENet 24 项全绿；单机全量零回归 | 已完成 |
-| **P11-C1-c Step 4 房间页** ✅ | `GameUI._build_room_page()`（代码建页）：建房 / 加入 / 4 张座位卡 / AI 补位 / 开局闸门 / 离开收尾；`verify_room_page` 142 项 | A 段零网络 111 项 + B 段 3 实例真 ENet 31 项（页面建房 → 2 客人加入 → 3 人 + 1 AI 开局 → 三端进牌桌）全绿；不改 `.tscn`，全量 46 套零回归 | 已完成 |
+| **P11-C1-c Step 4 房间页** ✅ | `GameUI._build_room_page()`（代码建页）：建房 / 加入 / 4 张座位卡 / AI 补位 / 开局闸门 / 离开收尾；`verify_room_page` 151 项 | A 段零网络 120 项 + B 段 3 实例真 ENet 31 项（页面建房 → 2 客人加入 → 3 人 + 1 AI 开局 → 三端进牌桌）全绿；不改 `.tscn`，全量 46 套零回归 | 已完成 |
 | **P11-C1 局域网** | `ActionRouter` + 房间页 + 接真机 UI；配 Tailscale 跨网直连 | 同 WiFi / Tailscale 下 3~4 人打完一整局，`state_hash` 全程一致 | 剩 ~2 天 |
 | **P11-C2 跨 NAT** | `webrtc-native` 插件 + 信令 + TURN 兜底 | 异地 2 人（无端口映射）输入房间码即可开局，失配自动修复 | 3~5 天 |
 | **P11-D 打磨** | 超时自动 pass、断线重连、RTT 显示、回放、房间码 UI 优化 | 拔网线 30s 内可恢复；回放可完整重现一局 | 2~3 天 |
@@ -867,6 +867,17 @@ StartPage
 
 座位卡**固定 4 张、只改文字**：座位数只在 1..4 之间变，动态重建既麻烦又让测试取节点不稳（改名只在 `RoomSeatName_i` / `RoomSeatState_i`）。
 
+**开始页入场名单**（`START_INTRO_ORDER`，`GameUI.gd:1428`）——**在开始页加按钮必须同步登记**：
+
+```gdscript
+const START_INTRO_ORDER := [
+	"StartTitle", "StartSubtitle", "StartAccent", "StartMeta", "DecorCards",
+	"SettingsCard", "StartRuleHint", "RoomEntryBtn", "StartButton", "TutorialBtn", "ExitButton",
+]
+```
+
+`_animate_page_intro()` 只认这个名单：名单里的节点会被摆成 `modulate.a = 0` + `position.y + 14`，然后按 `i × 50ms` 错峰淡入上浮；**不在名单里的节点什么都不做** —— 页面级淡入（`_fade_in_page`，0.2s）一结束，它就以终态"抢先"出现。Step 4 的 `RoomEntryBtn` 就这么漏过一次，肉眼现象是「这颗按钮没有入场动画，别的按钮还在淡入它已经定住了」。回归断言在 `verify_room_page._test_intro_animation()`：① 开始页直接子节点里的 `Button` 必须全部在名单里；② 名单里没有失效名字；③ `RoomEntryBtn` 排在 `StartButton` 之前；④ 真回一次开始页，首帧 `a≈0` 且 `y≈500`，播完 `a≈1` 且落回 486。
+
 **`_room_refresh()` 是唯一的派生点**（任何 `room_changed` / AI 数值变化 / 开关页都调它）：
 
 | 派生项 | 规则 |
@@ -886,4 +897,3 @@ StartPage
 1. 开始页入场补间会把子节点 `position.y` 先 +14 再落回，量几何前必须等它播完（`_settle_start_page()`），且比较用距离容差（`_vec_eq()`）而不是 `==`，收尾会留下 1e-4 级残差。
 2. 卡片里的控件不是页的直接子节点（`RoomCreateBtn` 在 `RoomHostCard` 里、`RoomSeatName_i` 在 `RoomSeatsPanel/RoomSeatCard_i` 里），断言一律走 `_start_child()` 递归查找，别用 `page.get_node_or_null("RoomCreateBtn")`。
 3. 3 个在线人类**已经够开局**（D15 下限是 3），B 段别再断言「3 人 + 0 AI 被拦」——要拦只能靠 2 人或掉线座位。
-

@@ -146,7 +146,7 @@ func _vec_eq(a: Vector2, b: Vector2) -> bool:
 # 开始页入场动画会先把子节点 position.y +14 再落回（_animate_page_intro），
 # 量几何前必须等它播完，否则量到的是动画中途的位置
 func _settle_start_page(scene) -> void:
-	var want := {"StartButton": 486.0, "TutorialBtn": 546.0, "ExitButton": 598.0}
+	var want := {"StartButton": 486.0, "RoomEntryBtn": 486.0, "TutorialBtn": 546.0, "ExitButton": 598.0}
 	var deadline := Time.get_ticks_msec() + 4000
 	while Time.get_ticks_msec() < deadline:
 		var ready := true
@@ -172,6 +172,7 @@ func _run() -> void:
 
 	_test_structure(scene)
 	_test_start_page_buttons(scene)
+	await _test_intro_animation(scene)
 	_test_open_close(scene)
 	_test_gate_pure(scene)
 	await _test_fake_session(scene)
@@ -235,7 +236,8 @@ func _test_start_page_buttons(scene) -> void:
 	_check(_vec_eq(sb.position, Vector2(446, 486)), "开始游戏在 (446,486)（实际 %s）" % str(sb.position))
 	_check(_vec_eq(sb.size, Vector2(124, 52)), "开始游戏 124x52（实际 %s）" % str(sb.size))
 	_check(_vec_eq(rb.position, Vector2(582, 486)), "联机对战在 (582,486)（实际 %s）" % str(rb.position))
-	_check(rb.size == Vector2(124, 52), "联机对战 124x52（实际 %s）" % str(rb.size))
+	# 尺寸同样用容差（custom_minimum_size 与字体度量会让高度落到 52.00012 这种值）
+	_check(_vec_eq(rb.size, Vector2(124, 52)), "联机对战 124x52（实际 %s）" % str(rb.size))
 	_check(sb.position.x + sb.size.x <= rb.position.x,
 		"两颗按钮不重叠（%d → %d）" % [int(sb.position.x + sb.size.x), int(rb.position.x)])
 	_check(rb.position.x + rb.size.x <= 1152.0,
@@ -244,6 +246,49 @@ func _test_start_page_buttons(scene) -> void:
 	var eb = scene._start_child("ExitButton")
 	_check(tb != null and _vec_eq(tb.position, Vector2(446, 546)), "教学引导仍在 (446,546)")
 	_check(eb != null and _vec_eq(eb.position, Vector2(476, 598)), "退出程序仍在 (476,598)")
+
+
+# ------------------------------------------------------------
+# 2b) 入场动画：开始页每个按钮都要参与错峰淡入
+#     Step 4 新增「联机对战」时漏登记 START_INTRO_ORDER，表现是它不淡入、不上浮，
+#     页面淡入一结束就以终态"抢先"出现（和其它按钮完全不同步）
+# ------------------------------------------------------------
+func _test_intro_animation(scene) -> void:
+	var order: Array = scene.START_INTRO_ORDER
+	# ① 覆盖性：开始页「直接子节点里的按钮」必须全部登记（以后再加按钮漏加会被抓到）
+	var missing: Array = []
+	for ch in scene.start_page.get_children():
+		if ch is Button and not ch.is_queued_for_deletion():
+			if order.find(String(ch.name)) < 0:
+				missing.append(String(ch.name))
+	_check(missing.is_empty(), "开始页所有按钮都登记进 START_INTRO_ORDER（漏：%s）" % str(missing))
+	# ② 不陈旧：登记的名字都得真的存在（改名 / 删节点后忘了改名单）
+	var absent: Array = []
+	for n in order:
+		if scene.start_page.get_node_or_null(String(n)) == null:
+			absent.append(String(n))
+	_check(absent.is_empty(), "START_INTRO_ORDER 里没有失效名字（缺：%s）" % str(absent))
+	# ③ 视觉顺序：联机对战排在开始游戏之前（同一行，左 → 右）
+	var i_room: int = order.find("RoomEntryBtn")
+	var i_start: int = order.find("StartButton")
+	_check(i_room >= 0 and i_start > i_room, "联机对战排在开始游戏之前（%d → %d）" % [i_room, i_start])
+
+	# ④ 真跑一遍：回到开始页那一帧，联机对战 = 透明 + 靠下 14px（和别的按钮同时起步）
+	scene._show_start_page()
+	var rb = scene._start_child("RoomEntryBtn")
+	_check(rb != null, "联机对战按钮存在")
+	if rb == null:
+		return
+	var sb = scene._start_child("StartButton")
+	_check(float(rb.modulate.a) < 0.2, "联机对战从透明淡入（a=%.2f）" % float(rb.modulate.a))
+	_check(rb.position.y > 490.0, "联机对战自下方上浮（y=%.1f，基准 486）" % rb.position.y)
+	_check(sb != null and float(sb.modulate.a) < 0.2,
+		"开始游戏同时也在透明态 —— 两颗同批起步")
+	# ⑤ 播完落位
+	await _settle_start_page(scene)
+	_check(abs(float(rb.modulate.a) - 1.0) < 0.01,
+		"联机对战淡入收敛到不透明（a=%.2f）" % float(rb.modulate.a))
+	_check(_vec_eq(rb.position, Vector2(582, 486)), "联机对战落回 (582,486)（实际 %s）" % str(rb.position))
 
 
 # ------------------------------------------------------------
@@ -510,6 +555,18 @@ func _free_all(uis: Array) -> void:
 			ui.queue_free()
 
 
+# 端口探测：B 段跑真实 ENet，固定端口一旦被占（并发跑两遍 / 上次没退干净）就会假失败。
+# 从 PORT_ROOM 起逐个试，第一个「页面建房成功」的端口就是本次用的端口。
+func _pick_free_port(ui) -> int:
+	for p in range(PORT_ROOM, PORT_ROOM + 20):
+		ui._room_host_port_spin.value = p
+		ui.call("_room_start_host")
+		if ui.net_session != null and ui.net_session.is_host():
+			return p
+		ui.call("_room_teardown")
+	return -1
+
+
 
 
 func _test_real_enet() -> void:
@@ -521,12 +578,11 @@ func _test_real_enet() -> void:
 
 	var host = uis[0]
 	host.call("_open_room_page")
-	host._room_host_port_spin.value = PORT_ROOM
-	host.call("_room_start_host")
-	await process_frame
-	_check(host.net_session != null and host.net_session.is_host(),
-		"B：房主用页面建房成功（提示：%s）" % String(host._room_hint_label.text))
-	if host.net_session == null or not host.net_session.is_host():
+	var port: int = _pick_free_port(host)
+	_check(port > 0, "B：房主用页面建房成功（端口 %d）" % port)
+	if port <= 0:
+		_check(false, "B：%d~%d 全被占用，真机段跑不了（提示：%s）"
+			% [PORT_ROOM, PORT_ROOM + 19, String(host._room_hint_label.text)])
 		_free_all(uis)
 		return
 	_check(host._room_page.visible, "B：建房后仍停在房间页等客人")
@@ -539,7 +595,7 @@ func _test_real_enet() -> void:
 		var guest = uis[i]
 		guest.call("_open_room_page")
 		guest._room_join_name_edit.text = "客人%d" % i
-		guest._room_join_port_spin.value = PORT_ROOM
+		guest._room_join_port_spin.value = port
 		guest._room_addr_edit.text = "127.0.0.1"
 		guest.call("_room_join")
 		_check(guest.net_session != null,
