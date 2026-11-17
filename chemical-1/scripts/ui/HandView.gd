@@ -19,10 +19,6 @@ func _init(ui) -> void:
 # ============================================================
 func _update_hand_buttons() -> void:
 	if not _ui.hand_container or not _ui.game_manager: return
-	# 重建会销毁当前 hover 的按钮，先还原信息栏，避免详情文本滞留
-	_ui._restore_card_info()
-	# 拖拽幽灵牌 / 指示线也是容器子节点，重建前必须收掉，否则引用悬空
-	_ui._cancel_drag()
 	var actor = _ui.game_manager.get_current_player()
 	# 视角座位：单人类模式永远看自己（AI 回合只读）；热座模式只看当前人类。
 	# 旧实现在 AI 回合直接把手牌区换成一句「等待 XX 行动中...」，
@@ -34,6 +30,36 @@ func _update_hand_buttons() -> void:
 		_ui._hand_read_only = view == null or not _ui._net_can_operate()
 	else:
 		_ui._hand_read_only = view != null and actor != null and view != actor
+	# 拖拽幽灵牌 / 指示线也是容器子节点，重建前必须收掉，否则引用悬空
+	_ui._cancel_drag()
+
+	# -------- 复用路径（Slice 2b）--------
+	# 「牌还是那几张、顺序也没变」时，画面里真正会变的只有**状态**：选中 / 只读 /
+	# 重叠间距（容器改宽）/ 紧凑档。旧实现一律整排重建：n 个 Button + 5n 个 Label
+	# 全部销毁重造、价态文本逐张重新测量、入场补间全部 kill —— 一次点选、一次状态
+	# 刷新就能卡一帧。这里改成节点零增删：只重刷样式 / 层级，再按当前几何重新落位。
+	# 判据用**卡片对象**而不是索引：拖拽 / 排序后索引会变，对象不会。
+	if _can_reuse_hand_buttons(view):
+		# 悬停状态与旧行为保持一致：重建会清掉悬停，再按当前鼠标位置重新判定。
+		# 复用路径同样清零 —— 否则 _hover_idx 会残留（状态机以为牌还抬着，
+		# 玩家真移上去时 _set_hover_index 直接早退，牌就再也不浮起来）。
+		_ui._restore_card_info()
+		_ui._hover_idx = -1
+		_ui._hover_pending_idx = -1
+		_refresh_all_card_visuals()
+		_ui._layout_hand_cards()
+		# 抽牌 / 发牌入场（A3）：只对「没见过的卡片对象」播一次 —— 复用路径同样要判一次，
+		# 因为手牌对象可能一个都没变、但玩家确实是刚抽到它（_hand_seen_cards 被清过）
+		_ui._animate_new_hand_cards()
+		if not _ui._hand_read_only:
+			_ui._restore_hover_after_rebuild()
+		_update_ai_schedule(actor)
+		_ui._update_hand_reorder_button()
+		return
+
+	# -------- 重建路径：牌换了 / 顺序变了 / 视角空了 --------
+	# 重建会销毁当前 hover 的按钮，先还原信息栏，避免详情文本滞留
+	_ui._restore_card_info()
 	# 选中快照必须抢在 hand_buttons.clear() 之前：旧按钮上的 card meta 是
 	# 「玩家看见并点中的那张牌」的唯一可靠来源（数据层顺序可能已被拖拽 / 抽牌排序改过）
 	var keep_selected: Array = _ui._selected_cards(view)
@@ -51,14 +77,7 @@ func _update_hand_buttons() -> void:
 	_ui.hand_buttons.clear()
 	_ui.ai_triggered = false
 
-	# AI 调度与手牌渲染解耦：即使显示的是玩家自己的牌，也要继续推动 AI 行动
-	# 联机（Step 3，D8）：AI 只能由主机 _update_net() 代打（走 host_step_ai → 广播）。
-	#   客人若也跑这个计时器，就是本地私自 play_cards → 立刻与主机分叉。
-	var ai_acting: bool = actor != null and actor.is_ai and not _ui.game_manager.is_game_over()
-	if ai_acting and not _ui.ai_triggered and _ui.net_session == null:
-		_ui.ai_triggered = true
-		var timer = _ui.get_tree().create_timer(1.5)
-		timer.timeout.connect(_ui._ai_auto_play)
+	_update_ai_schedule(actor)
 
 	if view == null:
 		# 热座的 AI 回合：谁的牌都不能显示（同屏多人会互相看到手牌）
@@ -105,6 +124,91 @@ func _update_hand_buttons() -> void:
 	_ui._animate_new_hand_cards()
 	# 「按序」按钮只在「手动排列 + 可操作阶段」出现
 	_ui._update_hand_reorder_button()
+
+
+# 旧按钮能否直接复用：牌数相同、逐张对象相同（顺带覆盖了「顺序变了」）
+# view 为 null（热座 AI 回合 / 观战）时一律走重建 —— 那时手牌区本来就不该有牌
+func _can_reuse_hand_buttons(view) -> bool:
+	if view == null or _ui.hand_buttons.is_empty():
+		return false
+	if _ui.hand_buttons.size() != view.hand.size():
+		return false
+	for i in range(view.hand.size()):
+		var b = _ui.hand_buttons[i]
+		if not is_instance_valid(b) or b.get_meta("card", null) != view.hand[i]:
+			return false
+	return true
+
+
+# 复用路径：把每张牌的「状态相关」外观重刷一遍（样式 / 层级 / 鼠标过滤），
+# 位置与缩放交给紧随其后的 _layout_hand_cards()（瞬时整排落位）。
+func _refresh_all_card_visuals() -> void:
+	for i in range(_ui.hand_buttons.size()):
+		_apply_card_state_style(i)
+
+
+# 选中 / 只读 / 悬停 三条状态 → 样式 + 层级 + 鼠标过滤（不动位置与缩放）
+func _apply_card_state_style(idx: int) -> void:
+	if idx < 0 or idx >= _ui.hand_buttons.size():
+		return
+	var btn = _ui.hand_buttons[idx]
+	if not is_instance_valid(btn):
+		return
+	# 入场补间还没走完就来了状态刷新：旧实现是靠「重建 + kill」收尾的，
+	# 复用路径必须自己做同样的事 —— 否则它会在之后 300ms 里一直改 position，
+	# 把悬停抬起 / 选中落位的补间顶掉（实测：按住抬到 20 被拉回 18）。
+	var old_deal = btn.get_meta("deal_in_tween", false)
+	if old_deal is Tween and old_deal.is_valid():
+		old_deal.kill()
+		btn.modulate = Color(1, 1, 1, 1)
+	var is_selected: bool = idx in _ui.selected_indices
+	# 两套样式仍出自工厂（数值唯一真源）；高频重绘用共享模板，零分配
+	var sb_normal = _ui._panel_style_template("card_selected" if is_selected else "card")
+	var sb_hover = _ui._panel_style_template("card_hover_selected" if is_selected else "card_hover")
+	btn.set_meta("sb_normal", sb_normal)
+	btn.set_meta("sb_hover", sb_hover)
+	# 悬停中的牌保持 hover 外观（否则刚选中的牌会被 normal 样式「按回」未悬停态）
+	var sb = sb_hover if idx == _ui._hover_idx else sb_normal
+	btn.add_theme_stylebox_override("normal", sb)
+	btn.add_theme_stylebox_override("hover", sb)
+	btn.add_theme_stylebox_override("pressed", sb)
+	# 层级：悬停 > 选中 > 普通（与 _apply_hover / _layout_hand_cards 同规则）
+	if idx == _ui._hover_idx:
+		btn.z_index = _ui.Z_HAND_HOVER
+	else:
+		btn.z_index = _ui.Z_HAND_SELECTED if is_selected else 0
+	# 只读：牌只做展示，不接鼠标（否则会误改选中态）
+	btn.mouse_filter = Control.MOUSE_FILTER_IGNORE if _ui._hand_read_only else Control.MOUSE_FILTER_STOP
+	# 触屏档字号（号码 / 族名 / 原子量）只在构建时写过一次：档位变了必须补刷，
+	# 否则切到触屏后复用旧按钮，这三处还是桌面小字（符号 / 名称 / 价态由 layout 重算，不用管）
+	if btn.get_meta("touch_fonts", not _ui._touch_ui) != _ui._touch_ui:
+		_apply_card_build_fonts(btn)
+		btn.set_meta("touch_fonts", _ui._touch_ui)
+
+
+# 牌面上「只在构建时写一次」的字号：触屏档需要整体放大
+func _apply_card_build_fonts(btn: Button) -> void:
+	var l_num = btn.get_node_or_null("CardNumber")
+	if l_num != null:
+		l_num.add_theme_font_size_override("font_size", _ui._touch_fs(12, 2))
+	var l_group = btn.get_node_or_null("CardGroup")
+	if l_group != null:
+		l_group.add_theme_font_size_override("font_size", _ui._touch_fs(11, 2))
+	var l_mass = btn.get_node_or_null("CardMass")
+	if l_mass != null:
+		l_mass.add_theme_font_size_override("font_size", _ui._touch_fs(9, 3))
+
+
+# AI 调度与手牌渲染解耦：即使显示的是玩家自己的牌，也要继续推动 AI 行动。
+# 联机（Step 3，D8）：AI 只能由主机 _update_net() 代打（走 host_step_ai → 广播）。
+#   客人若也跑这个计时器，就是本地私自 play_cards → 立刻与主机分叉。
+# 复用路径与重建路径都要走这里 —— 否则 AI 回合里手牌没变化 → 不重建 → AI 永远不动。
+func _update_ai_schedule(actor) -> void:
+	var ai_acting: bool = actor != null and actor.is_ai and not _ui.game_manager.is_game_over()
+	if ai_acting and not _ui.ai_triggered and _ui.net_session == null:
+		_ui.ai_triggered = true
+		var timer = _ui.get_tree().create_timer(1.5)
+		timer.timeout.connect(_ui._ai_auto_play)
 
 
 # 人类座位列表（PlayerManager 保证人类排在 0..H-1，H = 总人数 - AI 数）
@@ -1023,15 +1127,18 @@ func _build_card_button(card, idx: int) -> Button:
 	# 牌对象本身也存一份：重建 / 重排后靠它确认"这个按钮画的是哪张牌"，
 	# 不再依赖 hand_idx（索引会随重排变化）
 	btn.set_meta("card", card)
+	# 记录「这一批牌面字号是按哪个档位生成的」：复用路径靠它判断要不要补刷字号
+	btn.set_meta("touch_fonts", _ui._touch_ui)
 	# 不用原生 tooltip：它会浮在鼠标旁遮住整排手牌，改由下方 CardInfoLabel 显示
 
 	var is_selected: bool = idx in _ui.selected_indices
 	# 正常态 / 选中态走同一套规范（圆角 8、1px 中性边 / 2px 橙金边、轻投影）
-	var style_base = _ui._make_panel_style("card_selected" if is_selected else "card")
+	# 用共享模板（只读）：所有牌共用同一份 StyleBox，重建一圈不再产生 2n 次分配
+	var style_base = _ui._panel_style_template("card_selected" if is_selected else "card")
 
 	# 悬停样式：未选中 → 浅蓝；已选中 → 保留黄色系（只加深），
 	# 否则悬停会把"已选中"的浅黄整个盖掉，用户看不出哪张被选了
-	var style_hover = _ui._make_panel_style("card_hover_selected" if is_selected else "card_hover")
+	var style_hover = _ui._panel_style_template("card_hover_selected" if is_selected else "card_hover")
 
 	btn.add_theme_stylebox_override("normal", style_base)
 	# 引擎的 hover / pressed / focus 态必须一并接管，否则会回退到默认（深色）主题：
@@ -1053,6 +1160,7 @@ func _build_card_button(card, idx: int) -> Button:
 	btn.add_child(l_num)
 
 	var l_group = Label.new()
+	l_group.name = "CardGroup"          # 具名：触屏档复用路径按名字补刷字号（11 → 13）
 	l_group.text = card.group
 	l_group.add_theme_font_size_override("font_size", _ui._touch_fs(11, 2))
 	# 固定深灰：不跟随元素类别色（类别色深浅差异大，族名要保持稳定可读）
@@ -1094,7 +1202,7 @@ func _build_card_button(card, idx: int) -> Button:
 	l_val_chip.set_meta("row_x", 5.0)
 	l_val_chip.set_meta("row_w", 85.0)
 	l_val_chip.set_meta("row_align", HORIZONTAL_ALIGNMENT_CENTER)
-	l_val_chip.add_theme_stylebox_override("panel", _ui._make_panel_style("valence_chip"))
+	l_val_chip.add_theme_stylebox_override("panel", _ui._panel_style_template("valence_chip"))
 	btn.add_child(l_val_chip)
 
 	var l_val = Label.new()
@@ -1328,7 +1436,32 @@ func _apply_card_selection(index: int) -> void:
 	# （Android 需要在 export_presets 打开 permissions/vibrate，已开；桌面 / 无马达设备静默无效）
 	if _ui._touch_ui:
 		Input.vibrate_handheld(30)
-	_ui._update_hand_buttons()
+	# 只刷新这一张（Slice 2b）：旧实现走 _update_hand_buttons() 整排重建 ——
+	# 一次点选要重造 n 个 Button + 5n 个 Label、重测全部价态文本、kill 掉所有补间。
+	_refresh_card_selection_visual(index)
+	_ui._update_hand_reorder_button()
 	_ui._update_action_panel()
 	_ui._update_card_info_label()
+
+
+# -------- 选中 / 取消选中：单张刷新（Slice 2b，不再整排重建）--------
+# 选中只影响四件事：两套 stylebox、z_index、缩放、触屏档常驻上浮。
+# 牌面内容（原子序数 / 族 / 符号 / 名称 / 价态 / 紧凑对齐 / base_pos）与选中无关，一律不动，
+# 所以「点一下重建 200 个节点」是纯浪费 —— 这里只改这一张。
+func _refresh_card_selection_visual(idx: int) -> void:
+	_apply_card_state_style(idx)
+	if idx < 0 or idx >= _ui.hand_buttons.size():
+		return
+	# 悬停中的牌位置交给悬停状态机（它已经抬起了），这里只换了样式与层级
+	if idx == _ui._hover_idx:
+		return
+	var btn = _ui.hand_buttons[idx]
+	if not is_instance_valid(btn):
+		return
+	var is_selected: bool = idx in _ui.selected_indices
+	# 落位规则与 _apply_hover(btn, false) 一致：触屏常驻上浮 + 选中 1.04 缩放
+	var base: Vector2 = btn.get_meta("base_pos", btn.position)
+	var rest_lift: float = _ui._selected_lift() if is_selected else 0.0
+	_ui._tween_card_y(btn, base.y - rest_lift)
+	_ui._tween_card_scale(btn, _ui.HAND_SELECT_SCALE if is_selected else 1.0)
 

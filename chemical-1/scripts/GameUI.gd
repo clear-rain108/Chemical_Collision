@@ -536,6 +536,11 @@ func _make_panel_style(kind: String) -> StyleBoxFlat:
 	return ui_theme._make_panel_style(kind)
 
 
+# 共享样式模板（只读，Slice 2b）：高频重绘点用它，避免「每次重建都新分配一批 StyleBox」
+func _panel_style_template(kind: String) -> StyleBoxFlat:
+	return ui_theme._panel_style_template(kind)
+
+
 # 统一填充底色 / 描边 / 圆角 / 阴影，避免各调用点各写一套数值
 func _style_base(sb: StyleBoxFlat, bg: Color, border: Color, width: int, radius: int, shadow: bool) -> void:
 	ui_theme._style_base(sb, bg, border, width, radius, shadow)
@@ -4613,6 +4618,10 @@ func _on_card_clicked(index: int) -> void:
 
 func _apply_card_selection(index: int) -> void:
 	ui_hand._apply_card_selection(index)
+
+# 选中 / 取消选中后的单张刷新（Slice 2b：不再整排重建）
+func _refresh_card_selection_visual(idx: int) -> void:
+	ui_hand._refresh_card_selection_visual(idx)
 
 # 「直接出牌 ⚡」= 先出后验（P14-C）：玩家只负责选牌，牌型交给引擎按固定优先级挑。
 # 与旧的「出牌(选牌型)」并存 —— 老玩家 / 教程仍走三步，新玩家一键出。

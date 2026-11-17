@@ -16,9 +16,9 @@ extends SceneTree
 
 var fails: int = 0
 
-# ---- 测试反射调用的私有方法（tools/gen_facade_list.gd 生成，76 个）----
+# ---- 测试反射调用的私有方法（tools/gen_facade_list.gd 生成，77 个）----
 const MUST_HAVE_METHODS := [
-	"_apply_card_compact", "_begin_drag", "_build_card_button", "_can_reorder_hand",
+	"_apply_card_compact", "_apply_card_selection", "_begin_drag", "_build_card_button", "_can_reorder_hand",
 	"_card_core_rect", "_card_hover_rect", "_clear_net_over_notice", "_ensure_log_panel",
 	"_finish_drag", "_get_card_color", "_hand_order_sig", "_hand_view_player",
 	"_help_valence_text", "_hide_warning_toast", "_hit_card_at", "_hotseat_handoff_pending",
@@ -30,7 +30,8 @@ const MUST_HAVE_METHODS := [
 	"_make_panel_style", "_my_seat", "_net_can_operate", "_net_wait_text", "_on_card_clicked",
 	"_on_discard_mode", "_on_hand_card_hover", "_on_hand_reorder", "_on_hint_toggled",
 	"_on_hotseat_handoff_confirmed", "_on_pass", "_on_quit_game", "_on_start_game",
-	"_on_start_tutorial", "_online_on_session_closed", "_open_room_page", "_refresh_ui",
+	"_on_start_tutorial", "_online_on_session_closed", "_open_room_page", "_panel_style_template",
+	"_refresh_ui",
 	"_room_bind_session", "_room_join", "_room_leave", "_room_refresh", "_room_start",
 	"_room_start_host", "_room_teardown", "_sel_cards", "_set_hover_index", "_set_log_visible",
 	"_show_center_warning", "_show_end_page", "_show_info", "_show_sequence_constraint_dialog",

@@ -22,7 +22,31 @@ func _init(ui) -> void:
 # kind: card / card_selected / card_hover / card_hover_selected
 #       mini_card / mini_card_hover / button / tab_on / tab_off
 #       toast_warning / toast_info
+#
+# 两个入口，`match` 只有一份（数值仍只有一处真源）：
+#   · _make_panel_style(kind)      → **全新实例**。要改属性的调用点必须用它
+#     （hover / pressed / disabled 只是「同款换色」，改完挂在别的控件上）。
+#   · _panel_style_template(kind)  → **共享缓存实例（只读）**。手牌 / 小卡这类
+#     高频重绘点用它：同一 kind 全项目只有一份 → 重建一圈手牌不再产生 2n 个
+#     StyleBoxFlat（20 张牌 = 40 次分配 → 0 次）。
+# 坑：模板一旦被某个调用点改属性，全项目所有同款控件都会跟着变 —— 所以
+# 「要改属性」与「只挂上去」两条路必须分开，不能只留一个函数。
+var _style_cache: Dictionary = {}
+
+
 func _make_panel_style(kind: String) -> StyleBoxFlat:
+	return _build_style(kind)
+
+
+func _panel_style_template(kind: String) -> StyleBoxFlat:
+	if _style_cache.has(kind):
+		return _style_cache[kind]
+	var sb := _build_style(kind)
+	_style_cache[kind] = sb
+	return sb
+
+
+func _build_style(kind: String) -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
 	match kind:
 		"card":

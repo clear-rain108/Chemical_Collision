@@ -187,18 +187,46 @@ func update_buttons() -> void:
   + `【重构】UI 层拆分 2/5a-2：手牌视图抽为 ui/HandView.gd`
   （分两笔只为 review：动效与手牌是两块互不相干的断言集，红了一眼能定位）
 
-### Slice 2b —— 性能修复（这一步才改行为）
-- ⬜ 选中/取消只改 1~2 张牌的 stylebox / z_index，不重建
-- ⬜ `update_buttons()` 加签名早退 + 按 `uid` diff 复用旧按钮
-- ⬜ `_make_panel_style` 复用缓存实例（Slice 1 已建缓存，这里统一调用点）
-- ⬜ 新增 `tests/verify_ui_perf.gd`：
-  1. 选中/取消后按钮对象 id 不变
-  2. 同签名连调两次不新建节点（子节点数不变）
-  3. `_make_panel_style("card")` 两次返回同一 Resource 实例
-  4. 桌面签名不变时小卡对象 id 不变
-  5. 操作面板清单不变时按钮 id 不变
-- 验证：`verify_ui_perf`（新）+ 6 套手牌测试 + 全量
-- commit：`【性能】手牌增量刷新：选中不重建 + 同签名早退 + uid 复用`
+### Slice 2b —— 性能修复（这一步才改行为）✅ 2026-11-17 完成
+- ✅ 选中 / 取消选中只改**这一张**牌的样式 / 层级 / 缩放，不再整排重建
+  （`_apply_card_selection` → `_refresh_card_selection_visual()`；
+  旧路径一次点选 = 销毁并重造 n 个 Button + 5n 个 Label + 逐张重测价态文本 + kill 全部补间）
+- ✅ `_update_hand_buttons()` 加**复用路径**（原计划写「签名早退 + 按 uid diff」，
+  实际实现为「按卡片对象逐张比对 → 复用旧按钮」，见下面偏差 1）：
+  `_can_reuse_hand_buttons()` 判「同张数 + 同顺序 + 同对象」→ 只
+  `_refresh_all_card_visuals()` + `_layout_hand_cards()` + 悬停复抬，节点零增删
+- ✅ `_make_panel_style` 拆成两个入口（**没有**把 20 个调用点改成共享实例，见偏差 2）：
+  `_make_panel_style(kind)` = 全新实例（要改属性的调用点）；`_panel_style_template(kind)` =
+  共享缓存实例（只读）。手牌卡面 / 悬停 / 价态圆底三处高频点改用模板 → 一圈手牌 0 次 StyleBox 分配
+- ✅ 新增 `tests/verify_ui_perf.gd`（**28 条断言**，覆盖原计划 5 条中的 3 条）：
+  1. 选中 / 取消后按钮对象 id 不变 + 样式 / 层级 / 缩放 / 同源三态都正确
+  2. 牌没变时重复调用不新建节点（子节点数不变），但选中态必须重刷到位
+  3. `_panel_style_template("card")` 两次同一实例；`_make_panel_style` 每次新实例且不污染模板
+- 结果：root **6098 → 6107 行**（+9：3 个转发 + 注释），`ui/HandView.gd` 1334 → **1430 行**
+- 验证：**48/48 全绿**，重点 `ui_perf`(28 新增) / `motion`(91) / `hand_layout`(225) /
+  `hand_view`(60) / `hand_reorder`(54) / `hand_runtime`(17) / `touch_ui`(65)；`--quit-after 60` 冒烟 0 ERROR / 0 WARNING
+- commit：`【性能】手牌增量刷新：选中不重建 + 同对象复用 + 样式模板缓存`
+
+**本轮与计划的两处偏差**（都是「照原计划写会红测试」才改的）：
+
+1. **「签名早退」改成「按卡片对象复用」**。原计划用渲染签名做纯早退，实测 `verify_motion:296`
+   直接改 `selected_indices` 后调 `_update_hand_buttons()`，要求整排重新落位（缩放回 1.0）。
+   纯早退会跳过落位 → 缩放停在 1.04 → 测试红。改成「复用节点但照常落位」：
+   既不新建节点，也保留了「调一次就与数据对齐」的既有语义（48 套测试一条都不用动）。
+2. **样式缓存拆成两个入口，而不是把 20 个调用点改成共享实例**。21 处调用点里有一半是
+   `var st := _make_panel_style("card")` + `st.bg_color = ...` 的「同款换色」写法，
+   共享实例会被就地改脏（`verify_hand_layout` 断言工厂颜色，立刻红）。
+   所以只让「只挂上去、不改属性」的高频点（手牌卡面 / 悬停 / 价态圆底）用模板，
+   其余保持一次性实例；两条路共用同一个 `_build_style()`，数值真源仍只有一份。
+3. 原计划的第 4、5 条断言（桌面小卡 / 操作面板按钮 id 不变）**推迟到 Slice 3**：
+   那两个构建器还没抽成模块，现在加早退只会把逻辑压进 root 的单体函数里，
+   等 `ui/TableArea.gd`、`ui/ActionPanel.gd` 落地后再顺手做。
+
+> 复用路径必须继续跑的副作用（漏一条就出真 bug）：
+> `_update_ai_schedule()`（否则 AI 回合手牌没变 → 不重建 → AI 永远不动）、
+> `_animate_new_hand_cards()`（`_hand_seen_cards` 被清过时要补播发牌入场）、
+> 悬停牌重新抬起（`_layout_hand_cards` 会把牌摆平，状态机却认为它还抬着）。
+
 
 > **为什么 2a / 2b 必须拆两个 commit**：「搬错了」和「优化改错了」混在一起时，
 > 只有全量测试红才知道是哪一个。
@@ -461,6 +489,23 @@ environment/defaults/default_clear_color=Color(0.902, 0.941, 0.98, 1)
      而全项目调用点一个字都不用改。前提仍是「转发方法名 = 原方法名」这条铁律。
   另：`_process` 保持 root 原样（唯一引擎钩子），只把它调用的 `_update_hand_drag()` /
   `_update_hand_hover()` 换成转发方法 —— R5 的「顺序变化」风险因此为 0。
+- 2026-11-17 **Slice 2b 完成**（本轮唯一改行为的一片）：选中 / 取消只刷这一张、
+  `_update_hand_buttons()` 走「同对象复用」、样式工厂拆「模板 / 一次性实例」两个入口；
+  新增 `tests/verify_ui_perf.gd`（28 条断言），root 6098 → **6107 行**，48/48 全绿。
+  踩出的三条新坑（都是「省掉重建」之后才暴露的隐性依赖，静态检查抓不到，只有测试会红）：
+  6. **复用节点 = 要接手重建原本做的所有收尾**。旧重建路径其实顺手干了五件事，漏一个就出真 bug：
+     `deal_in_tween.kill()`（否则入场补间会在之后 300ms 继续改 position，把悬停抬起顶掉 ——
+     实测「按住抬到 20」被拉回 18）、`_hover_idx = -1` + 重新判定（否则状态机以为牌还抬着，
+     `_set_hover_index` 直接早退、牌再也不浮起来）、`_update_ai_schedule()`（否则 AI 回合手牌没变 →
+     不重建 → AI 永远不动）、`_animate_new_hand_cards()`（`_hand_seen_cards` 被清过时要补播发牌入场）、
+     触屏档字号补刷（`CardNumber` / `CardGroup` / `CardMass` 只在构建时写过 → 切触屏后仍是桌面小字）。
+  7. **纯「签名早退」不成立**：测试会直接改 `selected_indices` 再调 `_update_hand_buttons()`，
+     要求「调一次就与数据对齐」（整排重新落位、缩放回 1.0）。纯早退跳过落位 → 缩放卡在 1.04 →
+     `verify_motion` 红。结论：**复用节点但照常落位**，而不是整函数早退。
+  8. **样式缓存不能无脑共享实例**：现有 21 处调用点里有一半是「取工厂样式 → 就地改 `bg_color`」，
+     共享后一处改色会污染全项目同款控件（`verify_hand_layout` 断言工厂颜色会立刻红）。
+     正确形态是两个入口共用同一个 `_build_style()`：`_make_panel_style` = 一次性实例，
+     `_panel_style_template` = 共享只读模板（只有「挂上去不改属性」的高频点能用）。
 
 
 
