@@ -18,6 +18,22 @@ const ActionRouterScript = preload("res://scripts/net/ActionRouter.gd")
 const NetSessionScript = preload("res://scripts/net/NetSession.gd")
 # 房间页（Step 4）：会话与传输都由页内创建，建好后一律交给 attach_session() 装配
 const ENetTransportScript = preload("res://scripts/net/ENetTransport.gd")
+# UI 层拆分（Slice 1，见 UI_LAYER_REFACTOR.md）：
+# GameUI.gd 从此只做「门面 + 状态持有者」，实现按功能搬进 scripts/ui/*.gd。
+#   · 状态与常量全部留在本文件（测试直读 scene.xxx / scene.CARD_W）
+#   · 模块是 RefCounted，只持有回指 _ui，不碰节点树、不复制任何状态
+#   · 本文件留同名转发方法 → 全项目 100+ 处调用点与 46 套测试零改动
+const UIThemeScript = preload("res://scripts/ui/UITheme.gd")
+const TouchMetricsScript = preload("res://scripts/ui/TouchMetrics.gd")
+const ToastScript = preload("res://scripts/ui/Toast.gd")
+const PageRouterScript = preload("res://scripts/ui/PageRouter.gd")
+
+# 模块实例：_init 里创建（见下方 _init 的注释）。
+# 命名避开 Control 自带的 theme / 已用的 toast_layer，统一 ui_ 前缀。
+var ui_theme = null                      # 样式工厂（panel_style / card_color）
+var ui_touch = null                      # 触屏档几何与字号
+var ui_toast = null                      # 右栏警告 toast
+var ui_router = null                     # 页面切换 + 层容器
 
 # ============================================================
 # 一、页面引用
@@ -181,24 +197,16 @@ const TOUCH_HIT_PAD := 8.0              # 触屏命中外扩缓冲（≈5dp，�
 #   --desktop-ui 真机上强制关掉 —— 排查「是不是触屏档导致的」时用
 # 两者同时出现时**后写的那个赢**（与常见 CLI 习惯一致）。
 # 纯函数（不读全局状态）：测试可以直接喂参数，不用真的重启进程。
+# Slice 1 起实现在 scripts/ui/TouchMetrics.gd（static 方法，脚本级调用
+# GameUIScript.resolve_touch_profile(...) 语义不变 —— verify_touch_flag 用它）。
 static func resolve_touch_profile(is_mobile: bool, args: Array) -> bool:
-	var profile := is_mobile
-	for raw in args:
-		var a := String(raw)
-		if a == "--touch-ui":
-			profile = true
-		elif a == "--desktop-ui":
-			profile = false
-	return profile
+	return TouchMetricsScript.resolve_touch_profile(is_mobile, args)
 
 
 # 当前进程的命令行参数：Godot 自带参数与「-- 之后的用户参数」都扫一遍，
 # 于是 `godot --path . --touch-ui` 与 `godot --path . -- --touch-ui` 都能生效。
 static func touch_profile_args() -> Array:
-	var args: Array = []
-	args.append_array(OS.get_cmdline_args())
-	args.append_array(OS.get_cmdline_user_args())
-	return args
+	return TouchMetricsScript.touch_profile_args()
 
 
 # 联机诊断开关（--net-trace）：装配会话时打开「逐笔事件 + 指纹」追踪。
@@ -325,6 +333,15 @@ var level0_step: int = 0
 var level0_ui_highlight_steps: Array = []
 var level0_flow_steps: Array = []
 var level0_flow_index: int = 0
+
+
+# 模块实例在这里创建（早于 _ready，也早于子节点的 _ready —— 子节点先就绪，
+# 万一有人在子节点里回调本节点的方法，转发目标必须已存在）。
+func _init() -> void:
+	ui_theme = UIThemeScript.new(self)
+	ui_touch = TouchMetricsScript.new(self)
+	ui_toast = ToastScript.new(self)
+	ui_router = PageRouterScript.new(self)
 
 
 # ============================================================
@@ -490,14 +507,7 @@ func _setup_pages() -> void:
 #   OverlayLayer(z=100) → 模态弹窗 + 全屏遮罩，必须盖住手牌（手牌最高 z=20）
 #   ToastLayer(z=110)   → 警告 / 提示，必须盖住模态层
 func _ensure_layers() -> void:
-	if not game_page:
-		return
-	if not is_instance_valid(content_layer):
-		content_layer = _make_layer("ContentLayer", Z_CONTENT)
-	if not is_instance_valid(overlay_layer):
-		overlay_layer = _make_layer("OverlayLayer", Z_SCRIM)
-	if not is_instance_valid(toast_layer):
-		toast_layer = _make_layer("ToastLayer", Z_TOAST)
+	ui_router._ensure_layers()
 
 
 # 开始页控件查找：P6 起人数框 / 规则开关 / 补充规则入口都挂在 SettingsCard 卡片内，
@@ -509,21 +519,7 @@ func _start_child(node_name: String) -> Node:
 
 
 func _make_layer(layer_name: String, z: int) -> Control:
-	var layer := Control.new()
-	layer.name = layer_name
-	layer.z_index = z
-	# 层自身不参与鼠标拾取，事件仍会落到其子节点
-	layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	layer.anchor_left = 0
-	layer.anchor_top = 0
-	layer.anchor_right = 1
-	layer.anchor_bottom = 1
-	layer.offset_left = 0
-	layer.offset_top = 0
-	layer.offset_right = 0
-	layer.offset_bottom = 0
-	game_page.add_child(layer)
-	return layer
+	return ui_router._make_layer(layer_name, z)
 
 
 # -------- 视觉规范工厂：卡牌 / 面板 / 按钮 / toast 的唯一样式来源 --------
@@ -531,90 +527,17 @@ func _make_layer(layer_name: String, z: int) -> Control:
 #       mini_card / mini_card_hover / button / tab_on / tab_off
 #       toast_warning / toast_info
 func _make_panel_style(kind: String) -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	match kind:
-		"card":
-			_style_base(sb, Color(0.973, 0.976, 0.988, 1.0), BORDER_NEUTRAL, BORDER_W, CARD_RADIUS, true)
-		"card_selected":
-			_style_base(sb, Color(1.0, 1.0, 0.82, 1.0), BORDER_SELECT, BORDER_W_ACTIVE, CARD_RADIUS, true)
-		"card_hover":
-			_style_base(sb, Color(0.9, 0.93, 0.98, 1.0), BORDER_FOCUS, BORDER_W_ACTIVE, CARD_RADIUS, true)
-		"card_hover_selected":
-			_style_base(sb, Color(1.0, 0.98, 0.72, 1.0), BORDER_SELECT_HOVER, BORDER_W_ACTIVE, CARD_RADIUS, true)
-		"mini_card":
-			_style_base(sb, Color(0.973, 0.976, 0.988, 0.92), BORDER_NEUTRAL, BORDER_W, CARD_RADIUS, false)
-		"mini_card_hover":
-			_style_base(sb, Color(0.9, 0.93, 0.98, 0.95), BORDER_FOCUS, BORDER_W, CARD_RADIUS, false)
-		"button":
-			# 按钮圆角比卡牌小一档（BUTTON_RADIUS=6）：按钮尺寸更小，8px 在同一屏会显得过圆
-			_style_base(sb, Color(0.173, 0.243, 0.314, 1.0), Color(0.4, 0.55, 0.7, 1.0), BORDER_W, BUTTON_RADIUS, true)
-			sb.content_margin_left = 10
-			sb.content_margin_right = 10
-			sb.content_margin_top = 6
-			sb.content_margin_bottom = 6
-		"log_panel":
-			# 日志底板：白色半透明 + 中性描边，压在浅蓝背景上把日志框住。
-			# 半透明是为了不切断右侧留白的整体感（不透明白卡会像多出一块面板）。
-			_style_base(sb, Color(1.0, 1.0, 1.0, 0.62), BORDER_NEUTRAL, BORDER_W, PANEL_RADIUS, true)
-		"log_title":
-			# 右栏折叠标题条：半透明白底 + 底部 1px 分隔线（叠在同色底板上要能看出是「一条」）
-			_style_base(sb, Color(1.0, 1.0, 1.0, 0.42), Color(0.83, 0.87, 0.92, 1.0), 0, BUTTON_RADIUS, false)
-			sb.border_width_bottom = 1
-			sb.content_margin_left = LOG_TEXT_PAD
-			sb.content_margin_right = 8
-		"log_title_hover":
-			# 悬停只把底色提亮一档，不换描边（避免标题条跳动）
-			_style_base(sb, Color(1.0, 1.0, 1.0, 0.72), Color(0.83, 0.87, 0.92, 1.0), 0, BUTTON_RADIUS, false)
-			sb.border_width_bottom = 1
-			sb.content_margin_left = LOG_TEXT_PAD
-			sb.content_margin_right = 8
-		"valence_chip":
-			# 卡面价态圆底：极浅暖底，把 12~15px 的红色价态文字从白卡面上托起来
-			_style_base(sb, Color(0.98, 0.93, 0.93, 1.0), Color(0, 0, 0, 0), 0, CHIP_RADIUS, false)
-		"tab_on":
-			# 帮助中心 Tab（选中）：白底 + 底部 3px 蓝色下划线
-			_style_base(sb, Color(1.0, 1.0, 1.0, 1.0), Color(0, 0, 0, 0), 0, 0, false)
-			sb.border_color = HELP_C_TAB_ON
-			sb.border_width_bottom = 3
-			sb.content_margin_left = 16
-			sb.content_margin_right = 16
-			sb.content_margin_top = 8
-			sb.content_margin_bottom = 8
-		"tab_off":
-			# 帮助中心 Tab（未选中）：透明底 + 无描边
-			_style_base(sb, Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 0, false)
-			sb.content_margin_left = 16
-			sb.content_margin_right = 16
-			sb.content_margin_top = 8
-			sb.content_margin_bottom = 8
-		"toast_warning":
-			_style_base(sb, Color(1.0, 0.953, 0.851, 0.97), BORDER_WARN, BORDER_W_ACTIVE, PANEL_RADIUS, true)
-		"toast_info":
-			_style_base(sb, Color(1.0, 1.0, 0.85, 0.95), Color(1.0, 0.6, 0.0, 1.0), BORDER_W_ACTIVE, PANEL_RADIUS, true)
-		_:
-			_style_base(sb, Color(0.973, 0.976, 0.988, 1.0), BORDER_NEUTRAL, BORDER_W, CARD_RADIUS, true)
-	return sb
+	return ui_theme._make_panel_style(kind)
 
 
 # 统一填充底色 / 描边 / 圆角 / 阴影，避免各调用点各写一套数值
 func _style_base(sb: StyleBoxFlat, bg: Color, border: Color, width: int, radius: int, shadow: bool) -> void:
-	sb.bg_color = bg
-	sb.border_color = border
-	sb.set_border_width_all(width)
-	sb.set_corner_radius_all(radius)
-	if shadow:
-		sb.shadow_color = SHADOW_COLOR
-		sb.shadow_size = SHADOW_SIZE
-		sb.shadow_offset = SHADOW_OFFSET
+	ui_theme._style_base(sb, bg, border, width, radius, shadow)
 
 
 # 取层时必须保证已创建（脚本内各处直接调用，避免 _ready 之外的入口拿到 null）
 func _layer(kind: int) -> Control:
-	_ensure_layers()
-	match kind:
-		1: return overlay_layer
-		2: return toast_layer
-		_: return content_layer
+	return ui_router._layer(kind)
 
 
 # ============================================================
@@ -625,63 +548,20 @@ func _layer(kind: int) -> Control:
 # 因此不会闪出窗口默认清屏色（深灰）。挂在根节点而非 GamePage，
 # 因为 GamePage 自身在切换时会被隐藏。
 func _ensure_page_backdrop() -> void:
-	if get_node_or_null("PageBackdrop") != null:
-		return
-	var bg := ColorRect.new()
-	bg.name = "PageBackdrop"
-	bg.color = PAGE_BG_COLOR
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bg.z_index = -100
-	add_child(bg)
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	move_child(bg, 0)
+	ui_router._ensure_page_backdrop()
 
 
 func _all_pages() -> Array:
-	return [
-		start_page, game_page, end_page, help_page,
-		get_node_or_null("TutorialPage"),
-	]
+	return ui_router._all_pages()
 
 
 # 目标页淡入；其余页 alpha 复位（避免「淡入中途被切走」留下半透明页）
 func _fade_in_page(page) -> void:
-	if page == null or not is_instance_valid(page):
-		return
-	for p in _all_pages():
-		if p != null and is_instance_valid(p) and p != page:
-			p.modulate.a = 1.0
-	if _page_fade_tween != null and _page_fade_tween.is_valid():
-		_page_fade_tween.kill()
-	page.modulate.a = 0.0
-	_page_fade_tween = create_tween()
-	_page_fade_tween.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	_page_fade_tween.tween_property(page, "modulate:a", 1.0, PAGE_FADE_MS / 1000.0)
+	ui_router._fade_in_page(page)
 
 
 func _show_start_page() -> void:
-	_close_supp_rules()   # 从结束页 / 帮助页回来时不能还停在上一次打开的小页上
-	# Step 4：回开始页 = 离开房间（关会话 + 断开装配，D13）。没有会话时是空操作
-	_close_room_page()
-	# 回开始页 = 开新局：上一个房间 / 上一局的联机终止提示一律作废
-	_clear_net_over_notice()
-	_hide_warning_toast()
-	if start_page: start_page.visible = true
-	if game_page: game_page.visible = false
-	if end_page: end_page.visible = false
-	var tut_page = get_node_or_null("TutorialPage")
-	if help_page: help_page.visible = false
-	if tut_page: tut_page.visible = false
-	_ensure_end_button_connected(_show_start_page)
-
-	# 回到主界面时清空上一局日志，避免残留
-	log_lines.clear()
-	if log_label:
-		log_label.text = "游戏日志:"
-	# 教学局残留的规则提醒也一并清掉（它挂在 ContentLayer 上，会跟着进下一局）
-	_level0_clear_rule_tips()
-	_fade_in_page(start_page)
-	_animate_start_page()   # 子节点错峰淡入 + 装饰牌浮动（不触碰 start_page.modulate）
+	ui_router._show_start_page()
 
 func _on_show_help() -> void:
 	if help_page:
@@ -4342,59 +4222,53 @@ func _on_button_press_scale(btn: Button, down: bool) -> void:
 #   _xxx() -> float   运行时取值（触屏档换成放大后的值）
 # 调用点因此全部改用函数，桌面下返回值与常量逐值相等。
 func _touch_fs(base: int, bonus: int = TOUCH_FS_BONUS) -> int:
-	return base + bonus if _touch_ui else base
+	return ui_touch._touch_fs(base, bonus)
 
 
 func _touch_btn_h(base_h: int) -> int:
-	return maxi(base_h, TOUCH_BTN_MIN_H) if _touch_ui else base_h
+	return ui_touch._touch_btn_h(base_h)
 
 
 func _tool_btn_h() -> float:
-	return float(TOUCH_TOOL_BTN_H) if _touch_ui else float(TOOL_BTN_H)
+	return ui_touch._tool_btn_h()
 
 
 func _tool_btn_top() -> float:
-	return float(TOUCH_TOOL_BTN_TOP) if _touch_ui else float(TOOL_BTN_TOP)
+	return ui_touch._tool_btn_top()
 
 
 func _tool_btn_gap() -> float:
-	return float(TOUCH_TOOL_BTN_GAP) if _touch_ui else float(TOOL_BTN_GAP)
+	return ui_touch._tool_btn_gap()
 
 
 # 工具行左边界：右边界固定 820，间距变宽 → 左边界自动左移（教程高亮框跟着走）
 func _tool_row_left() -> float:
-	return TOOL_BTN_RIGHT - (TOOL_BTN_W_HINT + TOOL_BTN_W_HELP + TOOL_BTN_W_QUIT) - _tool_btn_gap() * 2.0
+	return ui_touch._tool_row_left()
 
 
 func _reorder_btn_left() -> float:
-	return _tool_row_left() - _tool_btn_gap() - REORDER_BTN_W
+	return ui_touch._reorder_btn_left()
 
 
 # 教程第零关「按钮区」高亮框：工具行 bbox 外扩 TOOL_ROW_HL_PAD
 # （DESKTOP 时与 TOOL_ROW_HL_POS / TOOL_ROW_HL_SIZE 逐值相等，见 verify_touch_ui）
 func _tool_row_hl_rect() -> Rect2:
-	var pad := float(TOOL_ROW_HL_PAD)
-	var left := _tool_row_left()
-	return Rect2(
-			Vector2(left - pad, _tool_btn_top() - pad),
-			Vector2(TOOL_BTN_RIGHT - left + pad * 2.0, _tool_btn_h() + pad * 2.0))
+	return ui_touch._tool_row_hl_rect()
 
 
 # 起拖阈值：越过它就开始跟手（触屏 10px ≈7dp，桌面 6px）
-# 触屏「起拖」与「确认重排」刻意分成两档：10px 起拖是为了手指一动牌就跟（消除 300ms 死区），
-# 24px（_drag_threshold）才是松手时判定「真的换位」的门槛 —— 中间那 10~24px 松手会回退成点选。
 func _drag_arm_threshold() -> float:
-	return TOUCH_DRAG_ARM_MOVE if _touch_ui else DRAG_THRESHOLD
+	return ui_touch._drag_arm_threshold()
 
 
 # 确认阈值：鼠标 6px 就够，手指需要 24px 才算有意重排（<24px 视为点选，见 _finish_drag）
 func _drag_threshold() -> float:
-	return TOUCH_DRAG_THRESHOLD if _touch_ui else DRAG_THRESHOLD
+	return ui_touch._drag_threshold()
 
 
 # 选中牌静止时相对 base_pos 的上浮量：触屏常驻上浮，桌面 0（悬停已足够表达）
 func _selected_lift() -> float:
-	return TOUCH_SELECT_LIFT if _touch_ui else 0.0
+	return ui_touch._selected_lift()
 
 
 # -------- 页面级触控放大：开始页 / 帮助页 / 结算页 / 教学页的按钮统一过一遍 --------
@@ -4404,58 +4278,14 @@ func _selected_lift() -> float:
 #   · 字号 +TOUCH_FS_BONUS
 # 容器内的按钮（PanelContainer / VBox）position 会被容器覆盖，改为靠 custom_minimum_size 生效。
 func _apply_touch_sizing(root: Node) -> void:
-	if not _touch_ui or root == null:
-		return
-	for b in _collect_buttons(root):
-		# 幂等：start_page 与补充规则小页是父子关系，会被递归扫两次；
-		# 不打标记的话字号会 +2 +2 叠成 +4
-		if b.has_meta("touch_sized"):
-			continue
-		# 记住原始几何 / 字号：P14-D 的开关可以随时关掉触控档，必须逐颗还原。
-		# 只记第一次（开→关→开 反复切换时，原点始终是桌面档的值）。
-		if not b.has_meta("touch_orig"):
-			b.set_meta("touch_orig", {
-				"size": b.size,
-				"cms": b.custom_minimum_size,
-				"pos": b.position,
-				"fs": b.get_theme_font_size("font_size"),
-			})
-		b.set_meta("touch_sized", true)
-		var old_h: float = b.size.y if b.size.y > 0.0 else b.custom_minimum_size.y
-		if old_h > 0.0 and old_h < float(TOUCH_BTN_MIN_H):
-			var new_h: int = TOUCH_BTN_MIN_H
-			b.custom_minimum_size = Vector2(b.custom_minimum_size.x, new_h)
-			b.size = Vector2(b.size.x, new_h)
-			b.position = Vector2(b.position.x, b.position.y - (new_h - old_h) * 0.5)
-			b.pivot_offset = b.size * 0.5
-		var fs: int = b.get_theme_font_size("font_size")
-		if fs > 0:
-			b.add_theme_font_size_override("font_size", fs + TOUCH_FS_BONUS)
+	ui_touch._apply_touch_sizing(root)
 
 
 # 还原：把 _apply_touch_sizing 改过的按钮逐颗恢复（size / 最小高 / 坐标 / 字号）。
 # 为什么要还原而不是重建页面：这些按钮是代码生成的，位置写在各调用点，
 # 重建一遍等于重跑 _setup_pages（会重连信号、重播入场动画），关个开关不该这么重。
 func _revert_touch_sizing(root: Node) -> void:
-	if root == null:
-		return
-	for b in _collect_buttons(root):
-		if b.has_meta("touch_sized"):
-			b.remove_meta("touch_sized")
-		if not b.has_meta("touch_orig"):
-			continue
-		var orig: Dictionary = b.get_meta("touch_orig")
-		b.remove_meta("touch_orig")
-		# 顺序要紧：最小尺寸 → 字号 → size。
-		# 反过来会被「当前」最小尺寸反复夹住（实测：先写 size 会停在 48，再停在 42 ——
-		# 都是旧字号撑出来的最小高度，看着像没还原）。
-		b.custom_minimum_size = orig["cms"]
-		var fs: int = int(orig["fs"])
-		if fs > 0:
-			b.add_theme_font_size_override("font_size", fs)
-		b.size = orig["size"]
-		b.position = orig["pos"]
-		b.pivot_offset = b.size * 0.5
+	ui_touch._revert_touch_sizing(root)
 
 
 # ============================================================
@@ -4465,73 +4295,33 @@ func _revert_touch_sizing(root: Node) -> void:
 # 桌面上也总得开终端加参数。开始页「触屏界面」开关 = set_touch_ui()，
 # 与命令行 / 平台判定共用同一个 _touch_ui 字段，几何取值函数自然跟着变。
 func is_touch_ui() -> bool:
-	return _touch_ui
+	return ui_touch.is_touch_ui()
 
 
 func set_touch_ui(on: bool) -> void:
-	if on == _touch_ui:
-		_sync_touch_toggle()
-		return
-	_touch_ui = on
-	_touch_ui_manual = true
-	print("[UI] 触屏档案 = %s（开始页开关）" % str(on))
-	_apply_touch_profile_everywhere()
-	_sync_touch_toggle()
+	ui_touch.set_touch_ui(on)
 
 
 # 把当前档位刷到所有已构建的页面 + 游戏页（可逆：关掉时逐颗还原，不重建页面）
 func _apply_touch_profile_everywhere() -> void:
-	for p in [start_page, end_page, get_node_or_null("TutorialPage"), help_page, _supp_rules_page]:
-		if p == null:
-			continue
-		if _touch_ui:
-			_apply_touch_sizing(p)
-		else:
-			_revert_touch_sizing(p)
-	if game_page == null:
-		return
-	# 游戏页：工具行 / 按序按钮吃 _touch_btn_*() 几何，手牌与操作面板吃 _touch_fs()，
-	# 都在下一次重建时取值 —— 这里主动触发一次重建。
-	_style_game_tool_buttons()
-	_reposition_reorder_button()
-	if game_manager != null and not game_manager.is_game_over():
-		_refresh_ui()
+	ui_touch._apply_touch_profile_everywhere()
 
 
 func _reposition_reorder_button() -> void:
-	if not is_instance_valid(_reorder_btn):
-		return
-	var h: float = _tool_btn_h()
-	_reorder_btn.custom_minimum_size = Vector2(REORDER_BTN_W, h)
-	_reorder_btn.size = Vector2(REORDER_BTN_W, h)
-	_reorder_btn.position = Vector2(_reorder_btn_left(), _tool_btn_top())
-	_reorder_btn.add_theme_font_size_override("font_size", _touch_fs(14, 4))
+	ui_touch._reposition_reorder_button()
 
 
 # 开始页开关的文字 / 按下态跟随 _touch_ui（命令行强制开启时也显示「开」）
 func _sync_touch_toggle() -> void:
-	var tg = _start_child("TouchUIToggle")
-	if tg == null:
-		return
-	if tg.button_pressed != _touch_ui:
-		# 不能用 button_pressed = _touch_ui：那会补发 toggled → 触发「已开启」提示 + 重复 set
-		tg.set_pressed_no_signal(_touch_ui)
-	tg.text = "触屏界面 · 开" if _touch_ui else "触屏界面 · 关"
+	ui_touch._sync_touch_toggle()
 
 
 func _on_touch_ui_toggled(pressed: bool) -> void:
-	set_touch_ui(pressed)
-	_start_flash_rule_hint("触屏界面已开启（按钮更高、字号 +2）" if pressed else "触屏界面已关闭")
+	ui_touch._on_touch_ui_toggled(pressed)
 
 
 func _collect_buttons(root: Node) -> Array:
-	var out: Array = []
-	for c in root.get_children():
-		if c is Button:
-			out.append(c)
-		if c.get_child_count() > 0:
-			out.append_array(_collect_buttons(c))
-	return out
+	return ui_touch._collect_buttons(root)
 
 
 # ============================================================
@@ -4752,25 +4542,7 @@ func _clear_hint() -> void:
 # 十一、元素着色规则
 # ============================================================
 func _get_card_color(card) -> Color:
-	var sym = card.symbol
-	if sym == "H": return Color(0.4, 0.7, 1.0)
-	if sym == "O": return Color(0.0, 0.3, 1.0)
-	if sym == "N": return Color(0.4, 0.2, 0.8)
-	if sym == "F": return Color(0.56, 1.0, 0.56)
-	if sym == "Cl": return Color(0.56, 1.0, 0.56)
-	if sym == "Br": return Color(0.6, 0.4, 0.2)
-	if sym == "I": return Color(0.35, 0.0, 0.35)  # 紫黑色
-	if sym in ["C", "B", "Si", "S"]: return Color(1.0, 0.9, 0.1)
-	if sym == "P": return Color(1.0, 0.85, 0.85)
-	if card.group in ["VIIA"]: return Color(0.0, 0.7, 0.2)
-	match card.element_type:
-		"金属": return Color(0.5, 0.5, 0.5)
-		"非金属": return Color(0.0, 0.7, 0.2)
-		"准金属": return Color(0.0, 0.7, 0.2)
-		# 稀有气体：原为近白 (0.95)，在白卡面上与底色几乎融成一片 → 改青色。
-		# 色相刻意与「非金属 / 准金属 = 绿 (0,0.7,0.2)」「N = 紫 (0.4,0.2,0.8)」拉开距离
-		"稀有气体": return Color(0.0, 0.6, 0.65)
-	return Color(0.8, 0.8, 0.8)
+	return ui_theme._get_card_color(card)
 
 
 # ============================================================
@@ -6545,72 +6317,23 @@ func _step_reset() -> void:
 	compound_selections.clear()
 
 func _show_info(text: String) -> void:
-	# 状态栏只刷新「常驻状态」（牌权链 / AI 手牌 / 补充规则 / 方向），不再把消息拼在后面。
-	# 为什么（P14-E）：InfoLabel 高 88px 只够 4 行，_format_player_status() 本身就要 3~4 行，
-	# 再拼一行拒绝原因就顶出边界、压在 y=152 的「桌面: …」上（真机截图里那团灰字）。
-	# 消息的唯一出口是右栏 toast —— 本来两个地方就在显示同一句话，属于重复。
-	if info_label and game_manager:
-		info_label.text = _format_player_status()
-	# 同时显示居中的大号提示框（出牌不合理等错误提示醒目可见）
-	_show_center_warning(text)
+	ui_toast._show_info(text)
 
 
 # 右栏警告 toast（黄底橙红边，2.5 秒自动消失）
 # 位置固定在右栏上部空白格，不再压在手牌 / 操作区 / 卡牌信息之上。
 # 单例复用：连续报错只更新文本并重置计时，不叠框、也不会被上一次的计时器提前熄灭。
 func _show_center_warning(text: String, sticky: bool = false) -> void:
-	_ensure_warning_toast()
-	if not is_instance_valid(_warning_toast) or not is_instance_valid(_warning_label):
-		return
-	_warning_label.text = text
-	_warning_toast.visible = true
-	_warning_seq += 1
-	# sticky = 终局提示（联机终止 / 状态分叉）：不挂自动消失的计时器。
-	# seq 已经自增，上一条未到期的计时器会自行作废，不会把它提前熄灭。
-	if sticky:
-		return
-	var seq := _warning_seq
-	var timer := get_tree().create_timer(TOAST_DURATION)
-	timer.timeout.connect(func():
-		# 期间又弹了新提示（seq 变了）→ 这次计时作废
-		if seq == _warning_seq and is_instance_valid(_warning_toast):
-			_warning_toast.visible = false
-	)
+	ui_toast._show_center_warning(text, sticky)
 
 
 func _ensure_warning_toast() -> void:
-	if is_instance_valid(_warning_toast):
-		return
-
-	var panel := Panel.new()
-	panel.name = "WarningToast"
-	panel.position = WARNING_TOAST_RECT.position
-	panel.size = WARNING_TOAST_RECT.size
-	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.visible = false
-	panel.add_theme_stylebox_override("panel", _make_panel_style("toast_warning"))
-
-	var lbl := Label.new()
-	lbl.position = Vector2(12, 8)
-	lbl.size = WARNING_TOAST_RECT.size - Vector2(24, 16)
-	lbl.add_theme_font_size_override("font_size", 14)
-	lbl.add_theme_color_override("font_color", Color(0.5, 0.05, 0.05, 1.0))
-	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	panel.add_child(lbl)
-
-	_layer(2).add_child(panel)
-	_warning_toast = panel
-	_warning_label = lbl
+	ui_toast._ensure_warning_toast()
 
 
 # 开局 / 进教程时清掉上一局残留的警告；seq 自增让未到期的计时器失效
 func _hide_warning_toast() -> void:
-	_warning_seq += 1
-	if is_instance_valid(_warning_toast):
-		_warning_toast.visible = false
+	ui_toast._hide_warning_toast()
 
 func _show_end_page(custom_text: String) -> void:
 	# 已被 _refresh_ui 反复调用：已在结算页时只刷新数据，不重播淡入 / 入场动画（否则每帧闪一下）

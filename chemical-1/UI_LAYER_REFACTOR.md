@@ -1,7 +1,7 @@
 # UI 层重构：GameUI.gd 按功能拆分
 
 > 本文档是重构的**计划 + 进度台账**。每完成一片，回来把 ⬜ 改成 ✅ 并填「§8 完成记录」。
-> 最后更新：2026-11-17（Slice 0 落盘）
+> 最后更新：2026-11-17（Slice 1 落盘）
 
 ## 0. 背景与已定决策
 
@@ -146,15 +146,22 @@ func update_buttons() -> void:
 - ✅ 全量基线跑完：**47/47 全绿**（见 §8.1）
 - 验收：`git status` 只剩 `export_presets.cfg` + 本文件 + tools/tests 新增；基线全绿
 
-### Slice 1 —— 立规矩（风险最低）
-- ⬜ `ui/UITheme.gd`（含 StyleBox 缓存）
-- ⬜ `ui/TouchMetrics.gd`
-- ⬜ `ui/Toast.gd`
-- ⬜ `ui/PageRouter.gd`
-- ⬜ root 补转发 + 常量别名
-- 目标：root 7651 → **≈7000 行**
-- 验证：`verify_hand_layout` / `verify_touch_ui` / `verify_touch_flag` / `verify_touch_toggle` /
-  `verify_log_panel` / `verify_help_page` + 全量
+### Slice 1 —— 立规矩（风险最低）✅ 2026-11-17 完成
+- ✅ `ui/UITheme.gd`（125 行）：`_make_panel_style` / `_style_base` / `_get_card_color`
+  （StyleBox 缓存留到 2b —— 那一步才允许改行为）
+- ✅ `ui/TouchMetrics.gd`（256 行）：触屏档判定（两个 static）/ 11 个几何取值函数 / 运行时开关 /
+  按钮兜底放大与还原
+- ✅ `ui/Toast.gd`（90 行）：`_show_info` / `_show_center_warning` / `_ensure_warning_toast` /
+  `_hide_warning_toast`
+- ✅ `ui/PageRouter.gd`（133 行）：`_ensure_layers` / `_make_layer` / `_layer` /
+  `_ensure_page_backdrop` / `_all_pages` / `_fade_in_page` / `_show_start_page`
+- ✅ root 补 33 个**同名**转发方法 + 4 个模块字段（`ui_theme` / `ui_touch` / `ui_toast` / `ui_router`），
+  `_init` 注入回引；**常量一个没搬**（`scene.CARD_W` / `scene.PAGE_BG_COLOR` 仍直接命中 root）
+- 结果：root **7651 → 7357 行**（−294），模块合计 604 行
+  （比目标 ≈7000 高：转发方法 33×3 行 + 原注释按铁律保留在 root）
+- 验证：**47/47 全绿**，重点 `verify_ui_facade`(13) / `verify_motion`(91) / `verify_touch_ui`(65) /
+  `verify_touch_flag`(19) / `verify_touch_toggle`(27) / `verify_hand_layout`(225) / `verify_ui_online`(101)；
+  另 `--quit-after 60` 冒烟：0 ERROR / 0 WARNING
 - commit：`【重构】UI 层拆分 1/5：样式/触屏档/toast/页面路由 抽为模块`
 
 ### Slice 2a —— 纯搬运（零行为变化）
@@ -260,8 +267,9 @@ func update_buttons() -> void:
 
 ### 5.2 运行器：`tools/run_tests.gd`
 
-> 原本打算写 `tools/run_tests.bat`，实测不可行：本仓库文本文件是 **LF 换行**，cmd 读批处理时
-> 会把 `rem` 注释行拆开执行、`if errorlevel` 判断失效（日志前 6 行全是残渣）。
+> 原本打算写 `tools/run_tests.bat`，实测不可行：cmd 用 **GBK 代码页**读 UTF-8 的批处理，
+> 含中文的 `rem` 行会被拆成多段执行、`if errorlevel` 判断失效（实测日志前 6 行全是
+> `'*.gd（依次，失败会打印' is not recognized...` 这类残渣）。
 > 改成 Godot 自编排：`OS.execute` 逐个跑子进程，拿真实退出码。
 
 ```bat
@@ -346,7 +354,7 @@ Gd --headless --path . --script tools/gen_facade_list.gd
 | 片 | commit | GameUI.gd 行数 | 新增模块行数 | 测试 | 备注 |
 |---|---|---|---|---|---|
 | 0 | — | 7651（未动代码） | 0（新增 tools/ + 1 测试） | 47/47 ✅ | 回滚 project.godot |
-| 1 | | | | | |
+| 1 | （待提交） | 7357（−294） | **604**（UITheme 125 / TouchMetrics 256 / Toast 90 / PageRouter 133） | 47/47 ✅ | 常量未搬；33 个转发方法 |
 | 2a | | | | | |
 | 2b | | | | | |
 | 3 | | | | | |
@@ -385,8 +393,21 @@ environment/defaults/default_clear_color=Color(0.902, 0.941, 0.98, 1)
 - 2026-11-17 结论更正：原计划「回滚 `project.godot`」**不成立**。`window/stretch/aspect="keep"` 是 Godot 4.7
   的引擎默认值（`ProjectSettings.property_get_revert("display/window/stretch/aspect")` 实测返回 `keep`），
   引擎每次保存都会删掉等于默认值的键 —— 删掉与写上完全等价。真正损失的是两段手写注释，已原文归档到 §8.4。
-- 2026-11-17 工具方案更正：原计划 `tools/run_tests.bat` **不可行**。本仓库文本文件是 LF 换行，cmd 读批处理时
-  会拆开执行 `rem` 注释行、`if errorlevel` 判断失效（实测日志前 6 行全是残渣），故改为 `.gd` 编排器。
+- 2026-11-17 工具方案更正：原计划 `tools/run_tests.bat` **不可行**。cmd 用 GBK 代码页读 UTF-8 批处理，
+  含中文的 `rem` 行被拆成多段执行、`if errorlevel` 判断失效（实测日志前 6 行全是残渣），
+  无法承担「每片必须全绿」的把关职责，故改为 `.gd` 编排器。
+- 2026-11-17 **Slice 1 完成**：新增 `scripts/ui/{UITheme,TouchMetrics,Toast,PageRouter}.gd`（604 行），
+  root 7651 → 7357 行，47/47 全绿。三条必须记住的实现细节（都是本轮踩出来的）：
+  1. **模块字段 `var _ui = null` 不能写类型**。GDScript 对静态类型做成员解析：写成 `_ui: Control` 时，
+     `_ui.CARD_W` 会在**编译期**报「Control 无成员 CARD_W」（常量和私有方法都不是静态类型上的成员），
+     只有动态类型（Variant）才能同时读到 root 的 const 与私有方法。
+  2. **`:=` 无法从动态类型推断**：`var timer := _ui.get_tree().create_timer(...)` 直接编译失败
+     （`Cannot infer the type of "timer"`），必须 `var timer: SceneTreeTimer = ...`。
+     同理 `_touch_fs(base, bonus = TOUCH_FS_BONUS)` 的默认值是编译期常量、不能跨脚本取 →
+     模块里改成必填两参，root 转发方法保留原默认值，调用点零改动。
+  3. **常量下沉推迟到 Slice 5**：`verify_hand_view:54`、`verify_motion:63/255/256/275` 直读
+     `scene.CARD_W` / `scene.CARD_H` / `scene.PAGE_BG_COLOR`。本轮让这些命中继续留在 root，
+     避免 40+ 处引用一次性改动；真正下沉时用 `const CARD_W := HandViewScript.CARD_W` 别名（铁律 3）。
 
 
 
