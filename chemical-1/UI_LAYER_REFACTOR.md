@@ -164,14 +164,28 @@ func update_buttons() -> void:
   另 `--quit-after 60` 冒烟：0 ERROR / 0 WARNING
 - commit：`【重构】UI 层拆分 1/5：样式/触屏档/toast/页面路由 抽为模块`
 
-### Slice 2a —— 纯搬运（零行为变化）
-- ⬜ `ui/HandView.gd`（≈1200 行）
-- ⬜ `ui/CardMotion.gd`（250 行）
-- ⬜ `_process` 中手牌部分改为 `hand_view.process(delta)`（root 仍是唯一引擎钩子，顺序不变）
-- 目标：root → **≈5600 行**
-- 验证：`hand_layout` / `hand_view` / `hand_runtime` / `hand_reorder` / `motion` / `touch_ui` /
-  `valence_chip` + 全量
-- commit：`【重构】UI 层拆分 2/5a：手牌视图与牌面动效 抽为模块（纯搬运，无行为变化）`
+### Slice 2a —— 纯搬运（零行为变化）✅
+- ✅ `ui/CardMotion.gd`（200 行）：`_animate_mini_card_in` / `_make_fly_ghost` / `_bezier2` /
+  `_place_ghost` / `_fly_ghost` / `_capture_play_fly_in` / `_replay_play_fly_in` /
+  `_fly_discarded_card` / `_animate_new_hand_cards` / `_snap_card_position`（10 个方法）
+- ✅ `ui/HandView.gd`（1329 行）：手牌渲染 / 重叠布局 / 悬停状态机 / 命中 / 拖拽重排 / 价态自适应，
+  共 **65 个方法**，分 3 段搬运（段与段之间刻意跳过 root 的 `_process`）
+- ✅ root 补 **75 个同名转发**（10 + 65）+ 2 个模块字段（`ui_motion` / `ui_hand`），`_init` 注入回引；
+  **仍然一个常量都没搬**（`scene.CARD_W` 等命中继续落在 root）
+- 结果：root **7357 → 6098 行**（−1259），模块合计 1529 行
+  （比目标 ≈5600 高 500：75 个转发方法 × 3 行 ≈ 225 行 + 原注释按铁律保留在 root）
+- 与本文档原计划的**三处偏差**（都偏保守，行为未变）：
+  1. 模块字段名统一 `ui_*` 前缀（`ui_hand`），不叫 `hand_view` —— 与 Slice 1 的
+     `ui_theme` / `ui_touch` / `ui_toast` / `ui_router` 保持一致
+  2. `_process` **没有**改成 `hand_view.process(delta)`：它仍留在 root（唯一引擎钩子），
+     内部调用的 `_update_hand_drag()` / `_update_hand_hover()` 现在是转发方法，顺序一字未动（R5）
+  3. `_on_auto_play`（「直接出牌 ⚡」）留在 root：它走 `game_manager` 出牌链路，归 Slice 3 的 GameFlow
+- 验证：**47/47 全绿**，重点 `hand_layout`(225) / `hand_view`(60) / `hand_runtime`(17) /
+  `hand_reorder`(54) / `motion`(91) / `touch_ui`(65) / `valence_chip`(19) / `mixed_valence_ui`(9)；
+  另 `--quit-after 60` 冒烟：0 ERROR / 0 WARNING
+- commit：`【重构】UI 层拆分 2/5a-1：牌面动效抽为 ui/CardMotion.gd`
+  + `【重构】UI 层拆分 2/5a-2：手牌视图抽为 ui/HandView.gd`
+  （分两笔只为 review：动效与手牌是两块互不相干的断言集，红了一眼能定位）
 
 ### Slice 2b —— 性能修复（这一步才改行为）
 - ⬜ 选中/取消只改 1~2 张牌的 stylebox / z_index，不重建
@@ -301,6 +315,32 @@ Gd --headless --path . --script tools/gen_facade_list.gd
 把输出数组粘进 `verify_ui_facade.gd` 的 `MUST_HAVE_METHODS`。
 **每片结束后重跑一次生成器**，若清单变了（说明某套测试新增了反射调用）要同步。
 
+### 5.4 搬运工具：`tools/move_funcs.gd`
+
+Slice 2a 起不再手抄实现（1000 行手抄必出错），改由工具按**行区间**机械搬运：
+
+```bat
+Gd --headless --path . --script tools/move_funcs.gd -- ^
+  --from=scripts/GameUI.gd --to=scripts/ui/HandView.gd --field=ui_hand ^
+  --also=create_tween,get_tree,get_global_mouse_position ^
+  --range=4398-4639,4641-4960,4978-5727
+```
+
+它做且只做四件机械事：
+
+1. 把每个区间整段（含注释）搬进目标模块；
+2. 段内**借用 root 的标识符**（常量 / 字段 / 方法）自动改成 `_ui.X` —— 只改 root 上真实存在的符号，
+   并跳过局部变量、参数、lambda 参数、字符串、`#` 注释与 `a.b` 的右侧；
+3. 段内 `:= _ui.x` 一律降级成 `= _ui.x`（`:=` 无法从动态类型推断，见 §8.4 第 2 条）；
+4. 源文件原位替换成**同名转发方法**（参数/返回类型照抄，默认值仍由转发器承担）。
+
+`--also=` 是给**引擎自带实例方法**用的：`create_tween` / `get_tree` / `get_global_mouse_position`
+这些不是 root 的自定义符号，但在模块里同样只能经 `_ui` 调用 —— 漏进白名单的表现是
+`Function "create_tween()" not found in base "RefCounted"`，`--check-only` 会当场点名。
+
+搬完必做的三件事：`--check-only` 跑新模块与 root → **全量测试** → `--quit-after 60` 冒烟。
+
+
 ---
 
 ## 6. 风险登记
@@ -408,6 +448,19 @@ environment/defaults/default_clear_color=Color(0.902, 0.941, 0.98, 1)
   3. **常量下沉推迟到 Slice 5**：`verify_hand_view:54`、`verify_motion:63/255/256/275` 直读
      `scene.CARD_W` / `scene.CARD_H` / `scene.PAGE_BG_COLOR`。本轮让这些命中继续留在 root，
      避免 40+ 处引用一次性改动；真正下沉时用 `const CARD_W := HandViewScript.CARD_W` 别名（铁律 3）。
+- 2026-11-17 **Slice 2a 完成**：新增 `scripts/ui/CardMotion.gd`（200 行 / 10 方法）与
+  `scripts/ui/HandView.gd`（1329 行 / 65 方法），root 7357 → **6098 行**，47/47 全绿、
+  `--quit-after 60` 冒烟 0 ERROR / 0 WARNING。同时新增搬运工具 `tools/move_funcs.gd`（§5.4）。
+  本轮踩出的两条新坑（都自带编译器保护，不会静默出错）：
+  4. **引擎自带实例方法不会被自动加前缀**。`create_tween()` / `get_tree()` /
+     `get_global_mouse_position()` 不是 root 的自定义符号，工具只认 root 符号表 →
+     原样落进模块就变成 RefCounted 上不存在的调用。用 `--also=` 显式登记；
+     `--check-only` 会当场点名（`Function "create_tween()" not found in base "RefCounted"`）。
+  5. **跨模块调用一律绕回 root 转发器，默认值由转发器补齐**。`_ui._make_drag_ghost(src)` 命中 root 的
+     同名转发，转发器再按 `alpha = DRAG_GHOST_ALPHA` 补默认值 → 模块签名可以没有默认值，
+     而全项目调用点一个字都不用改。前提仍是「转发方法名 = 原方法名」这条铁律。
+  另：`_process` 保持 root 原样（唯一引擎钩子），只把它调用的 `_update_hand_drag()` /
+  `_update_hand_hover()` 换成转发方法 —— R5 的「顺序变化」风险因此为 0。
 
 
 
