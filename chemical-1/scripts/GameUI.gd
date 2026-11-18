@@ -42,6 +42,8 @@ const StartPageScript = preload("res://scripts/pages/StartPage.gd")
 const SuppRulesPageScript = preload("res://scripts/pages/SuppRulesPage.gd")
 const HelpPageScript = preload("res://scripts/pages/HelpPage.gd")
 const EndPageScript = preload("res://scripts/pages/EndPage.gd")
+const TutorialPageScript = preload("res://scripts/pages/TutorialPage.gd")
+const Level0OverlayScript = preload("res://scripts/tutorial/Level0Overlay.gd")
 
 # 模块实例：_init 里创建（见下方 _init 的注释）。
 # 命名避开 Control 自带的 theme / 已用的 toast_layer，统一 ui_ 前缀。
@@ -62,6 +64,8 @@ var ui_start = null                      # 开始页（标题 / 设置卡 / 按�
 var ui_supp = null                       # 补充规则小页（4 张规则卡 / 元素池 / 勾选摘要）
 var ui_help = null                       # 帮助中心（3 Tab 骨架 / 卡片 / 图鉴小卡 / 进出路由）
 var ui_end = null                        # 结算页（结算卡 / 统计块 / 按钮去向 / 淡入）
+var ui_tut = null                        # 教学引导页（三张关卡卡 / 进出路由 / 入场错峰）
+var ui_level0 = null                     # 第零关引导覆盖层（三步流程 / 高亮框 / 规则提醒）
 
 # ============================================================
 # 一、页面引用
@@ -101,6 +105,9 @@ var _log_visible: bool = true           # 整体显隐（规则提醒占用右�
 var _log_collapsed: bool = false        # 折叠态：只留 26px 标题条
 var _rule_tip_title: Button = null      # 规则提醒标题条
 var _rule_tip_collapsed: bool = false   # 规则提醒折叠态
+# 第零关规则提醒（挂在 ContentLayer 上，跨局不清 → 由 _level0_clear_rule_tips 显式回收）
+var level0_rule_tip_label: Label = null
+var level0_rule_tip_bg: Panel = null
 var card_info_label: Label = null       # 可出牌型提示
 var action_panel: Control = null        # 操作按钮区
 var hint_button: Button = null          # 显示提示
@@ -383,6 +390,8 @@ func _init() -> void:
 	ui_supp = SuppRulesPageScript.new(self)
 	ui_help = HelpPageScript.new(self)
 	ui_end = EndPageScript.new(self)
+	ui_tut = TutorialPageScript.new(self)
+	ui_level0 = Level0OverlayScript.new(self)
 
 
 # ============================================================
@@ -613,25 +622,15 @@ func _show_start_page() -> void:
 func _on_show_help() -> void:
 	ui_help._on_show_help()
 
+# -------- 以下方法已搬进 scripts/pages/TutorialPage.gd（Slice 4f 纯搬运，这里只留同名转发） --------
 func _on_show_tutorial_page() -> void:
-	var tut_page = get_node_or_null("TutorialPage")
-	if tut_page: tut_page.visible = true
-	if start_page: start_page.visible = false
-	if end_page: end_page.visible = false
-	_fade_in_page(tut_page)
-	_page_deco_float(tut_page)
-	_animate_page_intro(tut_page, [
-		"TutorialTitle", "TutorialSubtitle", "TutorialAccent",
-		"Tutorial0Btn", "Tutorial1Btn", "Tutorial2Btn", "TutorialBackBtn",
-	])
+	ui_tut._on_show_tutorial_page()
 
+
+# -------- 以下方法已搬进 scripts/pages/TutorialPage.gd（Slice 4f 纯搬运，这里只留同名转发） --------
 func _on_tutorial_back() -> void:
-	var tut_page = get_node_or_null("TutorialPage")
-	if tut_page: tut_page.visible = false
-	if start_page: start_page.visible = true
-	if end_page: end_page.visible = false
-	_fade_in_page(start_page)
-	_animate_start_page()
+	ui_tut._on_tutorial_back()
+
 
 # -------- 以下方法已搬进 scripts/pages/HelpPage.gd（Slice 4d 纯搬运，这里只留同名转发） --------
 func _on_help_back() -> void:
@@ -999,143 +998,19 @@ const TUT_CARD_Y0 := 176.0
 var _tut_cards: Array = []
 
 
+# -------- 以下方法已搬进 scripts/pages/TutorialPage.gd（Slice 4f 纯搬运，这里只留同名转发） --------
 func _build_tutorial_page() -> void:
-	var page = get_node_or_null("TutorialPage")
-	if page == null:
-		return
-	for c in page.get_children():
-		page.remove_child(c)
-		c.queue_free()
-	_page_backdrop(page, "TutorialBg", [
-		{"t": "H₂O", "p": Vector2(36, 430), "fs": 68},
-		{"t": "CO₂", "p": Vector2(896, 70), "fs": 54},
-		{"t": "CH₄", "p": Vector2(1000, 500), "fs": 46},
-	], [
-		{"s": "Cl", "p": Vector2(64, 96), "a": -0.12},
-		{"s": "Na", "p": Vector2(984, 300), "a": 0.13},
-	])
+	ui_tut._build_tutorial_page()
 
-	# -------- 标题块（与开始页同档字号：40 / 16 / 72×4）--------
-	var title := _start_label("教学引导", 40, START_C_TITLE, HORIZONTAL_ALIGNMENT_CENTER)
-	title.name = "TutorialTitle"
-	title.position = Vector2(0, 64)
-	title.size = Vector2(1152, 52)
-	page.add_child(title)
-
-	var sub := _start_label("从认识牌面到族炸接炸，三步上手", 16, START_C_SUB,
-		HORIZONTAL_ALIGNMENT_CENTER)
-	sub.name = "TutorialSubtitle"
-	sub.position = Vector2(0, 120)
-	sub.size = Vector2(1152, 24)
-	page.add_child(sub)
-
-	var accent := ColorRect.new()
-	accent.name = "TutorialAccent"
-	accent.color = START_C_ACCENT
-	accent.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	accent.position = Vector2(540, 150)
-	accent.size = Vector2(72, 4)
-	page.add_child(accent)
-
-	# -------- 三张关卡卡 --------
-	var levels := [
-		{"t": "游戏入门", "d": "熟悉游戏界面、了解基础流程与核心规则 · 限前3周期牌库"},
-		{"t": "基础入门", "d": "原子牌·单质·化合物·比大小 / 禁止族炸"},
-		{"t": "族炸进阶", "d": "族炸接炸·溢出化合物·手牌上限"},
-	]
-	_tut_cards.clear()
-	for i in range(levels.size()):
-		var card := _make_level_card(i, levels[i]["t"], levels[i]["d"])
-		card.position = Vector2(TUT_CARD_X, TUT_CARD_Y0 + i * (TUT_CARD_H + TUT_CARD_GAP))
-		page.add_child(card)
-		_tut_cards.append(card)
-
-	# -------- 返回 --------
-	# 回调统一由 _setup_pages() 连接（与开始页按钮一致），这里不传，避免重复 connect
-	var back := _page_ghost_btn("← 返回", func() -> void: pass, Vector2(160, 42),
-		"TutorialBackBtn", 16)
-	back.position = Vector2(496, 544)
-	page.add_child(back)
-
-
-# 关卡卡：整卡一个 Button；hover 只改描边 / 阴影（720 宽做 1.05 缩放会顶到装饰牌）
 func _make_level_card(idx: int, title_text: String, desc_text: String) -> Button:
-	var b := Button.new()
-	b.name = "Tutorial%dBtn" % idx
-	b.custom_minimum_size = Vector2(TUT_CARD_W, TUT_CARD_H)
-	b.size = Vector2(TUT_CARD_W, TUT_CARD_H)
-	b.text = ""
-	b.focus_mode = Control.FOCUS_NONE
-	b.add_theme_stylebox_override("normal", _level_card_style(false, false))
-	b.add_theme_stylebox_override("hover", _level_card_style(true, false))
-	b.add_theme_stylebox_override("pressed", _level_card_style(false, true))
-	b.add_theme_stylebox_override("focus", _make_panel_style("tab_off"))
-	b.mouse_entered.connect(_on_level_card_hover.bind(b, true))
-	b.mouse_exited.connect(_on_level_card_hover.bind(b, false))
-
-	var badge := Panel.new()
-	badge.name = "LevelBadge"
-	badge.position = Vector2(24, 28)
-	badge.size = Vector2(48, 48)
-	badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var bs := StyleBoxFlat.new()
-	bs.bg_color = START_C_ACCENT
-	bs.set_corner_radius_all(8)
-	badge.add_theme_stylebox_override("panel", bs)
-	b.add_child(badge)
-
-	var num := _start_label(str(idx), 24, Color(1, 1, 1, 1), HORIZONTAL_ALIGNMENT_CENTER)
-	num.name = "LevelBadgeNum"
-	num.position = Vector2(0, 11)
-	num.size = Vector2(48, 32)
-	badge.add_child(num)
-
-	var tl := _start_label(title_text, 20, START_C_TITLE, HORIZONTAL_ALIGNMENT_LEFT)
-	tl.name = "Tutorial%dTitle" % idx
-	tl.position = Vector2(92, 18)
-	tl.size = Vector2(470, 28)
-	b.add_child(tl)
-
-	var dl := _start_label(desc_text, 14, START_C_MUTED, HORIZONTAL_ALIGNMENT_LEFT)
-	dl.name = "Tutorial%dDesc" % idx
-	dl.position = Vector2(92, 50)
-	dl.size = Vector2(470, 40)
-	dl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	b.add_child(dl)
-
-	var go := _start_label("开始 →", 15, START_C_ACCENT, HORIZONTAL_ALIGNMENT_CENTER)
-	go.name = "Tutorial%dGo" % idx
-	go.position = Vector2(600, 40)
-	go.size = Vector2(96, 24)
-	b.add_child(go)
-	return b
-
+	return ui_tut._make_level_card(idx, title_text, desc_text)
 
 func _level_card_style(hover: bool, pressed: bool) -> StyleBoxFlat:
-	var sb := _make_panel_style("card")
-	sb.bg_color = Color(1, 1, 1, 0.96)
-	sb.shadow_size = 3
-	sb.shadow_offset = Vector2(0, 2)
-	if hover:
-		sb.border_color = START_C_ACCENT
-		sb.set_border_width_all(BORDER_W_ACTIVE)
-		sb.shadow_color = Color(0.176, 0.478, 0.702, 0.22)
-		sb.shadow_size = 8
-	if pressed:
-		sb.bg_color = Color(0.937, 0.965, 0.988, 1.0)
-		sb.border_color = START_C_ACCENT
-		sb.set_border_width_all(BORDER_W_ACTIVE)
-	return sb
+	return ui_tut._level_card_style(hover, pressed)
 
-
-# 关卡卡 hover：「开始 →」由主题蓝加深，作为卡片被选中的视觉提示
 func _on_level_card_hover(card: Button, entered: bool) -> void:
-	if not is_instance_valid(card):
-		return
-	var col := START_C_ACCENT_DARK if entered else START_C_ACCENT
-	for c in card.get_children():
-		if c is Label and String(c.name).begins_with("Tutorial") and String(c.name).ends_with("Go"):
-			c.add_theme_color_override("font_color", col)
+	ui_tut._on_level_card_hover(card, entered)
+
 
 
 # ============================================================
@@ -1208,395 +1083,48 @@ func _apply_start_page_rules(gm) -> void:
 func _init_game(total: int = 4, ai: int = 3) -> void:
 	ui_flow._init_game(total, ai)
 
+# -------- 以下方法已搬进 scripts/tutorial/Level0Overlay.gd（Slice 4f 纯搬运，这里只留同名转发） --------
 func _level0_start_phase1() -> void:
-	game_manager.set_tutorial_level0_phase(1)
-	level0_step = 0
-	level0_ui_highlight_steps = _level0_ui_steps()
-	_level0_show_ui_step(0)
+	ui_level0._level0_start_phase1()
 
-
-# 第零关 Phase 1 的 6 步标注数据（纯数据、无副作用）：
-# 抽成函数是为了让 tests/verify_tool_buttons.gd 能直接取「按钮区」矩形，
-# 不必为了读一条数据先去造 GameManager + 刷 UI。
 func _level0_ui_steps() -> Array:
-	return [
-		{
-			"title": "玩家顺序和手牌数",
-			"desc": "这是【玩家顺序和手牌数】\n显示每位玩家的名字、AI标签、手牌张数，以及当前轮到谁（◄标记）",
-			"target": "info_label",
-			"pos": Vector2(20, 60),
-			"size": Vector2(460, 88),
-		},
-		{
-			"title": "桌面的牌",
-			"desc": "这是【桌面的牌】\n显示当前桌面上的牌是谁打出的、牌型是什么、有无特殊状态（如免疫、接炸中）",
-			"target": "table_label",
-			"pos": Vector2(20, 150),
-			"size": Vector2(600, 130),
-		},
-		{
-			"title": "手牌区",
-			"desc": "这是【手牌区】\n你的手牌在这里显示，每张牌为95×118px的原子牌面，牌多时自动重叠排列，鼠标悬停可展开查看\n点击可选中（黄色高亮）",
-			"target": "hand_container",
-			"pos": Vector2(16, 308),
-			"size": Vector2(804, 160),
-		},
-		{
-			"title": "出牌区",
-			"desc": "这是【出牌区】\n选中手牌后在此选择牌型：单质/化合物/族炸，也可跳过或查看提示",
-			"target": "action_panel",
-			# 高亮框 = 1 行面板矩形；几何只有一处定义（§九 ACTION_PANEL_*），
-			# 折行 / 触屏档都由 _action_panel_hl_rect() 跟随，改几何不会漏改这里
-			"pos": _action_panel_hl_rect().position,
-			"size": _action_panel_hl_rect().size,
-		},
-		{
-			"title": "其他细节（右面板）",
-			"desc": "这是【其他细节-右面板】\n游戏日志逐条记录每一手牌（谁出了什么、轮到谁）；第零关练习阶段这里换成「规则提醒」，写着当前该记住的出牌规则\n点标题条可折叠 / 展开",
-			"target": "log_label",
-			# 高亮框 = 右栏面板的实况矩形（见 _right_panel_hl_rect()）：
-			# 折叠 / 日志条数 / 规则提醒占用都会改面板大小，写死矩形必然画歪
-			"pos": _right_panel_hl_rect().position,
-			"size": _right_panel_hl_rect().size,
-		},
-		{
-			"title": "其他细节（按钮区）",
-			"desc": "这是【其他细节-按钮区】\n包括显示提示按钮、帮助按钮（查看规则）、退出游戏按钮",
-			"target": "quit_button",
-			# 高亮框 = 工具行 bbox 外扩 6px；几何只有一处定义（§八之四 TOOL_ROW_HL_*），
-			# 触屏档由 _tool_row_hl_rect() 跟随放大的工具行，改几何不会漏改这里
-			"pos": _tool_row_hl_rect().position,
-			"size": _tool_row_hl_rect().size,
-		},
-	]
-
+	return ui_level0._level0_ui_steps()
 
 func _level0_show_ui_step(idx: int) -> void:
-	_refresh_ui()
-
-	if idx >= level0_ui_highlight_steps.size():
-		_level0_start_phase2()
-		return
-
-	var step_data = level0_ui_highlight_steps[idx]
-	level0_step = idx
-	# 右栏面板的几何会随「折叠 / 日志条数 / 规则提醒是否占用」变化，建 steps 时的坐标是快照，
-	# 直接画会框住一片空白 → 展示时按节点实况刷新（_refresh_ui() 刚跑过，_layout_log_panel() 已算好几何）
-	if step_data.get("target", "") == "log_label":
-		var rp: Rect2 = _right_panel_hl_rect()
-		step_data["pos"] = rp.position
-		step_data["size"] = rp.size
-	_level0_ensure_overlay()
-
-	for child in level0_overlay.get_children():
-		child.queue_free()
-
-	var bg = ColorRect.new()
-	bg.color = Color(0, 0, 0, 0.55)
-	bg.anchor_left = 0
-	bg.anchor_top = 0
-	bg.anchor_right = 1
-	bg.anchor_bottom = 1
-	bg.mouse_filter = Control.MOUSE_FILTER_STOP
-	level0_overlay.add_child(bg)
-
-	var hl_border = ColorRect.new()
-	hl_border.color = Color(1, 1, 0, 0)
-	hl_border.position = step_data.pos
-	hl_border.size = step_data.size
-	hl_border.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	level0_overlay.add_child(hl_border)
-
-	var hl_outline = _level0_make_outline_rect(step_data.pos, step_data.size, Color(1, 0.85, 0, 1), 4)
-	level0_overlay.add_child(hl_outline)
-
-	var tbx = 20
-	var tby = 350
-	var tbw = 520          # 620+520=1140 < 1152：手牌区那一步不再把框推出画布
-	var tbh = 270
-	var hl_bottom = step_data.pos.y + step_data.size.y
-	if hl_bottom > tby + 40 or (step_data.pos.x < tbx + tbw and step_data.pos.x + step_data.size.x > tbx):
-		if step_data.pos.x > 600:
-			tbx = 20
-		elif step_data.pos.y > 450:
-			tby = 50
-		else:
-			tbx = 620
-			tby = 50
-	# 越界兜底：无论命中哪个分支，都不许把提示框推出 1152×648 画布（留 20px 边距）
-	var canvas: Vector2 = game_page.size if game_page != null else Vector2(1152, 648)
-	tbx = clampi(tbx, 20, maxi(20, int(canvas.x) - tbw - 20))
-	tby = clampi(tby, 20, maxi(20, int(canvas.y) - tbh - 20))
-	var tip_bg = ColorRect.new()
-	tip_bg.color = Color(1, 1, 0.85, 0.95)
-	tip_bg.position = Vector2(tbx, tby)
-	tip_bg.size = Vector2(tbw, tbh)
-	level0_overlay.add_child(tip_bg)
-
-	var tip_border = _level0_make_outline_rect(Vector2(tbx, tby), Vector2(tbw, tbh), Color(1, 0.6, 0, 1), 3)
-	level0_overlay.add_child(tip_border)
-
-	var tip_title = Label.new()
-	# 顺序很重要：Label 的 size 会被「未换行时的最小宽度」撑大，
-	# 必须先开 autowrap 再定 size，否则文字会画到框外（实机截图 bug）
-	tip_title.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	tip_title.text = step_data.title
-	tip_title.add_theme_font_size_override("font_size", 18)
-	tip_title.add_theme_color_override("font_color", Color(0, 0, 0, 1))
-	tip_title.position = Vector2(tbx + 24, tby + 14)
-	tip_title.size = Vector2(tbw - 48, 24)
-	level0_overlay.add_child(tip_title)
-
-	var tip_desc = Label.new()
-	tip_desc.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	tip_desc.text = step_data.desc
-	tip_desc.add_theme_font_size_override("font_size", 14)
-	tip_desc.add_theme_color_override("font_color", Color(0, 0, 0, 1))
-	tip_desc.position = Vector2(tbx + 24, tby + 44)
-	tip_desc.size = Vector2(tbw - 48, 150)
-	level0_overlay.add_child(tip_desc)
-
-	# 步骤计数挪到右上角：提示框底部整行留给三个出口按钮
-	var step_indicator = Label.new()
-	step_indicator.text = "%d / %d" % [idx + 1, level0_ui_highlight_steps.size()]
-	step_indicator.add_theme_font_size_override("font_size", 13)
-	step_indicator.add_theme_color_override("font_color", Color(0.3, 0.3, 0.3, 1))
-	step_indicator.position = Vector2(tbx + tbw - 96, tby + 16)
-	step_indicator.size = Vector2(72, 20)
-	level0_overlay.add_child(step_indicator)
-
-	# 三个出口（P15-A）：老实现只有「下一步」，而遮罩是 MOUSE_FILTER_STOP 全屏铺满，
-	# 玩家必须把 6 步点完才能摸牌，想换关卡只能杀进程。
-	var guide_h: float = float(_touch_btn_h(42))
-	var guide_y: float = float(tby) + 206.0
-	var next_text := "下一步 →" if idx < level0_ui_highlight_steps.size() - 1 else "继续 →"
-	level0_overlay.add_child(_level0_guide_btn(
-		Vector2(tbx + 24, guide_y), Vector2(130, guide_h), next_text, _level0_ui_next_step))
-	level0_overlay.add_child(_level0_guide_btn(
-		Vector2(tbx + 166, guide_y), Vector2(130, guide_h), "跳过引导", _level0_skip_guide))
-	level0_overlay.add_child(_level0_guide_btn(
-		Vector2(tbx + 308, guide_y), Vector2(120, guide_h), "返回关卡", _level0_exit_guide))
-
+	ui_level0._level0_show_ui_step(idx)
 
 func _level0_make_outline_rect(pos: Vector2, rect_size: Vector2, color: Color, width: int) -> Control:
-	var c = Control.new()
-	c.position = pos
-	c.size = rect_size
-	c.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var top = ColorRect.new()
-	top.color = color
-	top.position = Vector2(0, 0)
-	top.size = Vector2(rect_size.x, width)
-	c.add_child(top)
-	var bottom = ColorRect.new()
-	bottom.color = color
-	bottom.position = Vector2(0, rect_size.y - width)
-	bottom.size = Vector2(rect_size.x, width)
-	c.add_child(bottom)
-	var left = ColorRect.new()
-	left.color = color
-	left.position = Vector2(0, 0)
-	left.size = Vector2(width, rect_size.y)
-	c.add_child(left)
-	var right = ColorRect.new()
-	right.color = color
-	right.position = Vector2(rect_size.x - width, 0)
-	right.size = Vector2(width, rect_size.y)
-	c.add_child(right)
-	return c
-
+	return ui_level0._level0_make_outline_rect(pos, rect_size, color, width)
 
 func _level0_ui_next_step() -> void:
-	level0_step += 1
-	_level0_show_ui_step(level0_step)
+	ui_level0._level0_ui_next_step()
 
-
-# 引导阶段的通用出口按钮（Phase 1 提示框底部 / Phase 2 对话框底部共用）：
-# 位置尺寸由调用方给（两处对话框的行高与列宽不同），字号统一走触屏档
 func _level0_guide_btn(pos: Vector2, btn_size: Vector2, text: String, cb: Callable) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.focus_mode = Control.FOCUS_NONE
-	b.custom_minimum_size = btn_size
-	b.add_theme_font_size_override("font_size", _touch_fs(15, 2))
-	b.position = pos
-	b.size = btn_size
-	b.pressed.connect(cb)
-	return b
+	return ui_level0._level0_guide_btn(pos, btn_size, text, cb)
 
-
-# 「跳过引导」：Phase 1 / Phase 2 都一步跳到牌局练习（开场提示与规则提醒照常给）。
-# 遮罩是 MOUSE_FILTER_STOP 全屏，不给这条出口玩家就只能把 6+3 步点完才能摸牌。
 func _level0_skip_guide() -> void:
-	if game_manager == null:
-		return
-	_level0_start_phase3()
+	ui_level0._level0_skip_guide()
 
-
-# 「返回关卡」：引导中途退出教学 → 回教学引导页重选关卡。
-# _on_show_tutorial_page() 只处理「从开始页 / 结算页过来」的可见性，
-# 这里必须自己把 GamePage 藏掉，否则引导页会被压在游戏页下面（点了像没反应）。
 func _level0_exit_guide() -> void:
-	if level0_overlay:
-		level0_overlay.queue_free()
-		level0_overlay = null
-	level0_ui_highlight_steps = []
-	level0_flow_steps = []
-	_level0_clear_rule_tips()
-	if game_manager:
-		game_manager.phase = 2   # 本局作废：别让残留的 AI 计时器在后台继续推进
-	if game_page:
-		game_page.visible = false
-	_on_show_tutorial_page()
-
+	ui_level0._level0_exit_guide()
 
 func _level0_ensure_overlay() -> void:
-	if level0_overlay == null:
-		level0_overlay = Control.new()
-		level0_overlay.name = "Level0Overlay"
-		level0_overlay.mouse_filter = Control.MOUSE_FILTER_STOP
-		level0_overlay.anchor_left = 0
-		level0_overlay.anchor_top = 0
-		level0_overlay.anchor_right = 1
-		level0_overlay.anchor_bottom = 1
-		_layer(1).add_child(level0_overlay)
-	elif not level0_overlay.is_inside_tree():
-		_layer(1).add_child(level0_overlay)
+	ui_level0._level0_ensure_overlay()
 
-
-# ============================================================
-# 七之二、第零关：Phase 2 — 流程介绍
-# ============================================================
 func _level0_start_phase2() -> void:
-	game_manager.set_tutorial_level0_phase(2)
-	level0_flow_index = 0
-	level0_flow_steps = [
-		"游戏开始，每名玩家从牌堆中抽8张牌，\n你需要通过巧妙组合并预判其他玩家，尽快将所有手牌打出，最先打完所有手牌者获胜",
-		"游戏中有单质、化合物与族炸这三种最基本的牌型，\n你将会在下面几个关卡了解他们的打法",
-		"游玩时，你可以选择出牌或者跳过，出牌时，你应当考虑最基础的几个规则：\n越大越小、同类同出和牌权争夺。接下来就以一场对局来呈现吧",
-	]
-	_level0_show_flow_step(0)
-
+	ui_level0._level0_start_phase2()
 
 func _level0_show_flow_step(idx: int) -> void:
-	_refresh_ui()
-
-	if level0_overlay:
-		level0_overlay.queue_free()
-		level0_overlay = null
-
-	if idx >= level0_flow_steps.size():
-		_level0_start_phase3()
-		return
-
-	level0_flow_index = idx
-	_level0_ensure_overlay()
-
-	for child in level0_overlay.get_children():
-		child.queue_free()
-
-	var bg = ColorRect.new()
-	bg.color = Color(0, 0, 0, 0.55)
-	bg.anchor_left = 0
-	bg.anchor_top = 0
-	bg.anchor_right = 1
-	bg.anchor_bottom = 1
-	bg.mouse_filter = Control.MOUSE_FILTER_STOP
-	level0_overlay.add_child(bg)
-
-	var dialog_bg = ColorRect.new()
-	dialog_bg.color = Color(0.95, 0.95, 1, 0.97)
-	dialog_bg.position = Vector2(100, 250)
-	dialog_bg.size = Vector2(900, 190)
-	level0_overlay.add_child(dialog_bg)
-
-	var dialog_border = _level0_make_outline_rect(Vector2(100, 250), Vector2(900, 190), Color(0.3, 0.5, 0.8, 1), 3)
-	level0_overlay.add_child(dialog_border)
-
-	var title = Label.new()
-	title.text = "游戏流程介绍 %d/%d" % [idx + 1, level0_flow_steps.size()]
-	title.add_theme_font_size_override("font_size", 20)
-	title.add_theme_color_override("font_color", Color(0, 0, 0, 1))
-	title.position = Vector2(130, 260)
-	title.size = Vector2(840, 28)
-	level0_overlay.add_child(title)
-
-	var content = Label.new()
-	# autowrap 必须在 size 之前：否则 size 会被「未换行整行宽」撑大
-	content.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	content.text = level0_flow_steps[idx]
-	content.add_theme_font_size_override("font_size", 16)
-	content.add_theme_color_override("font_color", Color(0, 0, 0, 1))
-	content.position = Vector2(130, 300)
-	content.size = Vector2(840, 80)
-	level0_overlay.add_child(content)
-
-	# 底部三个出口：下一步 / 跳过引导 / 返回关卡（与 Phase 1 同一套按钮与语义）
-	var btn_text = "下一步 →" if idx < level0_flow_steps.size() - 1 else "开始对局！"
-	var flow_btn_h := float(_touch_btn_h(45))
-	level0_overlay.add_child(_level0_guide_btn(
-		Vector2(316, 382), Vector2(150, flow_btn_h), btn_text, _level0_flow_next_step))
-	level0_overlay.add_child(_level0_guide_btn(
-		Vector2(478, 382), Vector2(150, flow_btn_h), "跳过引导", _level0_skip_guide))
-	level0_overlay.add_child(_level0_guide_btn(
-		Vector2(640, 382), Vector2(150, flow_btn_h), "返回关卡", _level0_exit_guide))
-
+	ui_level0._level0_show_flow_step(idx)
 
 func _level0_flow_next_step() -> void:
-	level0_flow_index += 1
-	_level0_show_flow_step(level0_flow_index)
+	ui_level0._level0_flow_next_step()
 
-
-# ============================================================
-# 七之三、第零关：Phase 3 — 牌局
-# ============================================================
 func _level0_start_phase3() -> void:
-	game_manager.set_tutorial_level0_phase(3)
-
-	if level0_overlay:
-		level0_overlay.queue_free()
-		level0_overlay = null
-
-	level0_ui_highlight_steps = []
-	level0_flow_steps = []
-	_refresh_ui()
-
-	_level0_create_rule_tips()
-
-	var intro_tip = _level0_make_tip_box("对局开始！请尝试出牌吧。\n本关 AI 每回合只出 1 张单质，不会抢在你前面打完。", 3.0)
-	_layer(2).add_child(intro_tip)
-
-
-var level0_rule_tip_label: Label = null
-var level0_rule_tip_bg: Panel = null
+	ui_level0._level0_start_phase3()
 
 func _level0_create_rule_tips() -> void:
-	_level0_clear_rule_tips()
-	# 与 LogLabel 同格：两者互斥显示，结构上不可能再重叠；几何统一交给 _layout_rule_tips()
-	var home: Vector2 = Vector2(824, 300)
-	if log_label and is_instance_valid(log_label):
-		home = log_label.get_meta("home", log_label.position)
-	level0_rule_tip_bg = Panel.new()
-	level0_rule_tip_bg.name = "Level0RuleTipsBg"
-	level0_rule_tip_bg.set_meta("home", home)
-	level0_rule_tip_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	level0_rule_tip_bg.add_theme_stylebox_override("panel", _make_panel_style("toast_info"))
-	_layer(0).add_child(level0_rule_tip_bg)
-
-	# 标题条：和日志同一套可折叠交互（默认展开，点一下收成 26px 一行）
-	_rule_tip_title = _make_right_column_title("Level0RuleTipsTitle", "规则提醒")
-	_rule_tip_title.pressed.connect(_on_rule_tip_title_pressed)
-	level0_rule_tip_bg.add_child(_rule_tip_title)
-
-	level0_rule_tip_label = Label.new()
-	level0_rule_tip_label.name = "Level0RuleTips"
-	level0_rule_tip_label.add_theme_font_size_override("font_size", 13)
-	level0_rule_tip_label.add_theme_color_override("font_color", Color(0, 0, 0, 1))
-	level0_rule_tip_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	level0_rule_tip_label.text = ""
-	_layer(0).add_child(level0_rule_tip_label)
-	_level0_update_rule_tips()
-	_layout_rule_tips()
+	ui_level0._level0_create_rule_tips()
 
 
 # 右栏可折叠标题条的共用构造（日志 / 规则提醒同一套外观与交互，避免两处各写一遍样式）
@@ -1617,129 +1145,27 @@ func _make_right_column_title(node_name: String, text: String) -> Button:
 	return title
 
 
+# -------- 以下方法已搬进 scripts/tutorial/Level0Overlay.gd（Slice 4f 纯搬运，这里只留同名转发） --------
 func _on_rule_tip_title_pressed() -> void:
-	_rule_tip_collapsed = not _rule_tip_collapsed
-	_layout_rule_tips()
+	ui_level0._on_rule_tip_title_pressed()
 
-
-# 规则提醒几何：与日志同一条公式（标题 26 + 间距 6 + 正文），正文高度用 Label 实测最小高度
 func _layout_rule_tips() -> void:
-	if level0_rule_tip_bg == null or not is_instance_valid(level0_rule_tip_bg):
-		return
-	if level0_rule_tip_label == null or not is_instance_valid(level0_rule_tip_label):
-		return
-	var home: Vector2 = level0_rule_tip_bg.get_meta("home", Vector2(824, 300))
-	var panel_w: float = LOG_W + LOG_PANEL_PAD
-	var body_w: float = panel_w - LOG_TEXT_PAD - LOG_PANEL_PAD
-	# 先定宽再量高：autowrap 的 Label 只有在宽度确定后才能算出换行后的真实高度
-	level0_rule_tip_label.size = Vector2(body_w, LOG_CONTENT_MAX_H)
-	var body_h: float = LOG_CONTENT_MIN_H
-	if not _rule_tip_collapsed:
-		body_h = clampf(level0_rule_tip_label.get_minimum_size().y, LOG_CONTENT_MIN_H, LOG_CONTENT_MAX_H)
-	var panel_h: float = LOG_PANEL_PAD + LOG_TITLE_H + LOG_PANEL_PAD
-	if not _rule_tip_collapsed:
-		panel_h += LOG_BODY_GAP + body_h
-	level0_rule_tip_bg.position = home
-	level0_rule_tip_bg.size = Vector2(panel_w, panel_h)
-	if _rule_tip_title and is_instance_valid(_rule_tip_title):
-		_rule_tip_title.position = Vector2(0, LOG_PANEL_PAD)
-		_rule_tip_title.size = Vector2(panel_w, LOG_TITLE_H)
-		_rule_tip_title.text = "规则提醒 %s" % ("▸" if _rule_tip_collapsed else "▾")
-	level0_rule_tip_label.position = Vector2(home.x + LOG_TEXT_PAD, home.y + LOG_TITLE_H + LOG_BODY_GAP)
-	level0_rule_tip_label.size = Vector2(body_w, body_h)
-	level0_rule_tip_label.visible = not _rule_tip_collapsed and level0_rule_tip_bg.visible
+	ui_level0._layout_rule_tips()
 
-
-# 彻底清掉第零关规则提醒（跨局 / 退出教学时必须调）：
-# 它挂在 ContentLayer 上，不随 GamePage 隐藏或 GameManager 重建而消失
 func _level0_clear_rule_tips() -> void:
-	if level0_rule_tip_label and is_instance_valid(level0_rule_tip_label):
-		level0_rule_tip_label.queue_free()
-	level0_rule_tip_label = null
-	if _rule_tip_title and is_instance_valid(_rule_tip_title):
-		_rule_tip_title.queue_free()
-	_rule_tip_title = null
-	if level0_rule_tip_bg and is_instance_valid(level0_rule_tip_bg):
-		level0_rule_tip_bg.queue_free()
-	level0_rule_tip_bg = null
-	if log_label and is_instance_valid(log_label):
-		_set_log_visible(true)
+	ui_level0._level0_clear_rule_tips()
 
-
-# 规则提醒 / 日志共用右栏同一格：互斥可见，永远不可能叠在一起
 func _level0_set_rule_tips_visible(on: bool) -> void:
-	if level0_rule_tip_bg and is_instance_valid(level0_rule_tip_bg):
-		level0_rule_tip_bg.visible = on
-	if level0_rule_tip_label and is_instance_valid(level0_rule_tip_label):
-		level0_rule_tip_label.visible = on and not _rule_tip_collapsed
-	if log_label and is_instance_valid(log_label):
-		_set_log_visible(not on)
-
+	ui_level0._level0_set_rule_tips_visible(on)
 
 func _level0_update_rule_tips() -> void:
-	if game_manager == null:
-		return
-	# 只有「第零关 · 牌局练习」这一段显示规则提醒；其余局面一律隐藏并让日志回到原位
-	var in_level0_play: bool = game_manager.tutorial_level == 0 \
-			and game_manager.tutorial_level0_phase == 3
-	if not in_level0_play:
-		if level0_rule_tip_label and is_instance_valid(level0_rule_tip_label):
-			level0_rule_tip_label.text = ""
-		_level0_set_rule_tips_visible(false)
-		return
-	if level0_rule_tip_label == null or not is_instance_valid(level0_rule_tip_label):
-		return
-	_level0_set_rule_tips_visible(true)
-	level0_rule_tip_label.text = _level0_rule_tips_text()
-	_layout_rule_tips()
+	ui_level0._level0_update_rule_tips()
 
-
-# 第零关只教「越大越小 / 同类同出」：族炸是本关不引导的内容，规则层仍允许手打，
-# 只有玩家自己真的打出族炸时，才补一条「牌权争夺」说明（避免默认就把新手带偏）
 func _level0_rule_tips_text() -> String:
-	var tip: String = game_manager.level0_rule_tip
-	# 面板已经有「规则提醒」标题条，正文直接进规则条目，不再重复一行标题
-	var rules_info = ""
-	if tip == "越大越小":
-		rules_info += "● 越大越小\n原子序数和越小牌越大\n同牌型必须出更大的牌才能接上\n\n"
-		rules_info += "  同类同出\n桌面单质→只能接单质\n桌面化合物→只能接化合物\n"
-	elif tip == "同类同出":
-		rules_info += "  越大越小\n原子序数和越小牌越大\n\n"
-		rules_info += "● 同类同出\n桌面单质→只能接单质\n桌面化合物→只能接化合物\n牌型必须匹配\n"
-	else:
-		rules_info += "  越大越小\n原子序数和越小牌越大\n\n"
-		rules_info += "  同类同出\n同类牌型才能接牌\n"
-	if tip == "牌权争夺":
-		rules_info += "\n● 牌权争夺\n你打出了族炸！\n族炸可超越牌型限制\n但要注意冷却❄"
-	return rules_info
-
+	return ui_level0._level0_rule_tips_text()
 
 func _level0_make_tip_box(text: String, duration: float = 2.5) -> Control:
-	var box = Control.new()
-	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
-
-	var bg = Panel.new()
-	bg.position = Vector2(200, 350)
-	bg.size = Vector2(700, 70)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	bg.add_theme_stylebox_override("panel", _make_panel_style("toast_info"))
-	box.add_child(bg)
-
-	var lbl = Label.new()
-	# autowrap 必须在 size 之前，否则中文字符串会把 Label 撑出背景板
-	lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	lbl.text = text
-	lbl.add_theme_font_size_override("font_size", 16)
-	lbl.add_theme_color_override("font_color", Color(0, 0, 0, 1))
-	lbl.position = Vector2(220, 355)
-	lbl.size = Vector2(660, 60)
-	lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	box.add_child(lbl)
-
-	var timer = get_tree().create_timer(duration)
-	timer.timeout.connect(box.queue_free)
-
-	return box
+	return ui_level0._level0_make_tip_box(text, duration)
 
 
 # ============================================================
