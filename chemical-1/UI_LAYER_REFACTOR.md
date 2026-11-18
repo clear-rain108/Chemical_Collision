@@ -1,7 +1,7 @@
 # UI 层重构：GameUI.gd 按功能拆分
 
 > 本文档是重构的**计划 + 进度台账**。每完成一片，回来把 ⬜ 改成 ✅ 并填「§8 完成记录」。
-> 最后更新：2026-11-18（Slice 3 落盘）
+> 最后更新：2026-11-18（Slice 4 落盘，root 7651 → 2048 行；剩 Slice 5 收尾）
 
 ## 0. 背景与已定决策
 
@@ -64,7 +64,7 @@ PlayerManager / AIPlayer / GameLogger）的验证脚本。本次是同一套做�
 
 | # | 模块 | 来源行段（当前 GameUI.gd） | 约行数 | 职责 |
 |---|---|---|---|---|
-| 0 | `scripts/GameUI.gd`（门面） | 1–330、333–532、612–750、3264–3286 | **≈950** | 常量/字段/装配/`_refresh_ui` 编排/`_process` 分发/全部转发 |
+| 0 | `scripts/GameUI.gd`（门面） | 1–330、333–532、612–750、3264–3286 | **≈950（实际 2048）** | 常量/字段/装配/`_refresh_ui` 编排/`_process` 分发/全部转发 |
 | 1 | `scripts/ui/UITheme.gd` | 226–254、4751–4775、533–611 | 140 | 视觉常量、`panel_style(kind)`、`card_color()`（+StyleBox 缓存） |
 | 2 | `scripts/ui/TouchMetrics.gd` | 146–183、4336–4536 | 240 | 触屏档判定/几何取值/运行时开关 |
 | 3 | `scripts/ui/PageRouter.gd` | 620–750 | 130 | `_show_*_page` / 淡入 / 返回 |
@@ -286,14 +286,49 @@ func update_buttons() -> void:
   留给 Slice 4 之后的性能小片（`ui/ActionPanel.gd`、`ui/TableArea.gd` 现在已就位）
 
 
-### Slice 4 —— 页面与联机（行数最多，与主循环无关）
-- ⬜ `pages/StartPage.gd` ⬜ `pages/SuppRulesPage.gd` ⬜ `pages/HelpPage.gd`
-- ⬜ `pages/EndPage.gd` ⬜ `pages/TutorialPage.gd` ⬜ `pages/RoomPage.gd`
-- ⬜ `tutorial/Level0Overlay.gd` ⬜ `net/OnlineUI.gd`
-- 目标：root → **≈900–1100 行**（常量 + 字段 + 装配 + 转发）
-- 验证：`start_page` / `help_page` / `end_page` / `tutorial_layout` / `room_page` /
-  `ui_online` / `touch_toggle` + 全量 46 套
-- commit：`【重构】UI 层拆分 4/5：6 个页面 + 第零关引导 + 联机接线 抽为模块`
+### Slice 4 —— 页面与联机 ✅ 2026-11-18 完成
+- ✅ `pages/PageChrome.gd`（249 行 / 11 个方法）：6 个页面共用的骨架 ——
+  `_page_bg_into` / `_page_gradient_band` / `_page_watermarks` / `_page_deco_cards` /
+  `_page_backdrop` / `_start_label` / 按钮三件套 / `_animate_page_intro` / `_page_deco_float`
+- ✅ `pages/StartPage.gd`（389 行 / 15 个方法）：标题 / 设置卡 / 按钮区 / 装饰牌 /
+  五个控件薄壳 / 入场动画 / 页内联提示
+- ✅ `pages/SuppRulesPage.gd`（295 行 / 13 个方法）：4 张规则卡 + 元素池 + 勾选摘要五连
+- ✅ `pages/HelpPage.gd`（499 行 / 22 个方法）：3 Tab 骨架 + 卡片族 + 图鉴小卡 + 进出路由
+- ✅ `pages/EndPage.gd`（257 行 / 7 个方法）：结算卡 + 统计块 + 按钮去向 +
+  `_show_end_page` / `_ensure_end_button_connected`（Slice 3 特意留给本片的那两个）
+- ✅ `pages/TutorialPage.gd`（177 行 / 6 个方法）+ `tutorial/Level0Overlay.gd`（517 行 / 21 个方法）：
+  三张关卡卡 + 第零关三步引导全流程（含规则提醒几何）
+- ✅ `net/OnlineUI.gd`（313 行 / 21 个方法）：会话装配 / 座位视角 / 9 个权威事件回调 / `_update_net`
+- ✅ `pages/RoomPage.gd`（662 行 / 31 个方法）：建房 / 加入 / 座位表 / 开局闸门 / 收尾
+- ✅ root 补 **147 个同名转发** + 9 个模块字段（`ui_page` / `ui_start` / `ui_supp` /
+  `ui_help` / `ui_end` / `ui_tut` / `ui_level0` / `ui_online` / `ui_room`）；
+  **仍然一个常量都没搬**（`START_C_*` / `HELP_*` / `END_*` / `TUT_CARD_*` / `ROOM_*` /
+  `START_INTRO_ORDER` 全部留 root），状态（`_help_*` / `_end_*` / `_room_*` /
+  `level0_*` / `_supp_*`）也全留 root
+- 结果：root **4727 → 2048 行**（−2679），Slice 4 新增模块 3358 行
+
+**本轮与计划的三处偏差**：
+
+1. **root 停在 2048，不是目标 ≈900–1100**。剩下的都是「装配 + 状态 + 常量 + 转发」：
+   `_setup_pages` / `_init_game` / `_refresh_ui` / `_process` 等主干、约 200 行字段、
+   约 70 行常量、147 个三行转发（≈440 行）。要再降只能「转发瘦身」（Slice 5 之后再评估）。
+2. **多了一个计划外的 `pages/PageChrome.gd`**：六个页面共用同一套背景 / 标签 / 按钮工厂，
+   不先抽出来的话，每个页面片都要往 root 取件，等于把耦合留到最后。
+3. **`_make_right_column_title` 留在 root**：它同时服务右栏日志（`ui/SidePanels.gd`）
+   与第零关规则提醒（`tutorial/Level0Overlay.gd`）。放进任何一个模块都会让另一个
+   跨模块直连，留 root 反而最干净（17 行）。
+
+**Slice 4 的工具/流程改进**：见 §8.4 的坑 12~16 —— 这一片把 `move_funcs` 的边界条件
+（跨行签名、块内 `var`、枚举、默认参数、目标目录）全部踩了一遍，逐条都有判据与修法。
+
+- 验证：**48/48 全绿**，重点 `start_page`(46) / `help_page`(67) / `end_page`(108) /
+  `tutorial_layout`(100) / `room_page`(199) / `ui_online`(101) / `ui_perf`(28) /
+  `motion`(91) / `hand_layout`(225)；每片另跑 `--quit-after 60` 冒烟 0 ERROR / 0 WARNING
+- commit（七笔，每笔都跑完 48 套才提交）：
+  `4/5a` `8cd00c5` PageChrome ｜ `4/5b` `2afb745` StartPage ｜ `4/5c` `7e438c9` SuppRulesPage
+  ｜ `4/5d` `c96f398` HelpPage ｜ `4/5e` `09e7a4d` EndPage
+  ｜ `4/5f` `3d176d6` TutorialPage + Level0Overlay ｜ `4/5g` `bb2c2aa` OnlineUI + RoomPage
+
 
 ### Slice 5 —— 收尾
 - ⬜ `ARCHITECTURE.md` 新增「UI 分层与刷新约定」小节（铁律 1~5、模块表、`_process` 唯一钩子）
@@ -322,6 +357,10 @@ func update_buttons() -> void:
 | `btn.pressed.connect(_on_x)` | `btn.pressed.connect(_ui._on_x)` | **必须指向 root**，保证测试的反射/spy 语义不变（`unprefix_siblings` 会跳过这类行） |
 | `func _x() -> void:` 里有 `await` | root 转发必须写成 `func _x() -> void: await mod.x()` | 漏 `await` 会让调用方提前继续 |
 | 区间里夹着 `var table_card_buttons` 这类**独立字段** | 字段留在 root，**拆区间跳过它** | 工具不搬 `var`：把字段包进区间 = root 删掉、模块多一份 = 双源状态（R3） |
+| 区间里夹着 `const X` / `enum Y` | 同上，**拆区间跳过** | 工具整段复制，常量/枚举会被搬进模块；测试与其它模块仍读 root 上的同名符号（`START_INTRO_ORDER` 就是这么被抓的） |
+| `RoomMode.HOSTING` / `NetSessionScript.State.X`（枚举成员） | `_ui.RoomMode.HOSTING` | 工具只给「字段/常量/方法」加前缀，枚举**基名**是类型标识符，它不认识 → 模块里直接报 `Identifier not declared` |
+| `var t := obj.create_tween()`（obj 来自 `_ui.*`，动态类型） | `var t: Tween = obj.create_tween()` | `:=` 无法从 Variant 推断；同类：`var tight := a > b` → `var tight: bool = ...` |
+| 模块内调用带默认参数的兄弟方法，且只传前几个实参 | 把默认值**补回模块签名** | 工具的模块签名会剥掉默认值（靠 root 转发补全），模块内互相调用就变成「实参太少」 |
 
 ### 4.2 每一步的四道闸
 
@@ -490,7 +529,7 @@ Gd --headless --path . --script tools/unprefix_siblings.gd -- --path=scripts/ui/
 | 2a | | 6098（−1259） | **1529**（CardMotion 200 / HandView 1329） | 47/47 ✅ | 常量未搬；75 个转发方法 |
 | 2b | `866ae54` | 6107（+9） | HandView +101（1334 → 1430） | 48/48 ✅ | 唯一改行为片；新增 `verify_ui_perf` |
 | 3 | `b930733`+`d9a00f0`+`060e7d4`+`118604e`+`a55b3f2`+`59945ba` | **4727（−1380）** | **1767**（ToolRow 113 / TableArea 287 / SidePanels 342 / ActionPanel 424 / HintFlow 99 / GameFlow 502） | 48/48 ✅ | 常量未搬；67 个转发方法；新增 `tools/unprefix_siblings.gd` |
-| 4 | | | | | |
+| 4 | `8cd00c5`+`2afb745`+`7e438c9`+`c96f398`+`09e7a4d`+`3d176d6`+`bb2c2aa` | **2048（−2679）** | **3358**（PageChrome 249 / StartPage 389 / SuppRulesPage 295 / HelpPage 499 / EndPage 257 / TutorialPage 177 / Level0Overlay 517 / OnlineUI 313 / RoomPage 662） | 48/48 ✅ | 常量未搬；147 个转发方法；9 个模块字段；新增 §8.4 坑 12~17 |
 | 5 | | | | | |
 
 ### 8.3 `project.godot` 中被引擎删掉的手写注释（原文存档）
@@ -590,6 +629,43 @@ environment/defaults/default_clear_color=Color(0.902, 0.941, 0.98, 1)
      断开（`3301-3415` 与 `3417-3451` 两段），让字段原样留在 root。
   另：`_show_end_page` / `_ensure_end_button_connected` 故意**没有**跟 GameFlow 一起搬，
   等 Slice 4 的 `pages/EndPage.gd` 一次性收走，避免同一段代码改两次。
+
+- 2026-11-18 **Slice 4 完成**：新增 `scripts/pages/{PageChrome,StartPage,SuppRulesPage,HelpPage,`
+  `EndPage,TutorialPage,RoomPage}.gd` + `scripts/tutorial/Level0Overlay.gd` +
+  `scripts/net/OnlineUI.gd`（合计 3358 行 / 147 个方法），root 4727 → **2048 行**，
+  48/48 全绿、每片 `--quit-after 60` 冒烟 0 ERROR / 0 WARNING。拆成七笔（4/5a~4/5g），
+  每笔都跑完全量才提交。这一片把 `move_funcs` 的边界条件全踩了一遍：
+  12. **多行签名必须先合并成单行**。工具只认「`func name(...)` 全在一行」的签名，否则
+      直接中止（`第 1179 行签名跨行或不合法`），且**此时 root 还未改动**（安全）。本轮遇到 5 处：
+      按钮三件套（4a）/ `_supp_rule_card`（4c）/ `_room_label`、`_room_start_block_reason`（4h）。
+      合并是纯格式改动，先 commit 进同一片即可，不单独提。
+  13. **区间里夹着的文件级 `var` 会被整段复制进模块**（比坑 11 更狠：坑 11 是「不搬 var」，
+      这里是「连 var 一起搬」——取决于 var 是否在区间内）。4f 的
+      `var level0_rule_tip_label` / `level0_rule_tip_bg` 正好夹在
+      `_level0_start_phase3` 与 `_level0_create_rule_tips` 之间，于是成了模块私有字段，
+      而 `ActionPanel._right_panel_hl_rect`、`PageRouter`、root 都还在读 root 上的同名字段。
+      症状：运行期刷 `Invalid access to property 'level0_rule_tip_bg' on base Control (GameUI.gd)`，
+      `verify_tutorial_layout` 直接卡死（await 链断在报错处，不是断言失败，所以看起来像「卡住」）。
+      判据：**选区间前先把 `var `/`const `/`enum ` 的行号列出来**（`findstr /n /b /g:pat.txt`），
+      区间跨过它们就断开；本片 4b 的 `START_INTRO_ORDER`、4a 之后的 `HELP_*` / `END_*` /
+      `TUT_CARD_*` / `ROOM_*` 都是这样保住的。
+  14. **枚举基名不会被加前缀**。`RoomMode.IDLE` 在模块里报
+      `Identifier "RoomMode" not declared`（工具只处理字段 / 常量 / 方法名）。
+      改成 `_ui.RoomMode.IDLE`（运行期经实例取枚举字典，再取成员）—— 4g/4h 共 7 处。
+  15. **模块签名会剥掉默认值，模块内互调就「实参太少」**。`_make_help_mini_card(card, show_valence = false)`
+      搬进模块后签名变成无默认值，而 `_fill_help_cards` 只传 1 个实参 → `Too few arguments`。
+      修法：把默认值补回**模块签名**（root 转发的默认值另有，两者互不影响）。
+      `_level0_make_tip_box(text, duration = 2.5)` / `_start_flash_rule_hint(text, col)` 同族。
+  16. **目标目录必须先建好**。`move_funcs` 先改 root、后写模块；写模块时若目录不存在，
+      它只打一行 `写不了文件` 然后退出，**root 已经被改写**（函数已删、转发已生成、`ui_xxx`
+      字段还不存在）。本轮 `scripts/tutorial/` 就踩了这一个：`git checkout -- scripts/GameUI.gd`
+      回到上一笔 commit 后 `mkdir` 再重跑即可（工具的失败是幂等的，不会半写模块）。
+      教训：**`--to=` 换成新目录时，先 `mkdir`**。
+  17. **`RefCounted` 里没有 Node / SceneTree 方法**，工具只加 `_ui.` 前缀，不会帮你改调用形状：
+      `add_child(page)`（HelpPage：页面一直挂在 GameUI 根下，不是层容器）→ `_ui.add_child(page)`；
+      `get_node_or_null("TutorialPage")`（EndPage / TutorialPage / OnlineUI 共 5 处）→
+      `_ui.get_node_or_null(...)`；`get_tree().create_timer(...)`（Level0Overlay）→
+      `_ui.get_tree().create_timer(...)`。这类错误 `--check-only` 一报一个准，成本很低。
 
 
 
