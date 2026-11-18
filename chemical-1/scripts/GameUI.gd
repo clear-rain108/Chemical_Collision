@@ -31,6 +31,7 @@ const CardMotionScript = preload("res://scripts/ui/CardMotion.gd")
 const HandViewScript = preload("res://scripts/ui/HandView.gd")
 # Slice 3（交互链）
 const ToolRowScript = preload("res://scripts/ui/ToolRow.gd")
+const TableAreaScript = preload("res://scripts/ui/TableArea.gd")
 const HintFlowScript = preload("res://scripts/game/HintFlow.gd")
 
 # 模块实例：_init 里创建（见下方 _init 的注释）。
@@ -42,6 +43,7 @@ var ui_router = null                     # 页面切换 + 层容器
 var ui_motion = null                     # 牌面动效（幽灵牌飞行 / 小卡入场 / 发牌淡入）
 var ui_hand = null                       # 手牌渲染 / 重叠布局 / 悬停 / 拖拽重排 / 价态自适应
 var ui_tool = null                       # 工具行三按钮样式 + 几何归一
+var ui_table = null                      # 顶部状态栏 + 桌面文案/小卡槽
 var ui_hint = null                       # 提示按钮（HintAdvisor → 自动选牌 + 说明）
 
 # ============================================================
@@ -354,6 +356,7 @@ func _init() -> void:
 	ui_motion = CardMotionScript.new(self)
 	ui_hand = HandViewScript.new(self)
 	ui_tool = ToolRowScript.new(self)
+	ui_table = TableAreaScript.new(self)
 	ui_hint = HintFlowScript.new(self)
 
 
@@ -3182,272 +3185,37 @@ func _update_info_label() -> void:
 	if info_label and game_manager:
 		info_label.text = _format_player_status()
 
-# ============================================================
-# 八之二、顶部状态栏（当前玩家 / 手牌数 / 上限 / 牌库 / 桌面）
-# ============================================================
+# -------- 以下方法已搬进 scripts/ui/TableArea.gd（Slice 3 纯搬运，这里只留同名转发） --------
 func _build_status_bar() -> void:
-	if not game_page or status_bar_label != null:
-		return
-	# 深蓝灰背景条（60px，覆盖顶部）
-	var bar = ColorRect.new()
-	bar.color = Color(0.173, 0.243, 0.314, 1.0)   # #2C3E50
-	bar.position = Vector2(0, 0)
-	bar.size = Vector2(1152, 60)
-	_layer(0).add_child(bar)
-
-	# 状态栏文字
-	var lbl = Label.new()
-	lbl.position = Vector2(16, 8)
-	lbl.size = Vector2(1240, 44)
-	lbl.add_theme_font_size_override("font_size", 16)
-	lbl.add_theme_color_override("font_color", Color(1, 1, 1, 1))
-	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	_layer(0).add_child(lbl)
-	status_bar_label = lbl
-
-	# 状态栏已整合信息，隐藏被遮挡/冗余的旧标签
-	var title = game_page.get_node_or_null("TitleLabel")
-	if title: title.visible = false
-	var deck = game_page.get_node_or_null("DeckCountLabel")
-	if deck: deck.visible = false
-	# 下方标签的纵向坐标已直接写在 Main.tscn 中（不再运行时下移，避免与桌面牌重叠）
+	ui_table._build_status_bar()
 
 
+# -------- 以下方法已搬进 scripts/ui/TableArea.gd（Slice 3 纯搬运，这里只留同名转发） --------
 func _update_status_bar() -> void:
-	if not status_bar_label or not game_manager:
-		return
-	var cp = game_manager.get_current_player()
-	if cp == null:
-		status_bar_label.text = ""
-		return
-	var ai_tag = "(AI)" if cp.is_ai else ""
-	var cooling = "❄" if cp.clan_bomb_cooling else ""
-	var pass_tag = "⏸" if cp.has_passed else ""
-	var hand_limit = game_manager.get_hand_limit()
-	var db = game_manager.get_database()
-	var deck_remain = db.get_remaining_count() if db else 0
-	# 桌面信息
-	var table_txt = "桌面: 空"
-	if game_manager.get_table_player_index() >= 0:
-		var tp = game_manager.get_players()[game_manager.get_table_player_index()]
-		# 桌面牌型以「打出时记录的 table_pattern」为准；按牌面重新检测会把
-		# 「既是族炸又能配成化合物」的牌（如 N + P）显示成另一种，与判定结果矛盾。
-		var pat = game_manager.get_table_pattern()
-		if pat < 0:
-			pat = CardPatternsScript.detect_pattern(game_manager.get_table_cards())
-		var pn = CardPatternsScript.get_pattern_name(pat)
-		table_txt = "桌面: %s 打出 %s" % [tp.player_name, pn]
-	status_bar_label.text = "▶ %s %s%s%s  手牌 %d/%d  ｜  牌库 %d  ｜  %s" % [
-		cp.player_name, ai_tag, cooling, pass_tag,
-		cp.get_hand_count(), hand_limit, deck_remain, table_txt
-	]
+	ui_table._update_status_bar()
 
+
+# -------- 以下方法已搬进 scripts/ui/TableArea.gd（Slice 3 纯搬运，这里只留同名转发） --------
 func _format_player_status() -> String:
-	if game_manager == null or game_manager.get_player_count() == 0:
-		return "等待游戏初始化..."
-	var n: int = int(game_manager.get_player_count())
-	var cp_idx = game_manager.get_current_player_index()
-	# 名字链：每 PLAYER_STATUS_PER_LINE 人一行（3~4 人仍是 1 行，6~8 人才换行）
-	var chain_lines: Array = []
-	var row: Array = []
-	for i in range(n):
-		var p = game_manager.get_players()[i]
-		var is_current = (i == cp_idx)
-		var ai_tag = "(AI)" if p.is_ai else ""
-		var cooling = "❄" if p.clan_bomb_cooling else ""
-		var pass_tag = "⏸" if p.has_passed else ""
-		var highlight = " ◄" if is_current else ""
-		row.append("%s %s%s%s%s" % [p.player_name, ai_tag, cooling, pass_tag, highlight])
-		if row.size() >= PLAYER_STATUS_PER_LINE or i == n - 1:
-			chain_lines.append("● " + " → ● ".join(row))
-			row = []
-	if chain_lines.is_empty():
-		return "等待游戏初始化..."
-	var lines: Array = chain_lines
-	# AI 手牌：自己的手牌数已在顶部状态栏显示，这里只列 AI 的，避免信息重复
-	var counts: Array = []
-	for i in range(n):
-		var pl = game_manager.get_players()[i]
-		if not pl.is_ai:
-			continue
-		counts.append("%s: %d张" % [pl.player_name, pl.get_hand_count()])
-	var ci := 0
-	while ci < counts.size():
-		var seg: Array = counts.slice(ci, mini(ci + PLAYER_STATUS_PER_LINE, counts.size()))
-		lines.append(("手牌: " if ci == 0 else "　　　") + " | ".join(seg))
-		ci += PLAYER_STATUS_PER_LINE
-	# 补充规则 / 方向：只在还留得下行数时追加（8 座位时这两行会被挤掉）
-	var has_rules: bool = game_manager.get_organic_rules_enabled() \
-		or game_manager.get_sequence_rules_enabled() \
-		or game_manager.get_halogen_exchange_allowed() \
-		or game_manager.get_element_limit_enabled()
-	if has_rules and lines.size() < INFO_LABEL_MAX_LINES - 1:
-		var rules_list: Array = []
-		if game_manager.get_organic_rules_enabled(): rules_list.append("有机物胜利")
-		if game_manager.get_sequence_rules_enabled(): rules_list.append("顺序牌型")
-		if game_manager.get_halogen_exchange_allowed(): rules_list.append("允许卤族互化")
-		if game_manager.get_element_limit_enabled():
-			var extras: Array = game_manager.get_allowed_extra_elements()
-			var extra_txt := "无额外元素" if extras.is_empty() else "/".join(extras)
-			rules_list.append("元素限制（前20号 + %s）" % extra_txt)
-		lines.append("【补充规则】" + " + ".join(rules_list))
-	if lines.size() < INFO_LABEL_MAX_LINES and not game_manager.get_direction_clockwise():
-		lines.append("方向: ← 逆时针")
-	return "\n".join(lines)
+	return ui_table._format_player_status()
 
 
 var table_card_buttons: Array = []
 
+# -------- 以下方法已搬进 scripts/ui/TableArea.gd（Slice 3 纯搬运，这里只留同名转发） --------
 func _update_table_label() -> void:
-	if not table_label or not game_manager: return
-
-	for btn in table_card_buttons:
-		if is_instance_valid(btn): btn.queue_free()
-	table_card_buttons.clear()
-
-	if game_manager.get_table_player_index() >= 0:
-		var p = game_manager.get_players()[game_manager.get_table_player_index()]
-		var cards = game_manager.get_table_cards()
-		# 同 _update_status_bar：桌面牌型一律取 table_pattern（打出时的真相）
-		var pat = game_manager.get_table_pattern()
-		if pat < 0:
-			pat = CardPatternsScript.detect_pattern(cards)
-		var pn = CardPatternsScript.get_pattern_name(pat)
-		var en = CardPatternsScript.get_element_display(cards)
-		var syms: Array = []
-		for c in cards: syms.append(c.symbol)
-		var txt = "桌面: %s 打出 %s" % [p.player_name, pn]
-		if en != "": txt += " " + en
-		if pat == CardPatternsScript.CardPattern.COMPOUND:
-			var table_cv = game_manager.get_table_custom_valences()
-			var fi = CompoundSolverScript.get_compound_formula(cards, table_cv)
-			if not fi.is_empty():
-				var formula = fi.get("formula", "")
-				if formula != "":
-					txt += " " + formula
-					var comp_name = CompoundSolverScript.get_compound_name(cards, table_cv)
-					if comp_name != "":
-						txt += "（" + comp_name + "）"
-		if game_manager.is_compound_immune(): txt += " [免疫]"
-		if game_manager.is_clan_bomb_chain_active(): txt += " ⚠接炸中"
-		_set_table_text(txt, pat)
-
-		# 为桌面迷你卡牌计算每个元素的化合价
-		var card_valences: Dictionary = {}
-		if pat == CardPatternsScript.CardPattern.ELEMENT:
-			for i in range(cards.size()):
-				card_valences[i] = 0
-		elif pat == CardPatternsScript.CardPattern.COMPOUND:
-			var fi2 = CompoundSolverScript.get_compound_formula(cards, game_manager.get_table_custom_valences())
-			if not fi2.is_empty():
-				# 按化学式的标准顺序（正电性在前，负电性在后，同内按电负性递增）重排卡牌
-				# 这样桌面小卡牌的物理顺序与化学式字符串一致
-				var pos_list2: Array = fi2.get("pos_list", [])
-				var neg_list2: Array = fi2.get("neg_list", [])
-				var ordered_cards: Array = []
-				for e in pos_list2:
-					for _ei in range(e.count):
-						for c in cards:
-							if c.symbol == e.symbol and c not in ordered_cards:
-								ordered_cards.append(c)
-								break
-				for e in neg_list2:
-					for _ei in range(e.count):
-						for c in cards:
-							if c.symbol == e.symbol and c not in ordered_cards:
-								ordered_cards.append(c)
-								break
-				if ordered_cards.size() == cards.size():
-					cards = ordered_cards
-				# 计算每个元素的化合价（按重排后的索引）
-				# 混合价态（Fe₃O₄）按「每张牌一个价」显示：Fe 三张分别是 +3 / +3 / +2，
-				# 而不是把平均值或其中一个价重复三遍。
-				for e in pos_list2 + neg_list2:
-					var plan: Array = e.get("plan", [])
-					var k := 0
-					for i in range(cards.size()):
-						if cards[i].symbol == e.symbol:
-							if bool(e.get("mixed", false)) and k < plan.size():
-								card_valences[i] = int(plan[k])
-							else:
-								card_valences[i] = e.ox_state
-							k += 1
-		elif pat == CardPatternsScript.CardPattern.SEQUENCE:
-			# 顺序牌按原子序数升序显示（与玩家选择顺序无关，体现连续序列）
-			var sorted_cards: Array = cards.duplicate()
-			sorted_cards.sort_custom(func(a, b): return a.atomic_number < b.atomic_number)
-			cards = sorted_cards
-			for i in range(cards.size()):
-				card_valences[i] = 0
-
-		# 内容签名：同一批牌（uid）+ 同一牌型 → 不重播入场动画。
-		# AI 每次行动都会走 _refresh_ui 整块重建小卡，不去重的话桌面会一直闪。
-		var new_sig := "%d|" % pat
-		for c in cards:
-			new_sig += "%s%d," % [c.symbol, c.uid]
-		var replay: bool = new_sig != _table_sig
-		_table_sig = new_sig
-
-		# 桌面牌槽位："桌面: …"文字下方的那一行，多张时自动压缩并水平居中
-		var slot_left := 20.0
-		var slot_w := 580.0
-		var slot_y := 186.0
-		if table_label:
-			slot_y = table_label.position.y + table_label.size.y + 4.0
-		var mini_step: float = 80.0
-		if cards.size() > 1:
-			mini_step = min(80.0, (slot_w - 72.0) / float(cards.size() - 1))
-		var row_w: float = 72.0 + mini_step * float(cards.size() - 1)
-		var start_x: float = slot_left + max(0.0, (slot_w - row_w) * 0.5)
-		for i in range(cards.size()):
-			var cv = null
-			if card_valences.has(i):
-				cv = card_valences[i]
-			var mini_btn = _build_mini_card_button(cards[i], cv)
-			mini_btn.position = Vector2(start_x + i * mini_step, slot_y)
-			_layer(0).add_child(mini_btn)
-			table_card_buttons.append(mini_btn)
-			if replay:
-				_animate_mini_card_in(mini_btn, i)
-	else:
-		_table_sig = ""
-		_set_table_text("桌面: 空", -1)
+	ui_table._update_table_label()
 
 
-# -------- 桌面「桌面: …」文本：按牌型上色 + 换行淡入（A2） --------
-# 以前无论打出什么牌型都是同一行深灰小字，玩家要读完整句才知道发生了什么；
-# 牌型色让「化合物 / 族炸 / 顺序」一眼可辨（族炸还会额外带 ⚠ 文案）。
+# -------- 以下方法已搬进 scripts/ui/TableArea.gd（Slice 3 纯搬运，这里只留同名转发） --------
 func _table_type_color(pat: int) -> Color:
-	match pat:
-		CardPatternsScript.CardPattern.COMPOUND: return Color(0.11, 0.45, 0.29, 1.0)   # 深绿
-		CardPatternsScript.CardPattern.CLAN_BOMB: return Color(0.69, 0.23, 0.18, 1.0)  # 深红
-		CardPatternsScript.CardPattern.ORGANIC: return Color(0.55, 0.36, 0.10, 1.0)    # 琥珀
-		CardPatternsScript.CardPattern.SEQUENCE: return Color(0.40, 0.29, 0.62, 1.0)   # 深紫
-	return TABLE_TEXT_COLOR                                                          # 单质 / 空桌
-
+	return ui_table._table_type_color(pat)
 
 func _set_table_text(txt: String, pat: int) -> void:
-	if table_label == null or not is_instance_valid(table_label):
-		return
-	var changed: bool = table_label.text != txt
-	table_label.text = txt
-	table_label.add_theme_color_override("font_color", _table_type_color(pat))
-	if changed:
-		_tween_table_label_reveal()
+	ui_table._set_table_text(txt, pat)
 
-
-# 淡入而不是瞬间换字：桌面是全场视线焦点，"啪"一下换掉容易被当成误刷
 func _tween_table_label_reveal() -> void:
-	if table_label == null or not is_instance_valid(table_label):
-		return
-	var old = table_label.get_meta("reveal_tween", false)
-	if old is Tween and old.is_valid():
-		old.kill()
-	table_label.modulate = Color(1, 1, 1, 0.15)
-	var tw := create_tween()
-	tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	tw.tween_property(table_label, "modulate:a", 1.0, TABLE_REVEAL_MS / 1000.0)
-	table_label.set_meta("reveal_tween", tw)
+	ui_table._tween_table_label_reveal()
 
 
 # -------- 以下方法已搬进 scripts/ui/CardMotion.gd（Slice 2a 纯搬运，这里只留同名转发） --------
