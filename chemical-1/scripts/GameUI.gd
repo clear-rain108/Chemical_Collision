@@ -3808,155 +3808,21 @@ func _on_clan_bomb() -> void:
 	var result = _router().play(cards, {}, CardPatternsScript.CardPattern.CLAN_BOMB)
 	_dispatch_result(result)
 
+# -------- 以下方法已搬进 scripts/ui/ActionPanel.gd（Slice 3 纯搬运，这里只留同名转发） --------
 func _on_choose_compound() -> void:
-	var cp = _view_player()
-	var cards: Array = _sel_cards()
-	var symbols: Array = []
-	for card in cards:
-		var s = card.symbol
-		if s not in symbols: symbols.append(s)
-	if symbols.size() < 2:
-		_show_info("化合物至少需要两种不同元素！")
-		_on_back()
-		return
-	# 卤族互化：默认禁止（硬规则）；开始页勾选「允许卤族互化」后放行。
-	# 引擎侧 play_cards() 同样会拦（返回 -7），这里只是提前给出更友好的提示。
-	if not game_manager.get_halogen_exchange_allowed() and _is_halogen_only(symbols):
-		_show_info("卤族元素(F/Cl/Br/I)之间不可互相化合！请加入金属或其他非金属元素，或在开始页勾选『允许卤族互化』。")
-		_on_back()
-		return
-
-	# 自动识别有机物：选中牌组若实际为有机物（甲醛/甲醇/乙醇/甲酸/乙酸/烷烃等），
-	# 直接按有机物打出（跳过化合价选择），有机物打出即获胜
-	if CardPatternsScript.detect_pattern(cards, true) == CardPatternsScript.CardPattern.ORGANIC:
-		var custom_valences = {"_organic": true}
-		var result = _router().play(cards, custom_valences, CardPatternsScript.CardPattern.ORGANIC)
-		# 日志只在本端真落子时写（联机要等主机裁决，写早了就是假消息）
-		if net_session == null:
-			if result == 0:
-				log_lines.push_back("🎉 %s 打出有机物，立即获胜！" % cp.player_name)
-			else:
-				_show_info("有机物打出失败！")
-		_dispatch_result(result)
-		return
-
-	step_mode = 2
-	compound_selections.clear()
-	_update_action_panel()
+	ui_action._on_choose_compound()
 
 func _on_choose_organic() -> void:
-	var cp = _view_player()
-	var cards: Array = _sel_cards()
-	# 检查是否为有机物
-	if CardPatternsScript.detect_pattern(cards, true) != CardPatternsScript.CardPattern.ORGANIC:
-		_show_info("不是有效有机物！有机物包括：甲烷CH4、乙烷C2H6、丙烷C3H8及他们的单一卤代物。\n卤代物只能包含一种卤族元素(F/Cl/Br)。")
-		_on_back()
-		return
-	# 打出有机物，标记 _organic 跳过族炸检测
-	var custom_valences = {"_organic": true}
-	var result = _router().play(cards, custom_valences, CardPatternsScript.CardPattern.ORGANIC)
-	if net_session != null:
-		_dispatch_result(result)
-		return
-	if result == 0:
-		# 有机物打出成功
-		log_lines.push_back("🎉 %s 打出有机物，立即获胜！" % cp.player_name)
-		_handle_result(result)
-	else:
-		_show_info("有机物打出失败！")
-		_on_back()
+	ui_action._on_choose_organic()
 
 func _on_select_valence(symbol: String, valence: int) -> void:
-	for sel in compound_selections:
-		if sel.symbol == symbol: return
-	compound_selections.append({"symbol": symbol, "valence": valence})
-	_update_action_panel()
+	ui_action._on_select_valence(symbol, valence)
 
 func _on_confirm_compound() -> void:
-	# 选中牌一次性拍快照（重排 / 抽牌后 selected_indices 可能已对不上，_sel_cards 内部按按钮 meta 兜底）
-	var sel_cards: Array = _sel_cards()
-
-	var custom_valences: Dictionary = {}
-	for sel in compound_selections:
-		custom_valences[sel.symbol] = sel.valence
-
-	var has_pos = false
-	var has_neg = false
-	for sel in compound_selections:
-		if sel.valence > 0: has_pos = true
-		elif sel.valence < 0: has_neg = true
-	if not has_pos or not has_neg:
-		_show_info("需要正价和负价元素！")
-		return
-
-	var available: Dictionary = {}
-	for card in sel_cards:
-		available[card.symbol] = available.get(card.symbol, 0) + 1
-
-	var valence_list: Array = []
-	for sel in compound_selections:
-		valence_list.append({
-			"symbol": sel.symbol,
-			"v": abs(sel.valence),
-			"sign": -1 if sel.valence < 0 else 1,
-			"avail": available.get(sel.symbol, 0)
-		})
-
-	if valence_list.size() == 2:
-		var a = valence_list[0]
-		var b = valence_list[1]
-		if a.sign * b.sign > 0:
-			_show_info("需要一正一负两种价态！")
-			return
-		var g = _gcd(a.v, b.v)
-		var na = b.v / g
-		var nb = a.v / g
-		if a.avail < na or b.avail < nb:
-			_show_info("手牌不足！需 %s×%d + %s×%d" % [a.symbol, na, b.symbol, nb])
-			return
-		var ccards: Array = []
-		for card in sel_cards:
-			if card.symbol == a.symbol:
-				var already = 0
-				for cc in ccards:
-					if cc.symbol == a.symbol: already += 1
-				if already < na: ccards.append(card)
-			elif card.symbol == b.symbol:
-				var already = 0
-				for cc in ccards:
-					if cc.symbol == b.symbol: already += 1
-				if already < nb: ccards.append(card)
-		if ccards.size() != na + nb:
-			_show_info("收集卡牌出错！")
-			return
-		var result = _router().play(ccards, custom_valences, CardPatternsScript.CardPattern.COMPOUND)
-		_dispatch_result(result)
-		return
-
-	# 3+ 元素化合物：总电荷 Σ = 0 即可（不再要求「每种恰好 1 张」）。
-	# 引擎侧同口径（_search_valences 支持 2~3 元素、按张数加权），所以
-	# H×2 + S + O×4 能直接出 H₂SO₄，H×2 + O×2 能出 H₂O₂，Ca + O×2 能出 CaO₂。
-	# P14-B：失败提示要说清是哪一项不对 —— 真机截图里玩家选了 H,H,C,N，
-	# 旧提示只说「仅支持 2 元素化合物」，完全不知道问题在哪。
-	var total_charge = 0
-	for e in valence_list:
-		total_charge += e.sign * e.v * e.avail   # 按张数累加：2 张 H 就是 2 份价
-	if total_charge == 0:
-		var ccards: Array = sel_cards.duplicate()
-		var result = _router().play(ccards, custom_valences, CardPatternsScript.CardPattern.COMPOUND)
-		_dispatch_result(result)
-		return
-
-	# 逐项列出「价 × 张数」，玩家一眼能看出哪个元素多带了 / 少带了
-	var parts: Array = []
-	for e in valence_list:
-		parts.append("%s%+d×%d" % [e.symbol, e.sign * e.v, e.avail])
-	_show_info("化合价配不平：%s → Σ = %+d（需 0）。\n正负价按张数相乘相加必须为 0，例如 H(−1)×2+C(+4)+N(−3)=0。" \
-		% [" + ".join(parts), total_charge])
+	ui_action._on_confirm_compound()
 
 func _on_reset_valence() -> void:
-	compound_selections.clear()
-	_update_action_panel()
+	ui_action._on_reset_valence()
 
 
 # 混合价态一键出牌（v4）：Fe₃O₄ 这类「同元素多价」的组合走这条路径。
