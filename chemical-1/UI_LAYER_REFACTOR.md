@@ -1,7 +1,7 @@
 # UI 层重构：GameUI.gd 按功能拆分
 
 > 本文档是重构的**计划 + 进度台账**。每完成一片，回来把 ⬜ 改成 ✅ 并填「§8 完成记录」。
-> 最后更新：2026-11-18（Slice 4 落盘，root 7651 → 2048 行；剩 Slice 5 收尾）
+> 最后更新：2026-11-18（Slice 4 落盘：root 7651 → 2048 行；Slice 6 增量刷新 II 已补；剩 Slice 5 收尾）
 
 ## 0. 背景与已定决策
 
@@ -198,7 +198,8 @@ func update_buttons() -> void:
 - ✅ `_make_panel_style` 拆成两个入口（**没有**把 20 个调用点改成共享实例，见偏差 2）：
   `_make_panel_style(kind)` = 全新实例（要改属性的调用点）；`_panel_style_template(kind)` =
   共享缓存实例（只读）。手牌卡面 / 悬停 / 价态圆底三处高频点改用模板 → 一圈手牌 0 次 StyleBox 分配
-- ✅ 新增 `tests/verify_ui_perf.gd`（**28 条断言**，覆盖原计划 5 条中的 3 条）：
+- ✅ 新增 `tests/verify_ui_perf.gd`（**28 条断言**，覆盖原计划 5 条中的 3 条；
+  第 4/5 条已在 Slice 6 补齐到 50 条）：
   1. 选中 / 取消后按钮对象 id 不变 + 样式 / 层级 / 缩放 / 同源三态都正确
   2. 牌没变时重复调用不新建节点（子节点数不变），但选中态必须重刷到位
   3. `_panel_style_template("card")` 两次同一实例；`_make_panel_style` 每次新实例且不污染模板
@@ -218,9 +219,9 @@ func update_buttons() -> void:
    共享实例会被就地改脏（`verify_hand_layout` 断言工厂颜色，立刻红）。
    所以只让「只挂上去、不改属性」的高频点（手牌卡面 / 悬停 / 价态圆底）用模板，
    其余保持一次性实例；两条路共用同一个 `_build_style()`，数值真源仍只有一份。
-3. 原计划的第 4、5 条断言（桌面小卡 / 操作面板按钮 id 不变）**推迟到 Slice 3**：
-   那两个构建器还没抽成模块，现在加早退只会把逻辑压进 root 的单体函数里，
-   等 `ui/TableArea.gd`、`ui/ActionPanel.gd` 落地后再顺手做。
+3. 原计划的第 4、5 条断言（桌面小卡 / 操作面板按钮 id 不变）**推迟到 Slice 6**：
+   那两个构建器当时还没抽成模块，现在加早退只会把逻辑压进 root 的单体函数里；
+   等 `ui/TableArea.gd`、`ui/ActionPanel.gd` 落地后按「模块内改 + 模块内测」一次补齐。
 
 > 复用路径必须继续跑的副作用（漏一条就出真 bug）：
 > `_update_ai_schedule()`（否则 AI 回合手牌没变 → 不重建 → AI 永远不动）、
@@ -281,9 +282,9 @@ func update_buttons() -> void:
   + `3/5e：化合价面板搬进 ui/ActionPanel.gd（--append）`（`a55b3f2`）
   + `3/5f：开局与出牌流程 抽为 game/GameFlow.gd`
   （拆六笔：每笔都有独立的必跑测试集，红了一眼能定位是哪个模块）
-- 遗留：`verify_ui_perf.gd` 的第 4/5 条断言（桌面小卡 / 操作面板按钮 id 复用）仍未做 ——
-  它们的**前提是「同一批牌 / 同一批按钮不重建」的优化**，属行为改动，
-  留给 Slice 4 之后的性能小片（`ui/ActionPanel.gd`、`ui/TableArea.gd` 现在已就位）
+- 遗留：`verify_ui_perf.gd` 的第 4/5 条断言（桌面小卡 / 操作面板按钮 id 复用）——
+  ✅ 已在 **Slice 6** 补齐。它们的前提是「同一批牌 / 同一批按钮不重建」的优化，属行为改动，
+  所以必须等 `ui/ActionPanel.gd`、`ui/TableArea.gd` 就位后按模块内改、模块内测
 
 
 ### Slice 4 —— 页面与联机 ✅ 2026-11-18 完成
@@ -328,6 +329,47 @@ func update_buttons() -> void:
   `4/5a` `8cd00c5` PageChrome ｜ `4/5b` `2afb745` StartPage ｜ `4/5c` `7e438c9` SuppRulesPage
   ｜ `4/5d` `c96f398` HelpPage ｜ `4/5e` `09e7a4d` EndPage
   ｜ `4/5f` `3d176d6` TutorialPage + Level0Overlay ｜ `4/5g` `bb2c2aa` OnlineUI + RoomPage
+
+
+### Slice 6 —— UI 增量刷新 II（桌面小卡 / 操作面板）✅ 2026-11-18 完成
+> 这就是 Slice 2b 推迟的第 4/5 条断言的落地片：**只改这两条高频路径的「要不要重建」**，
+> 布局数值、按钮文案、联机门控一个字都没动（所以 48 套老测试一条都不用改）。
+
+- ✅ `ui/ActionPanel.gd`：`_update_action_panel()` 拆成「先算清单 → 再决定复用还是重建」
+  - `_ap_build_plan(cp)`：只算这一帧该有哪些按钮（文案 / 回调 / 禁用态），不碰节点
+  - `_ap_apply_plan(plan)`：逐项比对现有子节点，**同文案 + 同回调**时只就地翻 `disabled`
+  - 三个「清空」分支统一走 `_ap_clear()`；联机等待文案用 `_ap_single_label_is()` 去重
+  - 回调比对用 `_ap_btn_bound_to()`（在 `btn.pressed.get_connections()` 里找同 Callable）——
+    文案相同但动作变了（行动者换了、`跳过` ↔ `弃牌跳过(上限)`）必须重建，
+    否则点下去执行的是上一批的动作
+- ✅ `ui/TableArea.gd`：`_update_table_label()` 只在「牌变了 / 牌型变了」时重建小卡
+  - 内容签名 `_ui._table_sig` = `牌型 + 每张 (symbol, uid)`（用 **uid** 而不是下标：
+    化合物会按化学式重排，下标对不上）
+  - 签名相同 → `_reuse_mini_cards(n)` 只重摆槽位（“桌面: …”换行后高度会变，不能整段跳过）
+    → **不销毁 / 不重建 / 不重播入场动画**
+  - 清空统一走 `_clear_mini_cards()`（`queue_free` + `table_card_buttons.clear()`）
+- ✅ `tests/verify_ui_perf.gd`：28 → **50 条断言**（新增 22 条）
+  - 操作面板：同一局面重复刷新 / 选中 / 取消选中，子节点 id 全同、按钮实例全同、`disabled` 就地翻；
+    换步骤（0 ↔ 1）必须重建（反向断言，防「复用」被写成「永远不刷」）
+  - 桌面小卡：同批牌重复刷新 id 全同 + 实例全同 + **`mini_in_tween` 仍是原来那个 Tween**
+    （证明没重播动画）+ 槽位仍摆正；换一批牌 / 清桌必须重建 / 清空
+- 结果：root **2048 行（不变）**，`ui/TableArea.gd` 287 → **314 行**，
+  `ui/ActionPanel.gd` 424 → **513 行**，`tests/verify_ui_perf.gd` → 293 行
+- 验证：**48/48 全绿**，重点 `ui_perf`(50 新增 22) / `action_panel_fit`(76) / `ui_online`(101) /
+  `tool_buttons`(109) / `motion`(91) / `hand_layout`(225) / `log_panel`(46) / `auto_play`(41)
+- commit：`db6b536` `【性能】UI 增量刷新 II：操作面板按清单复用 + 桌面小卡按内容签名复用`
+
+**本轮的三处实现取舍**（每条都有测试盯着，不是风格偏好）：
+
+1. **复用判定要「跳过已 `queue_free` 待删的子节点」，而不是一见到就放弃复用**。
+   同一帧里 `_ap_clear()` 之后马上重建时，旧按钮还在子节点列表里（帧末才消失）；
+   把它们当「不匹配」会退化成「每帧重建两次」——第一次跑测试时
+   `选牌型步骤内重复刷新仍复用` 就是因此变红（`_action_panel_rows()` 数行数也是同一口径，
+   两处必须一致，否则行数与实际节点对不上）。
+2. **桌面小卡的复用判定放在模块里（`_reuse_mini_cards`），不只看签名**。签名只说
+   「内容是同一批牌」，还得确认那批节点确实还活着（结算页 / 换页时可能被别处清掉）。
+3. **`step_mode == 2`（化合价面板）不参与复用**：它每次都是另一批按钮 + Label，且由
+   `HandView._update_valence_buttons()` 自建；这里只负责「别把上一批当可复用」。
 
 
 ### Slice 5 —— 收尾
@@ -392,6 +434,7 @@ func update_buttons() -> void:
 | 2b | —（改行为） | `ui_perf`（新增）+ 2a 全部 + `action_panel_fit` |
 | 3 | ActionPanel / TableArea / SidePanels / ToolRow / GameFlow / HintFlow | `action_panel_fit` `action_router` `tool_buttons` `log_panel` `auto_play` `halogen` `hint` `clan_bomb_cooling` `end_page` `valence_panel` `constraint` |
 | 4 | 6 个 Page + Level0Overlay + OnlineUI | `start_page` `help_page` `end_page` `tutorial_layout` `tutorial` `room_page` `ui_online` `integration` |
+| 6 | —（改行为） | `ui_perf`（新增 22 条）+ `action_panel_fit` `ui_online` `tool_buttons` `motion` `log_panel` `auto_play` |
 | 5 | —（清理） | 全量 + 真机 |
 
 ### 5.2 运行器：`tools/run_tests.gd`
@@ -530,6 +573,7 @@ Gd --headless --path . --script tools/unprefix_siblings.gd -- --path=scripts/ui/
 | 2b | `866ae54` | 6107（+9） | HandView +101（1334 → 1430） | 48/48 ✅ | 唯一改行为片；新增 `verify_ui_perf` |
 | 3 | `b930733`+`d9a00f0`+`060e7d4`+`118604e`+`a55b3f2`+`59945ba` | **4727（−1380）** | **1767**（ToolRow 113 / TableArea 287 / SidePanels 342 / ActionPanel 424 / HintFlow 99 / GameFlow 502） | 48/48 ✅ | 常量未搬；67 个转发方法；新增 `tools/unprefix_siblings.gd` |
 | 4 | `8cd00c5`+`2afb745`+`7e438c9`+`c96f398`+`09e7a4d`+`3d176d6`+`bb2c2aa` | **2048（−2679）** | **3358**（PageChrome 249 / StartPage 389 / SuppRulesPage 295 / HelpPage 499 / EndPage 257 / TutorialPage 177 / Level0Overlay 517 / OnlineUI 313 / RoomPage 662） | 48/48 ✅ | 常量未搬；147 个转发方法；9 个模块字段；新增 §8.4 坑 12~17 |
+| 6 | `db6b536` | **2048（不变）** | TableArea 287 → 314 / ActionPanel 424 → 513 | 48/48 ✅ | 改行为片（未动布局数值 / 文案 / 联机门控）；`ui_perf` 28 → 50 条 |
 | 5 | | | | | |
 
 ### 8.3 `project.godot` 中被引擎删掉的手写注释（原文存档）
@@ -666,6 +710,20 @@ environment/defaults/default_clear_color=Color(0.902, 0.941, 0.98, 1)
       `get_node_or_null("TutorialPage")`（EndPage / TutorialPage / OnlineUI 共 5 处）→
       `_ui.get_node_or_null(...)`；`get_tree().create_timer(...)`（Level0Overlay）→
       `_ui.get_tree().create_timer(...)`。这类错误 `--check-only` 一报一个准，成本很低。
+
+- 2026-11-18 **Slice 6 完成**（UI 增量刷新 II，本片改行为）：`ui/ActionPanel.gd` 的
+  `_update_action_panel()` 改成「先算清单 `_ap_build_plan()`，再由 `_ap_apply_plan()` 决定复用」，
+  `ui/TableArea.gd` 的 `_update_table_label()` 改成「内容签名不变就只重摆槽位、不重建小卡」；
+  `verify_ui_perf` 28 → **50 条**，root 行数不变（2048），48/48 全绿。踩出的两条新坑：
+ 18. **「跳过已 `queue_free` 待删的子节点」是复用判定的默认口径**。`queue_free()` 的节点帧末才消失，
+     而 `_update_action_panel()` 同一帧里常常「先清空、再重建」；复用判定若把它们算作不匹配，
+     就永远匹配不上 —— 实测症状是「跨步骤复用正常，同一步骤内重复刷新却每帧重建一次」，
+     只有新加的那条断言能抓到（老测试全绿）。`_action_panel_rows()` 数行数本来就是这个口径，
+     两处必须一致，否则行高与实际子节点对不上。
+ 19. **「内容没变」不等于「什么都不用做」**（与坑 7 同源）。桌面小卡的槽位 `slot_y` 由
+     “桌面: …” 文字高度决定，文字从一行变两行时小卡必须下移；所以复用路径仍然要重算
+     `position`，只省掉「销毁 + 建节点 + 补间」这三件最贵的事。
+
 
 
 
