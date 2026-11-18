@@ -97,4 +97,3 @@ func _clear_hint() -> void:
 	# 牌被改动 / 局面推进后，提示按钮不能继续按着，否则下次点击会先触发「取消」
 	if _ui.hint_button != null and is_instance_valid(_ui.hint_button) and _ui.hint_button.button_pressed:
 		_ui.hint_button.set_pressed_no_signal(false)
-

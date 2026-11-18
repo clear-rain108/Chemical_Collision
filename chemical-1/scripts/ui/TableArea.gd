@@ -289,4 +289,3 @@ func _tween_table_label_reveal() -> void:
 	tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tw.tween_property(_ui.table_label, "modulate:a", 1.0, _ui.TABLE_REVEAL_MS / 1000.0)
 	_ui.table_label.set_meta("reveal_tween", tw)
-

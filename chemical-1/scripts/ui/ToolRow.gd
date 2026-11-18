@@ -111,4 +111,3 @@ func _style_tool_btn(b: Button, is_toggle: bool, danger: bool) -> void:
 		b.add_theme_color_override("font_pressed_color", _ui.BORDER_WARN)
 
 	_ui._attach_btn_motion(b)
-

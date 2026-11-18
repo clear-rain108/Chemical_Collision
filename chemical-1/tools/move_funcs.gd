@@ -27,6 +27,7 @@ var _title := ""
 var _ranges: Array = []          # [[a, b], ...] 1-based 闭区间
 var _slice := "2a"               # 仅用于生成注释/转发横幅文字（--slice=3）
 var _also: Array = []            # 额外要加 _ui. 前缀的标识符（引擎实例方法）
+var _append := false             # --append=1：往已存在的模块末尾追加（同一片分几次搬）
 var _failed := false
 
 
@@ -62,6 +63,8 @@ func _parse_args() -> void:
 				_ranges.append([int(se[0]), int(se[1])])
 		elif a.begins_with("--slice="):
 			_slice = a.substr(8)
+		elif a.begins_with("--append="):
+			_append = a.substr(9) != "0"
 		elif a.begins_with("--also="):
 			# 额外要加 _ui. 前缀的标识符：引擎自带实例方法（create_tween / get_tree …）
 			# 它们不是 root 的自定义符号，但同样只能经 root 调用
@@ -430,19 +433,26 @@ func _forwarder(f: Dictionary) -> Array:
 
 func _write_module(blocks: Array) -> void:
 	var out: Array = []
-	out.append("# ============================================================")
-	out.append("# " + _title)
-	out.append("#")
-	out.append("# 由 tools/move_funcs.gd 从 scripts/GameUI.gd 机械搬运（Slice %s，纯搬运）。" % _slice)
-	out.append("# 约定：状态与常量留在 root，模块只经 _ui 读写；不缓存判定结果、不复制字段。")
-	out.append("# ============================================================")
-	out.append("extends RefCounted")
-	out.append("")
-	out.append("var _ui = null")
-	out.append("")
-	out.append("")
-	out.append("func _init(ui) -> void:")
-	out.append("\t_ui = ui")
+	if _append:
+		# 同一片的第二批函数：保留已有内容，只在末尾追加，避免覆盖前一批
+		out = _read_lines(_to_path)
+		if out.is_empty():
+			_fail("--append 需要已存在的模块：%s" % _to_path)
+			return
+	else:
+		out.append("# ============================================================")
+		out.append("# " + _title)
+		out.append("#")
+		out.append("# 由 tools/move_funcs.gd 从 scripts/GameUI.gd 机械搬运（Slice %s，纯搬运）。" % _slice)
+		out.append("# 约定：状态与常量留在 root，模块只经 _ui 读写；不缓存判定结果、不复制字段。")
+		out.append("# ============================================================")
+		out.append("extends RefCounted")
+		out.append("")
+		out.append("var _ui = null")
+		out.append("")
+		out.append("")
+		out.append("func _init(ui) -> void:")
+		out.append("\t_ui = ui")
 	for blk in blocks:
 		out.append("")
 		out.append("")
