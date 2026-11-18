@@ -388,7 +388,7 @@ func update_buttons() -> void:
   SceneTree 脚本，手机上没法传参，不需要跟着包走）；Android `export_path` → `chemical-pre1005.5-release.apk`
 - ⏳ **真机 A/B 对比**：本机 `adb devices` 为空（没插设备），APK 已重新导出，
   设备侧对比（旧 `pre1005` vs 新 `pre1005.5` 的掉帧 / 触屏手感）留待有设备时补
-- commit：`【清理】死代码与过期文档 + ARCHITECTURE UI 分层小节 + 导出过滤`
+- commit：`63b4e5e` `【清理】死代码与过期文档 + ARCHITECTURE UI 分层小节 + 导出过滤`
 
 ---
 
@@ -582,7 +582,7 @@ Gd --headless --path . --script tools/unprefix_siblings.gd -- --path=scripts/ui/
 | 3 | `b930733`+`d9a00f0`+`060e7d4`+`118604e`+`a55b3f2`+`59945ba` | **4727（−1380）** | **1767**（ToolRow 113 / TableArea 287 / SidePanels 342 / ActionPanel 424 / HintFlow 99 / GameFlow 502） | 48/48 ✅ | 常量未搬；67 个转发方法；新增 `tools/unprefix_siblings.gd` |
 | 4 | `8cd00c5`+`2afb745`+`7e438c9`+`c96f398`+`09e7a4d`+`3d176d6`+`bb2c2aa` | **2048（−2679）** | **3358**（PageChrome 249 / StartPage 389 / SuppRulesPage 295 / HelpPage 499 / EndPage 257 / TutorialPage 177 / Level0Overlay 517 / OnlineUI 313 / RoomPage 662） | 48/48 ✅ | 常量未搬；147 个转发方法；9 个模块字段；新增 §8.4 坑 12~17 |
 | 6 | `db6b536` | **2048（不变）** | TableArea 287 → 314 / ActionPanel 424 → 513 | 48/48 ✅ | 改行为片（未动布局数值 / 文案 / 联机门控）；`ui_perf` 28 → 50 条 |
-| 5 | 本次提交 | **2048（不变）** | 无搬运（清理片）；CardData 自引用 preload → 静态缓存 | 48/48 ✅ | 删 TutorialUI；导出过滤；ARCHITECTURE §8.0；`AI_PLAYER_AUDIT` v2.0 |
+| 5 | `63b4e5e` | **2048（不变）** | 无搬运（清理片）；CardData 自引用 preload → 静态缓存 | 48/48 ✅ | 删 TutorialUI；导出过滤；ARCHITECTURE §8.0；`AI_PLAYER_AUDIT` v2.0 |
 
 ### 8.3 `project.godot` 中被引擎删掉的手写注释（原文存档）
 
