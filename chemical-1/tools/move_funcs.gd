@@ -25,6 +25,7 @@ var _to_path := ""
 var _field := ""
 var _title := ""
 var _ranges: Array = []          # [[a, b], ...] 1-based 闭区间
+var _slice := "2a"               # 仅用于生成注释/转发横幅文字（--slice=3）
 var _also: Array = []            # 额外要加 _ui. 前缀的标识符（引擎实例方法）
 var _failed := false
 
@@ -59,6 +60,8 @@ func _parse_args() -> void:
 					_fail("--range 格式应为 a-b：%s" % part)
 					return
 				_ranges.append([int(se[0]), int(se[1])])
+		elif a.begins_with("--slice="):
+			_slice = a.substr(8)
 		elif a.begins_with("--also="):
 			# 额外要加 _ui. 前缀的标识符：引擎自带实例方法（create_tween / get_tree …）
 			# 它们不是 root 的自定义符号，但同样只能经 root 调用
@@ -97,7 +100,7 @@ func _run() -> void:
 				return
 		var moved := _transform(block, funcs, symbols)
 		blocks.append({"a": a, "b": b, "lines": moved, "funcs": funcs})
-		var fwd: Array = ["# -------- 以下方法已搬进 %s（Slice 2a 纯搬运，这里只留同名转发） --------" % _to_path]
+		var fwd: Array = ["# -------- 以下方法已搬进 %s（Slice %s 纯搬运，这里只留同名转发） --------" % [_to_path, _slice]]
 		for f in funcs:
 			fwd.append_array(_forwarder(f))
 		src = _splice(src, a - 1, b, fwd)
@@ -430,7 +433,7 @@ func _write_module(blocks: Array) -> void:
 	out.append("# ============================================================")
 	out.append("# " + _title)
 	out.append("#")
-	out.append("# 由 tools/move_funcs.gd 从 scripts/GameUI.gd 机械搬运（Slice 2a，纯搬运）。")
+	out.append("# 由 tools/move_funcs.gd 从 scripts/GameUI.gd 机械搬运（Slice %s，纯搬运）。" % _slice)
 	out.append("# 约定：状态与常量留在 root，模块只经 _ui 读写；不缓存判定结果、不复制字段。")
 	out.append("# ============================================================")
 	out.append("extends RefCounted")
