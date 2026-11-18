@@ -1,7 +1,7 @@
 # UI 层重构：GameUI.gd 按功能拆分
 
 > 本文档是重构的**计划 + 进度台账**。每完成一片，回来把 ⬜ 改成 ✅ 并填「§8 完成记录」。
-> 最后更新：2026-11-17（Slice 1 落盘）
+> 最后更新：2026-11-18（Slice 3 落盘）
 
 ## 0. 背景与已定决策
 
@@ -231,13 +231,60 @@ func update_buttons() -> void:
 > **为什么 2a / 2b 必须拆两个 commit**：「搬错了」和「优化改错了」混在一起时，
 > 只有全量测试红才知道是哪一个。
 
-### Slice 3 —— 交互链
-- ⬜ `ui/ActionPanel.gd` ⬜ `ui/TableArea.gd` ⬜ `ui/SidePanels.gd` ⬜ `ui/ToolRow.gd`
-- ⬜ `game/GameFlow.gd` ⬜ `game/HintFlow.gd`
-- 目标：root → **≈3400 行**
-- 验证：`action_panel_fit` / `tool_buttons` / `log_panel` / `auto_play` / `halogen` /
-  `mixed_valence_ui` / `valence_panel` / `hint` / `clan_bomb_cooling` / `end_page` + 全量
-- commit：`【重构】UI 层拆分 3/5：操作面板/桌面区/侧栏/出牌流程 抽为模块`
+### Slice 3 —— 交互链 ✅ 2026-11-18 完成
+- ✅ `ui/ToolRow.gd`（113 行）：`_style_game_tool_buttons` / `_style_tool_btn`
+- ✅ `ui/TableArea.gd`（287 行）：`_build_status_bar` / `_update_status_bar` /
+  `_format_player_status` / `_update_table_label` / `_table_type_color` /
+  `_set_table_text` / `_tween_table_label_reveal`
+- ✅ `ui/SidePanels.gd`（342 行）：`_build_mini_card_button` / `_build_hand_reorder_button` /
+  `_update_hand_reorder_button` / `_on_hand_reorder` / 日志面板 7 个 /
+  `_clear_net_over_notice` / `_update_card_info_label` / `_update_deck_count` /
+  `_update_tutorial_label`（15 个）
+- ✅ `ui/ActionPanel.gd`（424 行）：面板 7 个 + `_mkb` + 缩放接线 4 个 +
+  化合价面板 5 个（`_on_choose_compound` 等）= **17 个方法**
+- ✅ `game/HintFlow.gd`（99 行）：`_on_hint_toggled` / `_apply_hint` / `_clear_hint`
+- ✅ `game/GameFlow.gd`（502 行）：开局 9 + 交互 11 + 结果/重置 6 = **26 个方法**
+- ✅ root 补 **67 个同名转发** + 6 个模块字段（`ui_tool` / `ui_table` / `ui_side` /
+  `ui_action` / `ui_hint` / `ui_flow`），`_init` 注入回引；**仍然一个常量都没搬**
+  （`TOOL_BTN_*` / `ACTION_PANEL_*` / `LOG_*` / `PLAYER_STATUS_PER_LINE` 全部留 root）
+- 结果：root **6107 → 4727 行**（−1380），Slice 3 新增模块 1767 行
+  （比目标 ≈3400 高 1300 —— 见偏差 1）
+
+**本轮与计划的三处偏差**：
+
+1. **root 实际停在 4727，而不是原估的 ≈3400**。原估是按「6 个模块合计 ≈1930 行」倒推的，
+   但每批搬运在 root 留下的转发方法（67 × 3 行 ≈ 200 行）+ 原注释 + 常量块
+   （`TOOL_BTN_*` 18 行、`ACTION_PANEL_*` 多行）都在 root 里。
+   真正的减量要等 Slice 4 把 6 个页面 + 房间页 + 联机接线搬走（≈2500 行）。
+2. **`_show_end_page` / `_ensure_end_button_connected` 没有跟 GameFlow 一起搬**：
+   它们只服务结算页，跟 `pages/EndPage.gd`（Slice 4）同批搬才不会来回改两次。
+3. **`_update_card_info_label` / `_update_deck_count` / `_update_tutorial_label`
+   归 SidePanels（右栏），不是 TableArea（顶部）** —— 按「节点归属」而不是「原行号相邻」切。
+
+**Slice 3 的工具改进**（都是本轮踩坑后加的，已写进 §4.1 的落地形态）：
+
+- `tools/move_funcs.gd` 新增 `--slice=`（转发横幅不再写死 Slice 2a）与
+  `--append=1`（同一片分两批搬进同一个模块时，追加而不是覆盖）
+- 新增 `tools/unprefix_siblings.gd`：move_funcs 会把「同模块内的兄弟方法」也加 `_ui.`
+  前缀，那样调用要经 root 转发再回来（多一跳，且漏掉转发就是无限递归）。
+  本工具把这类前缀批量还原，**跳过带 `.connect(` 的行**（信号仍指向 root，见 §4.1）。
+  实测：ActionPanel 还原 32 行、GameFlow 还原 18 行，其余模块复查 0 行
+
+- 验证：**48/48 全绿**，重点 `action_panel_fit`(76) / `tool_buttons`(109) / `log_panel`(46) /
+  `auto_play`(41) / `halogen`(32) / `mixed_valence_ui`(9) / `valence_panel`(19) /
+  `hint`(121) / `clan_bomb_cooling`(32) / `ui_perf`(28) / `hand_layout`(225) /
+  `ui_online`(101) / `ui_facade`(13)；另 `--quit-after 60` 冒烟 0 ERROR / 0 WARNING
+- commit：`【重构】UI 层拆分 3/5a：工具行 / 提示流 抽为模块`（`b930733`）
+  + `3/5b：顶部状态栏 / 桌面区 抽为 ui/TableArea.gd`（`d9a00f0`）
+  + `3/5c：桌面小卡 / 右栏日志 / 按序按钮 抽为 ui/SidePanels.gd`（`060e7d4`）
+  + `3/5d：操作面板与按钮工厂 抽为 ui/ActionPanel.gd`（`118604e`）
+  + `3/5e：化合价面板搬进 ui/ActionPanel.gd（--append）`（`a55b3f2`）
+  + `3/5f：开局与出牌流程 抽为 game/GameFlow.gd`
+  （拆六笔：每笔都有独立的必跑测试集，红了一眼能定位是哪个模块）
+- 遗留：`verify_ui_perf.gd` 的第 4/5 条断言（桌面小卡 / 操作面板按钮 id 复用）仍未做 ——
+  它们的**前提是「同一批牌 / 同一批按钮不重建」的优化**，属行为改动，
+  留给 Slice 4 之后的性能小片（`ui/ActionPanel.gd`、`ui/TableArea.gd` 现在已就位）
+
 
 ### Slice 4 —— 页面与联机（行数最多，与主循环无关）
 - ⬜ `pages/StartPage.gd` ⬜ `pages/SuppRulesPage.gd` ⬜ `pages/HelpPage.gd`
@@ -266,14 +313,15 @@ func update_buttons() -> void:
 
 | 原代码（在 root 内） | 搬到模块后 | 说明 |
 |---|---|---|
-| `_foo()`（调用同模块内方法） | `_foo()` | 直接调用，**绝不**写成 `_ui._foo()`（会经 root 转发再回来 = 无限递归） |
+| `_foo()`（调用同模块内方法） | `_foo()` | 直接调用，**绝不**写成 `_ui._foo()`（会经 root 转发再回来 = 无限递归）；工具会误加，搬完跑 `tools/unprefix_siblings.gd` 还原 |
 | `_bar()`（调用别的方法，且 `_bar` 已搬走） | `_ui.<那片的模块>._bar()` | 跨模块直连，不经 root |
 | `_baz()`（调用别的方法，`_baz` 还在 root） | `_ui._baz()` | 临时形态；`_baz` 搬走后改成上一行 |
 | `get_tree()` / `create_tween()` / `queue_redraw()` / `add_child()` | `_ui.get_tree()` / `_ui.create_tween()` / `_ui.queue_redraw()` / `_ui.add_child()` | `RefCounted` 没有这些 |
 | `foo_field` | `_ui.foo_field` | 状态只留 root |
 | `CARD_W`（常量） | 若常量已下沉：`CARD_W`（模块内本地常量）；root 侧写 `const CARD_W := ModScript.CARD_W` | 一处真源 |
-| `btn.pressed.connect(_on_x)` | `btn.pressed.connect(_ui._on_x)` | **必须指向 root**，保证测试的反射/spy 语义不变 |
+| `btn.pressed.connect(_on_x)` | `btn.pressed.connect(_ui._on_x)` | **必须指向 root**，保证测试的反射/spy 语义不变（`unprefix_siblings` 会跳过这类行） |
 | `func _x() -> void:` 里有 `await` | root 转发必须写成 `func _x() -> void: await mod.x()` | 漏 `await` 会让调用方提前继续 |
+| 区间里夹着 `var table_card_buttons` 这类**独立字段** | 字段留在 root，**拆区间跳过它** | 工具不搬 `var`：把字段包进区间 = root 删掉、模块多一份 = 双源状态（R3） |
 
 ### 4.2 每一步的四道闸
 
@@ -366,6 +414,22 @@ Gd --headless --path . --script tools/move_funcs.gd -- ^
 这些不是 root 的自定义符号，但在模块里同样只能经 `_ui` 调用 —— 漏进白名单的表现是
 `Function "create_tween()" not found in base "RefCounted"`，`--check-only` 会当场点名。
 
+Slice 3 起两个补充开关：
+
+- `--slice=3`：只影响生成的转发横幅注释（`Slice 2a` 曾写死）。
+- `--append=1`：同一片的第二批函数**追加**到已存在的模块末尾；不加就是整文件覆盖
+  （3e 搬化合价面板时若忘了它，3d 搬的 12 个方法会被冲掉）。
+
+**搬完必须再跑一遍 `tools/unprefix_siblings.gd`**（Slice 3 新增）：
+
+```bat
+Gd --headless --path . --script tools/unprefix_siblings.gd -- --path=scripts/ui/ActionPanel.gd
+```
+
+它把 `_ui._兄弟方法(` 还原成 `_兄弟方法(` —— 工具会把「本次刚搬进同一个模块的方法」
+也当成 root 符号加前缀，那条路径是「模块 → root 转发 → 模块」，多一跳，且转发漏写就无限递归。
+**跳过带 `.connect(` 的行**：信号一律指向 root（§4.1 最后一行的等价改写规则）。
+
 搬完必做的三件事：`--check-only` 跑新模块与 root → **全量测试** → `--quit-after 60` 冒烟。
 
 
@@ -422,10 +486,10 @@ Gd --headless --path . --script tools/move_funcs.gd -- ^
 | 片 | commit | GameUI.gd 行数 | 新增模块行数 | 测试 | 备注 |
 |---|---|---|---|---|---|
 | 0 | — | 7651（未动代码） | 0（新增 tools/ + 1 测试） | 47/47 ✅ | 回滚 project.godot |
-| 1 | （待提交） | 7357（−294） | **604**（UITheme 125 / TouchMetrics 256 / Toast 90 / PageRouter 133） | 47/47 ✅ | 常量未搬；33 个转发方法 |
-| 2a | | | | | |
-| 2b | | | | | |
-| 3 | | | | | |
+| 1 | | 7357（−294） | **604**（UITheme 125 / TouchMetrics 256 / Toast 90 / PageRouter 133） | 47/47 ✅ | 常量未搬；33 个转发方法 |
+| 2a | | 6098（−1259） | **1529**（CardMotion 200 / HandView 1329） | 47/47 ✅ | 常量未搬；75 个转发方法 |
+| 2b | `866ae54` | 6107（+9） | HandView +101（1334 → 1430） | 48/48 ✅ | 唯一改行为片；新增 `verify_ui_perf` |
+| 3 | `b930733`+`d9a00f0`+`060e7d4`+`118604e`+`a55b3f2`+`59945ba` | **4727（−1380）** | **1767**（ToolRow 113 / TableArea 287 / SidePanels 342 / ActionPanel 424 / HintFlow 99 / GameFlow 502） | 48/48 ✅ | 常量未搬；67 个转发方法；新增 `tools/unprefix_siblings.gd` |
 | 4 | | | | | |
 | 5 | | | | | |
 
@@ -506,6 +570,26 @@ environment/defaults/default_clear_color=Color(0.902, 0.941, 0.98, 1)
      共享后一处改色会污染全项目同款控件（`verify_hand_layout` 断言工厂颜色会立刻红）。
      正确形态是两个入口共用同一个 `_build_style()`：`_make_panel_style` = 一次性实例，
      `_panel_style_template` = 共享只读模板（只有「挂上去不改属性」的高频点能用）。
+
+- 2026-11-18 **Slice 3 完成**：新增 `scripts/ui/{ToolRow,TableArea,SidePanels,ActionPanel}.gd` +
+  `scripts/game/{HintFlow,GameFlow}.gd`（合计 1767 行 / 67 个方法），root 6107 → **4727 行**，
+  48/48 全绿、`--quit-after 60` 冒烟 0 ERROR / 0 WARNING。工具侧加了 `--slice=` / `--append=1`
+  与 `tools/unprefix_siblings.gd`。踩出的三条新坑：
+  9. **工具会把「同模块兄弟方法」也加 `_ui.` 前缀**。那条路径是「模块 → root 转发 → 模块」：
+     多一跳，且一旦那批转发方法还没生成就是无限递归。`unprefix_siblings.gd` 按本文件的
+     `func` 名单批量还原（实测 ActionPanel 32 行 / GameFlow 18 行），**但跳过 `.connect(` 行** ——
+     信号仍要指向 root，保持 §4.1 的既有语义。
+  10. **模块里的语法错误会以「root 编译失败」的形态报出来**。本轮 `_ui._table_sig` 被误改回
+     `_table_sig`（模块里没有这个字段），日志是
+     `Parse Error: Identifier "_table_sig" not declared` + `Compile Error: Failed to compile depended scripts`
+     → 4 套测试同时红，看着像重构整体崩了。定位口诀：**先 `--check-only` 新模块**，
+     报错行号在模块里就以模块为准，root 只是被 dependent 失败连坐。
+  11. **行区间不能包住独立的 `var` 声明**。`_update_table_label` 上方有一行
+     `var table_card_buttons: Array = []`，工具不搬 `var` —— 把它包进区间就等于
+     「root 删掉 + 模块多一份」，直接违反铁律 1（状态只留 root）。做法是把区间在字段处
+     断开（`3301-3415` 与 `3417-3451` 两段），让字段原样留在 root。
+  另：`_show_end_page` / `_ensure_end_button_connected` 故意**没有**跟 GameFlow 一起搬，
+  等 Slice 4 的 `pages/EndPage.gd` 一次性收走，避免同一段代码改两次。
 
 
 
