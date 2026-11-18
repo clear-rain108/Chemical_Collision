@@ -36,6 +36,8 @@ const SidePanelsScript = preload("res://scripts/ui/SidePanels.gd")
 const ActionPanelScript = preload("res://scripts/ui/ActionPanel.gd")
 const HintFlowScript = preload("res://scripts/game/HintFlow.gd")
 const GameFlowScript = preload("res://scripts/game/GameFlow.gd")
+# Slice 4（页面与联机）
+const PageChromeScript = preload("res://scripts/pages/PageChrome.gd")
 
 # 模块实例：_init 里创建（见下方 _init 的注释）。
 # 命名避开 Control 自带的 theme / 已用的 toast_layer，统一 ui_ 前缀。
@@ -51,6 +53,7 @@ var ui_side = null                       # 桌面小卡 / 右栏日志 / 「按�
 var ui_action = null                     # 操作面板（出牌步骤流按钮）+ 按钮工厂 _mkb
 var ui_hint = null                       # 提示按钮（HintAdvisor → 自动选牌 + 说明）
 var ui_flow = null                       # 开局 / 交互回调 / 结果处理 / 步骤重置
+var ui_page = null                       # 页面通用零件（渐变底 / 水印 / 装饰牌 / 按钮三件套 / 入场动画）
 
 # ============================================================
 # 一、页面引用
@@ -367,6 +370,7 @@ func _init() -> void:
 	ui_action = ActionPanelScript.new(self)
 	ui_hint = HintFlowScript.new(self)
 	ui_flow = GameFlowScript.new(self)
+	ui_page = PageChromeScript.new(self)
 
 
 # ============================================================
@@ -763,34 +767,10 @@ func _start_page_bg() -> void:
 	_page_bg_into(start_page, "StartPageBg", "GradientBand")
 
 
-# 开始页 / 补充规则小页共用：渐变背景（只换节点名）
+# -------- 以下方法已搬进 scripts/pages/PageChrome.gd（Slice 4a 纯搬运，这里只留同名转发） --------
 func _page_bg_into(parent: Control, bg_name: String, band_name: String) -> void:
-	var bg := ColorRect.new()
-	bg.name = bg_name
-	bg.color = PAGE_BG_COLOR
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent.add_child(bg)
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	ui_page._page_bg_into(parent, bg_name, band_name)
 
-	var grad := Gradient.new()
-	grad.set_color(0, PAGE_BG_COLOR)
-	grad.set_color(1, Color(1, 1, 1, 1))
-	var tex := GradientTexture2D.new()
-	tex.gradient = grad
-	tex.fill = GradientTexture2D.FILL_LINEAR
-	tex.fill_from = Vector2(0.0, 1.0)
-	tex.fill_to = Vector2(1.0, 0.0)
-	tex.width = 256
-	tex.height = 256
-
-	var band := TextureRect.new()
-	band.name = band_name
-	band.texture = tex
-	band.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	band.stretch_mode = TextureRect.STRETCH_SCALE
-	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	parent.add_child(band)
-	band.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 
 # -------- 装饰：元素水印 + 5 张倾斜装饰牌 --------
@@ -881,14 +861,10 @@ func _start_make_deco_card(sym: String, pos: Vector2, angle: float) -> Panel:
 	return panel
 
 
+# -------- 以下方法已搬进 scripts/pages/PageChrome.gd（Slice 4a 纯搬运，这里只留同名转发） --------
 func _start_label(text: String, fs: int, col: Color, align: HorizontalAlignment) -> Label:
-	var lb := Label.new()
-	lb.text = text
-	lb.add_theme_font_size_override("font_size", fs)
-	lb.add_theme_color_override("font_color", col)
-	lb.horizontal_alignment = align
-	lb.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	return lb
+	return ui_page._start_label(text, fs, col, align)
+
 
 
 # -------- 标题区：主标题 + 英文副标题 + 强调条 + 元信息 --------
@@ -1174,82 +1150,16 @@ func _symbols_joined(syms: Array) -> String:
 	return "  ·  ".join(parts)
 
 
-# -------- 按钮三件套（P8：开始页 / 结束页 / 教学引导页共用的唯一样式来源）--------
-# 主按钮：主题蓝底 + 深蓝边；hover 提亮 + 蓝色光晕
-func _page_primary_btn(text: String, cb: Callable, sz: Vector2,
-		node_name: String = "", fs: int = 20) -> Button:
-	var b := _mkb(text, cb, false)
-	if node_name != "":
-		b.name = node_name
-	b.custom_minimum_size = sz
-	b.size = sz
-	b.add_theme_font_size_override("font_size", fs)
-	var n: StyleBoxFlat = b.get_theme_stylebox("normal").duplicate()
-	n.bg_color = START_C_ACCENT
-	n.border_color = START_C_ACCENT_DARK
-	b.add_theme_stylebox_override("normal", n)
-	var h: StyleBoxFlat = n.duplicate()
-	h.bg_color = START_C_ACCENT.lightened(0.12)
-	h.border_color = START_C_ACCENT
-	h.shadow_color = Color(0.176, 0.478, 0.702, 0.5)
-	h.shadow_size = 8
-	h.shadow_offset = Vector2.ZERO
-	b.add_theme_stylebox_override("hover", h)
-	var p: StyleBoxFlat = n.duplicate()
-	p.bg_color = START_C_ACCENT_DARK
-	b.add_theme_stylebox_override("pressed", p)
-	b.pivot_offset = sz * 0.5
-	return b
+# -------- 以下方法已搬进 scripts/pages/PageChrome.gd（Slice 4a 纯搬运，这里只留同名转发） --------
+func _page_primary_btn(text: String, cb: Callable, sz: Vector2, node_name: String = "", fs: int = 20) -> Button:
+	return ui_page._page_primary_btn(text, cb, sz, node_name, fs)
 
+func _page_secondary_btn(text: String, cb: Callable, sz: Vector2, node_name: String = "", fs: int = 19) -> Button:
+	return ui_page._page_secondary_btn(text, cb, sz, node_name, fs)
 
-# 次按钮：白底 + 主题蓝描边 + 蓝字
-func _page_secondary_btn(text: String, cb: Callable, sz: Vector2,
-		node_name: String = "", fs: int = 19) -> Button:
-	var b := _mkb(text, cb, false)
-	if node_name != "":
-		b.name = node_name
-	b.custom_minimum_size = sz
-	b.size = sz
-	b.add_theme_font_size_override("font_size", fs)
-	var n: StyleBoxFlat = b.get_theme_stylebox("normal").duplicate()
-	n.bg_color = Color(1, 1, 1, 0.96)
-	n.border_color = START_C_ACCENT
-	n.set_border_width_all(BORDER_W_ACTIVE)
-	b.add_theme_stylebox_override("normal", n)
-	b.add_theme_color_override("font_color", START_C_ACCENT)
-	b.add_theme_color_override("font_hover_color", START_C_ACCENT_DARK)
-	b.add_theme_color_override("font_pressed_color", START_C_ACCENT_DARK)
-	var h: StyleBoxFlat = n.duplicate()
-	h.bg_color = Color(0.92, 0.96, 1.0, 1.0)
-	b.add_theme_stylebox_override("hover", h)
-	var p: StyleBoxFlat = n.duplicate()
-	p.bg_color = Color(0.85, 0.92, 0.98, 1.0)
-	b.add_theme_stylebox_override("pressed", p)
-	b.pivot_offset = sz * 0.5
-	return b
+func _page_ghost_btn(text: String, cb: Callable, sz: Vector2, node_name: String = "", fs: int = 16) -> Button:
+	return ui_page._page_ghost_btn(text, cb, sz, node_name, fs)
 
-
-# 幽灵按钮：透明底 + 灰字，hover 蓝字 + 10% 蓝底
-func _page_ghost_btn(text: String, cb: Callable, sz: Vector2,
-		node_name: String = "", fs: int = 16) -> Button:
-	var b := _mkb(text, cb, false)
-	if node_name != "":
-		b.name = node_name
-	b.custom_minimum_size = sz
-	b.size = sz
-	b.add_theme_font_size_override("font_size", fs)
-	b.add_theme_color_override("font_color", START_C_MUTED)
-	b.add_theme_color_override("font_hover_color", START_C_ACCENT)
-	b.add_theme_color_override("font_pressed_color", START_C_ACCENT_DARK)
-	for st in ["normal", "pressed"]:
-		var s := _make_panel_style("tab_off")
-		s.bg_color = Color(0, 0, 0, 0)
-		b.add_theme_stylebox_override(st, s)
-	var h := _make_panel_style("tab_off")
-	h.bg_color = Color(0.176, 0.478, 0.702, 0.1)
-	b.add_theme_stylebox_override("hover", h)
-	b.pivot_offset = sz * 0.5
-	return b
 
 
 # -------- 开始页按钮薄壳：保持旧签名，视觉/动效零变化 --------
@@ -1379,56 +1289,13 @@ func _animate_start_page() -> void:
 	_animate_page_intro(start_page, START_INTRO_ORDER)
 
 
-# 通用：任意页面子节点错峰淡入（第 i 个节点延迟 i×50ms；每个节点一条独立补间，
-# 淡入与上浮并行，互不排队 —— 共用一个 tween 会串成 3 秒）
-# 只碰子节点的 modulate / position；页面级 modulate 归 _fade_in_page 独占
+# -------- 以下方法已搬进 scripts/pages/PageChrome.gd（Slice 4a 纯搬运，这里只留同名转发） --------
 func _animate_page_intro(page: Control, order: Array) -> void:
-	if page == null or not is_instance_valid(page):
-		return
-	for t in _page_intro_tweens:
-		if t is Tween and t.is_valid():
-			t.kill()
-	_page_intro_tweens.clear()
-	var i := 0
-	for n in order:
-		var node = page.get_node_or_null(n)
-		if node == null or not (node is Control):
-			continue
-		# 目标位置固定为首次入场时的位置：_show_end_page 会被反复调用，
-		# 若拿「当前 position」当目标，上次动画没播完就会累积偏移
-		if not node.has_meta("intro_base_y"):
-			node.set_meta("intro_base_y", node.position.y)
-		var target_y: float = float(node.get_meta("intro_base_y"))
-		node.modulate.a = 0.0
-		node.position.y = target_y + 14.0
-		var delay := i * 0.05
-		var t := page.create_tween()
-		t.set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-		t.tween_property(node, "modulate:a", 1.0, 0.26).set_delay(delay)
-		t.parallel().tween_property(node, "position:y", target_y, 0.3).set_delay(delay)
-		_page_intro_tweens.append(t)
-		i += 1
+	ui_page._animate_page_intro(page, order)
 
-
-# 通用：装饰牌缓慢浮动（每页只启动一次，has_meta 去重）
 func _page_deco_float(page: Control) -> void:
-	if page == null or not is_instance_valid(page):
-		return
-	var holder = page.get_node_or_null("DecorCards")
-	if holder == null or holder.has_meta("float_started"):
-		return
-	holder.set_meta("float_started", true)
-	var i := 0
-	for card in holder.get_children():
-		if not (card is Control):
-			continue
-		var base_y: float = card.position.y
-		var dur := 1.8 + i * 0.22
-		var t := card.create_tween().set_loops()
-		t.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
-		t.tween_property(card, "position:y", base_y - 7.0, dur)
-		t.tween_property(card, "position:y", base_y, dur)
-		i += 1
+	ui_page._page_deco_float(page)
+
 
 
 # 勾选补充规则 / 人数自动纠正时在开始页内联提示 2 秒（GamePage 的 InfoLabel 此刻不可见）
@@ -1921,68 +1788,19 @@ func _help_find_card(sym: String):
 # ============================================================
 # 五之三、页面通用零件（P8：结束页 / 教学引导页与开始页共用同一套画风）
 # ============================================================
-# 45° 渐变带（同色底 → 白，左下最亮），开始页同款
+# -------- 以下方法已搬进 scripts/pages/PageChrome.gd（Slice 4a 纯搬运，这里只留同名转发） --------
 func _page_gradient_band(page: Control) -> void:
-	var grad := Gradient.new()
-	grad.set_color(0, PAGE_BG_COLOR)
-	grad.set_color(1, Color(1, 1, 1, 1))
-	var tex := GradientTexture2D.new()
-	tex.gradient = grad
-	tex.fill = GradientTexture2D.FILL_LINEAR
-	tex.fill_from = Vector2(0.0, 1.0)
-	tex.fill_to = Vector2(1.0, 0.0)
-	tex.width = 256
-	tex.height = 256
+	ui_page._page_gradient_band(page)
 
-	var band := TextureRect.new()
-	band.name = "GradientBand"
-	band.texture = tex
-	band.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	band.stretch_mode = TextureRect.STRETCH_SCALE
-	band.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	page.add_child(band)
-	band.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-
-
-# 元素水印：只负责氛围，一律 ASCII 化学式（默认中文字体没有下标字形）
 func _page_watermarks(page: Control, specs: Array) -> void:
-	var marks := Control.new()
-	marks.name = "Watermarks"
-	marks.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	page.add_child(marks)
-	marks.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	for s in specs:
-		var lb := Label.new()
-		lb.text = s["t"]
-		lb.add_theme_font_size_override("font_size", int(s["fs"]))
-		lb.add_theme_color_override("font_color", START_C_WATERMARK)
-		lb.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		lb.position = s["p"]
-		marks.add_child(lb)
+	ui_page._page_watermarks(page, specs)
 
-
-# 倾斜装饰牌（白底 + 真实元素配色，半透明）；holder 名固定 DecorCards 供浮动动效查找
 func _page_deco_cards(page: Control, cards: Array) -> void:
-	var holder := Control.new()
-	holder.name = "DecorCards"
-	holder.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	page.add_child(holder)
-	holder.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	for c in cards:
-		holder.add_child(_start_make_deco_card(c["s"], c["p"], c["a"]))
+	ui_page._page_deco_cards(page, cards)
 
-
-# 页面底 + 渐变带 + 水印 + 装饰牌（结束页 / 教学页共用的三段式背景）
 func _page_backdrop(page: Control, bg_name: String, marks: Array, cards: Array) -> void:
-	var bg := ColorRect.new()
-	bg.name = bg_name
-	bg.color = PAGE_BG_COLOR
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	page.add_child(bg)
-	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_page_gradient_band(page)
-	_page_watermarks(page, marks)
-	_page_deco_cards(page, cards)
+	ui_page._page_backdrop(page, bg_name, marks, cards)
+
 
 
 # ============================================================
