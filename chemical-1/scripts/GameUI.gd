@@ -41,6 +41,7 @@ const PageChromeScript = preload("res://scripts/pages/PageChrome.gd")
 const StartPageScript = preload("res://scripts/pages/StartPage.gd")
 const SuppRulesPageScript = preload("res://scripts/pages/SuppRulesPage.gd")
 const HelpPageScript = preload("res://scripts/pages/HelpPage.gd")
+const EndPageScript = preload("res://scripts/pages/EndPage.gd")
 
 # 模块实例：_init 里创建（见下方 _init 的注释）。
 # 命名避开 Control 自带的 theme / 已用的 toast_layer，统一 ui_ 前缀。
@@ -60,6 +61,7 @@ var ui_page = null                       # 页面通用零件（渐变底 / 水�
 var ui_start = null                      # 开始页（标题 / 设置卡 / 按钮区 / 装饰牌 / 内联提示）
 var ui_supp = null                       # 补充规则小页（4 张规则卡 / 元素池 / 勾选摘要）
 var ui_help = null                       # 帮助中心（3 Tab 骨架 / 卡片 / 图鉴小卡 / 进出路由）
+var ui_end = null                        # 结算页（结算卡 / 统计块 / 按钮去向 / 淡入）
 
 # ============================================================
 # 一、页面引用
@@ -380,6 +382,7 @@ func _init() -> void:
 	ui_start = StartPageScript.new(self)
 	ui_supp = SuppRulesPageScript.new(self)
 	ui_help = HelpPageScript.new(self)
+	ui_end = EndPageScript.new(self)
 
 
 # ============================================================
@@ -964,215 +967,22 @@ const END_C_NEUTRAL := Color(0.604, 0.647, 0.694, 1.0)   # #9AA5B1 中途退出
 const END_C_WARN := Color(0.906, 0.298, 0.235, 1.0)      # #E74C3C 初始化失败
 
 
+# -------- 以下方法已搬进 scripts/pages/EndPage.gd（Slice 4e 纯搬运，这里只留同名转发） --------
 func _build_end_page() -> void:
-	if not end_page:
-		return
-	# 老版本 Main.tscn 的静态子节点整段清掉，保证只有一套 UI
-	for c in end_page.get_children():
-		end_page.remove_child(c)
-		c.queue_free()
-	_page_backdrop(end_page, "EndBg", [
-		{"t": "H₂O", "p": Vector2(30, 470), "fs": 72},
-		{"t": "CO₂", "p": Vector2(884, 60), "fs": 56},
-		{"t": "NaCl", "p": Vector2(58, 40), "fs": 48},
-		{"t": "O₂", "p": Vector2(1000, 520), "fs": 44},
-	], [
-		{"s": "H", "p": Vector2(56, 300), "a": -0.13},
-		{"s": "O", "p": Vector2(986, 330), "a": 0.12},
-	])
-
-	# -------- 结算卡 --------
-	var card := Panel.new()
-	card.name = "EndCard"
-	card.position = END_CARD_POS
-	card.size = END_CARD_SIZE
-	var cs := _make_panel_style("card")
-	cs.bg_color = Color(1, 1, 1, 0.96)
-	card.add_theme_stylebox_override("panel", cs)
-	end_page.add_child(card)
-	_end_card = card
-
-	# 顶部状态条：只留上方两个圆角，才能贴住卡片圆角不露直角
-	var bar := Panel.new()
-	bar.name = "EndStatusBar"
-	bar.position = Vector2.ZERO
-	bar.size = Vector2(END_CARD_SIZE.x, 6)
-	bar.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var bs := StyleBoxFlat.new()
-	bs.bg_color = START_C_ACCENT
-	bs.corner_radius_top_left = CARD_RADIUS
-	bs.corner_radius_top_right = CARD_RADIUS
-	bs.corner_detail = 6
-	bar.add_theme_stylebox_override("panel", bs)
-	card.add_child(bar)
-	_end_status_bar = bar
-
-
-	# -------- 结果标题 / 描述 / 分隔线 --------
-	_end_title = _start_label("游戏结束", 36, START_C_TITLE, HORIZONTAL_ALIGNMENT_CENTER)
-	_end_title.name = "EndTitle"
-	_end_title.position = Vector2(0, 34)
-	_end_title.size = Vector2(END_CARD_SIZE.x, 48)
-	card.add_child(_end_title)
-
-	end_label = _start_label("", 18, START_C_SUB, HORIZONTAL_ALIGNMENT_CENTER)
-	end_label.name = "EndLabel"
-	end_label.position = Vector2(0, 88)
-	end_label.size = Vector2(END_CARD_SIZE.x, 26)
-	card.add_child(end_label)
-
-	var div := ColorRect.new()
-	div.name = "EndDivider"
-	div.color = END_C_DIVIDER
-	div.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	div.position = Vector2(32, 124)
-	div.size = Vector2(END_CARD_SIZE.x - 64, 1)
-	card.add_child(div)
-
-	# -------- 统计块：总回合 / 剩余牌库 / 剩余手牌 --------
-	var captions := ["总回合", "剩余牌库", "剩余手牌"]
-	_end_stat_values.clear()
-	for i in range(captions.size()):
-		var tile := Panel.new()
-		tile.name = "EndStat%d" % i
-		tile.position = Vector2(38 + i * 196, 142)
-		tile.size = Vector2(172, 76)
-		tile.add_theme_stylebox_override("panel", _end_stat_style())
-		card.add_child(tile)
-
-		var val := _start_label("—", 26, START_C_ACCENT, HORIZONTAL_ALIGNMENT_CENTER)
-		val.name = "EndStat%dValue" % i
-		val.position = Vector2(0, 10)
-		val.size = Vector2(172, 34)
-		tile.add_child(val)
-		_end_stat_values.append(val)
-
-		var cap := _start_label(captions[i], 13, START_C_MUTED, HORIZONTAL_ALIGNMENT_CENTER)
-		cap.name = "EndStat%dCaption" % i
-		cap.position = Vector2(0, 46)
-		cap.size = Vector2(172, 22)
-		tile.add_child(cap)
-
-	# -------- 按钮组：返回主页（主）/ 再来一局（次）/ 教学引导（幽灵）--------
-	end_button = _page_primary_btn("返回主页", func() -> void: pass, Vector2(260, 50), "EndButton", 20)
-	end_button.position = Vector2(92, 240)
-	card.add_child(end_button)
-
-	_end_restart_btn = _page_secondary_btn("再来一局", _on_end_restart, Vector2(180, 42),
-		"EndRestartBtn", 17)
-	_end_restart_btn.position = Vector2(368, 244)
-	card.add_child(_end_restart_btn)
-
-	_end_tutorial_btn = _page_ghost_btn("教学引导", _on_show_tutorial_page, Vector2(120, 30),
-		"EndTutorialBtn", 15)
-	_end_tutorial_btn.position = Vector2(260, 304)
-	card.add_child(_end_tutorial_btn)
-
-	_end_rule_note = _start_label("", 13, START_C_MUTED, HORIZONTAL_ALIGNMENT_CENTER)
-	_end_rule_note.name = "EndRuleNote"
-	_end_rule_note.position = Vector2(0, 346)
-	_end_rule_note.size = Vector2(END_CARD_SIZE.x, 20)
-	card.add_child(_end_rule_note)
-
+	ui_end._build_end_page()
 
 func _end_stat_style() -> StyleBoxFlat:
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = END_C_STAT_BG
-	sb.set_corner_radius_all(8)
-	sb.corner_detail = 6
-	return sb
+	return ui_end._end_stat_style()
 
-
-# 本局是否为教程局（level 1/2 或 level0 已进入引导流程）
 func _is_tutorial_run() -> bool:
-	return game_manager != null and (game_manager.tutorial_level >= 1
-		or game_manager.tutorial_level0_phase >= 1)
+	return ui_end._is_tutorial_run()
 
-
-# -------- 数据填充：把 game_manager 的状态映射到结算卡（幂等，只改文本 / 颜色 / 连接）--------
 func _fill_end_page(custom_text: String) -> void:
-	if not _end_card:
-		return
-	var is_tutorial := _is_tutorial_run()
-	var w = game_manager.get_winner() if game_manager else null
-	var head := "游戏结束"
-	var head_col := START_C_ACCENT
-	var desc := custom_text
-	if w != null:
-		var human_win: bool = not w.is_ai
-		head = "胜利！" if human_win else "本局结束"
-		head_col = START_C_ACCENT if human_win else START_C_SUB
-		if desc == "":
-			desc = "获胜者：%s" % w.player_name
-	elif custom_text == "游戏已退出":
-		head = "游戏已退出"
-		head_col = END_C_NEUTRAL
-		# 描述不复读标题：给出下一步动作
-		if desc == custom_text:
-			desc = "本局未分胜负，随时再来一局"
-	elif custom_text != "":
-		head_col = END_C_WARN
-		head = custom_text
-		if desc == custom_text:
-			desc = "请返回主页重新开始"
-	if desc == "":
-		desc = "本局结束"
-	if _end_title:
-		_end_title.text = head
-	if end_label:
-		end_label.text = desc
-	if _end_status_bar:
-		var sb: StyleBoxFlat = _end_status_bar.get_theme_stylebox("panel")
-		if sb:
-			sb.bg_color = head_col
+	ui_end._fill_end_page(custom_text)
 
-	# -------- 统计三件套：总回合 / 剩余牌库 / 剩余手牌 --------
-	var turns := "—"
-	var deck_left := "—"
-	var hand_left := "—"
-	if game_manager:
-		turns = str(game_manager.turn_count)
-		var db = game_manager.get_database()
-		if db:
-			deck_left = str(db.get_remaining_count())
-		if w != null:
-			hand_left = str(w.hand.size())
-		else:
-			var ps = game_manager.get_players()
-			if ps.size() > 0:
-				hand_left = str(ps[0].hand.size())
-	var texts := [turns, deck_left, hand_left]
-	for i in range(_end_stat_values.size()):
-		if _end_stat_values[i]:
-			_end_stat_values[i].text = texts[i]
-
-	# -------- 规则回顾 --------
-	if _end_rule_note:
-		if game_manager:
-			var org := "有机物 ✓" if game_manager.get_organic_rules_enabled() else "有机物 ✗"
-			var seq := "顺序 ✓" if game_manager.get_sequence_rules_enabled() else "顺序 ✗"
-			var hal := "卤族互化 ✓" if game_manager.get_halogen_exchange_allowed() else "卤族互化 ✗"
-			var lim := "元素 %d 种" % game_manager.get_allowed_element_count()
-			_end_rule_note.text = "本局规则：%s    %s    %s    %s" % [org, seq, hal, lim]
-		else:
-			_end_rule_note.text = ""
-
-	# -------- 按钮去向：教程局回关卡列表，自由局回开始页 --------
-	if end_button:
-		_ensure_end_button_connected(_on_show_tutorial_page if is_tutorial else _show_start_page)
-		end_button.text = "返回关卡" if is_tutorial else "返回主页"
-	if _end_restart_btn:
-		_end_restart_btn.text = "再试一次" if is_tutorial else "再来一局"
-	if _end_tutorial_btn:
-		_end_tutorial_btn.visible = not is_tutorial
-
-
-# 「再来一局」：自由局按开始页当前设置重开；教程局重开同一关（level0 也传 0）
 func _on_end_restart() -> void:
-	if _is_tutorial_run():
-		_on_start_tutorial(game_manager.tutorial_level)
-	else:
-		_on_start_game()
+	ui_end._on_end_restart()
+
 
 
 # ============================================================
@@ -2604,35 +2414,13 @@ func _ensure_warning_toast() -> void:
 func _hide_warning_toast() -> void:
 	ui_toast._hide_warning_toast()
 
+# -------- 以下方法已搬进 scripts/pages/EndPage.gd（Slice 4e 纯搬运，这里只留同名转发） --------
 func _show_end_page(custom_text: String) -> void:
-	# 已被 _refresh_ui 反复调用：已在结算页时只刷新数据，不重播淡入 / 入场动画（否则每帧闪一下）
-	var already_shown: bool = end_page.visible and is_equal_approx(end_page.modulate.a, 1.0)
-	start_page.visible = false
-	game_page.visible = false
-	end_page.visible = true
-	if help_page: help_page.visible = false
-	# 结束页独占屏幕：教学关卡列表（可能刚从开始页打开）也一并收起，
-	# 否则它会盖在 EndPage 之上（TutorialPage 在 Main.tscn 里排在 EndPage 之后）
-	var tut_page = get_node_or_null("TutorialPage")
-	if tut_page: tut_page.visible = false
-	# 先填数据（标题 / 统计 / 按钮去向），再淡入：观众看到的第一帧就是最终态
-	_fill_end_page(custom_text)
-	if already_shown:
-		return
-	_fade_in_page(end_page)
-	_page_deco_float(end_page)
-	_animate_page_intro(end_page, ["EndCard"])
-
+	ui_end._show_end_page(custom_text)
 
 func _ensure_end_button_connected(target: Callable) -> void:
-	if end_button == null:
-		return
-	if end_button.pressed.is_connected(_show_start_page):
-		end_button.pressed.disconnect(_show_start_page)
-	if end_button.pressed.is_connected(_on_show_tutorial_page):
-		end_button.pressed.disconnect(_on_show_tutorial_page)
-	if not end_button.pressed.is_connected(target):
-		end_button.pressed.connect(target)
+	ui_end._ensure_end_button_connected(target)
+
 
 
 # ============================================================
