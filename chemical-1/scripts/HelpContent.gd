@@ -1,7 +1,7 @@
 # ============================================================
 # HelpContent.gd - 帮助中心文案与结构（P5）
 # 职责：3 个 tab 的卡片数据（纯数据，不含任何 UI 逻辑）
-# 与 TutorialUI.gd 同风格：extends RefCounted + static，便于单测与后续改文案
+# 与 TutorialController.gd 里的静态文案同风格：extends RefCounted + static，便于单测与后续改文案
 #
 # 行格式：{"k": kind, "t": 文本}
 #   sub  卡内小标题（15px 深蓝灰）

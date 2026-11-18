@@ -1,7 +1,7 @@
 # UI 层重构：GameUI.gd 按功能拆分
 
 > 本文档是重构的**计划 + 进度台账**。每完成一片，回来把 ⬜ 改成 ✅ 并填「§8 完成记录」。
-> 最后更新：2026-11-18（Slice 4 落盘：root 7651 → 2048 行；Slice 6 增量刷新 II 已补；剩 Slice 5 收尾）
+> 最后更新：2026-11-18（**6 片全部完成**：root 7651 → 2048 行；Slice 5 收尾落盘，仅剩真机 A/B 对比）
 
 ## 0. 背景与已定决策
 
@@ -29,7 +29,7 @@ PlayerManager / AIPlayer / GameLogger）的验证脚本。本次是同一套做�
 
 ---
 
-## 1. 不可破的约束（违反即 46 套测试红）
+## 1. 不可破的约束（违反即 48 套测试红）
 
 ### 1.1 测试对根节点的耦合面（证据）
 
@@ -372,14 +372,22 @@ func update_buttons() -> void:
    `HandView._update_valence_buttons()` 自建；这里只负责「别把上一批当可复用」。
 
 
-### Slice 5 —— 收尾
-- ⬜ `ARCHITECTURE.md` 新增「UI 分层与刷新约定」小节（铁律 1~5、模块表、`_process` 唯一钩子）
-- ⬜ 删除死文件 `scripts/TutorialUI.gd` + `.uid`（全项目零引用）
-- ⬜ 修 `CardData.gd:7` 自引用 preload
-- ⬜ 重写 `AI_PLAYER_AUDIT.md`（现文围绕已不存在的 `AIPlayer._try_play()`）
-- ⬜ `project.godot`：删 `3d/physics_engine="Jolt Physics"`（纯 2D 冗余）
-- ⬜ `export_presets.cfg`：`exclude_filter="tests/*"`（先确认 `net_smoke.gd` 是否需上真机）
-- ⬜ 重新导出 APK `pre1005.5`，真机 A/B 对比
+### Slice 5 —— 收尾 ✅ 2026-11-18 完成
+- ✅ `ARCHITECTURE.md` 新增 **§8.0「UI 分层与刷新约定」**：铁律 1~5、21 个模块表、`_process` 唯一钩子、
+  `_refresh_ui()` 刷新顺序 + 四条复用判据；同时修掉全文过期表述（文件树 / 功能划分表 / §7.3 `plan()` /
+  §7.5 删除 TutorialUI / §8 AI 策略 / §10 数据流 / §11 性能表）
+- ✅ 删除死文件 `scripts/TutorialUI.gd` + `.uid`：`findstr /s` 全项目只剩两处**注释**提到它
+  （`HelpContent.gd` 头 / `ActionPanel.gd` 注释），已改指 `TutorialController.gd`；
+  `CHEMICAL_COLLISION_GAME.md` / `GAMEPLAY_RULES.md` / `UI_POLISH_PLAN.md` 的引用一并修
+- ✅ 修 `CardData.gd` 自引用 preload：`const CardDataScript = preload(本文件)` →
+  `static var _self_script` + `_self_script_ref()`（首次 `load()` 后静态缓存），`from_dict()` 仍能 `new()` 自己
+- ✅ 重写 `AI_PLAYER_AUDIT.md`（v2.0）：旧文围绕已不存在的 `_try_play()`，现按 `plan()` /
+  `_execute_local()` / `host_step_ai()` 重写，补「计划类型表」与「联机等价性」两节
+- ✅ `project.godot`：删整个 `[physics]` 段（`3d/physics_engine="Jolt Physics"`，纯 2D 项目冗余）
+- ✅ `export_presets.cfg`：两个预设都设 `exclude_filter="tests/*"`（`net_smoke.gd` 是 `--script` 启动的
+  SceneTree 脚本，手机上没法传参，不需要跟着包走）；Android `export_path` → `chemical-pre1005.5-release.apk`
+- ⏳ **真机 A/B 对比**：本机 `adb devices` 为空（没插设备），APK 已重新导出，
+  设备侧对比（旧 `pre1005` vs 新 `pre1005.5` 的掉帧 / 触屏手感）留待有设备时补
 - commit：`【清理】死代码与过期文档 + ARCHITECTURE UI 分层小节 + 导出过滤`
 
 ---
@@ -435,7 +443,7 @@ func update_buttons() -> void:
 | 3 | ActionPanel / TableArea / SidePanels / ToolRow / GameFlow / HintFlow | `action_panel_fit` `action_router` `tool_buttons` `log_panel` `auto_play` `halogen` `hint` `clan_bomb_cooling` `end_page` `valence_panel` `constraint` |
 | 4 | 6 个 Page + Level0Overlay + OnlineUI | `start_page` `help_page` `end_page` `tutorial_layout` `tutorial` `room_page` `ui_online` `integration` |
 | 6 | —（改行为） | `ui_perf`（新增 22 条）+ `action_panel_fit` `ui_online` `tool_buttons` `motion` `log_panel` `auto_play` |
-| 5 | —（清理） | 全量 + 真机 |
+| 5 | —（清理） | 全量 **48/48** + 真机（设备侧 A/B 待补） |
 
 ### 5.2 运行器：`tools/run_tests.gd`
 
@@ -574,7 +582,7 @@ Gd --headless --path . --script tools/unprefix_siblings.gd -- --path=scripts/ui/
 | 3 | `b930733`+`d9a00f0`+`060e7d4`+`118604e`+`a55b3f2`+`59945ba` | **4727（−1380）** | **1767**（ToolRow 113 / TableArea 287 / SidePanels 342 / ActionPanel 424 / HintFlow 99 / GameFlow 502） | 48/48 ✅ | 常量未搬；67 个转发方法；新增 `tools/unprefix_siblings.gd` |
 | 4 | `8cd00c5`+`2afb745`+`7e438c9`+`c96f398`+`09e7a4d`+`3d176d6`+`bb2c2aa` | **2048（−2679）** | **3358**（PageChrome 249 / StartPage 389 / SuppRulesPage 295 / HelpPage 499 / EndPage 257 / TutorialPage 177 / Level0Overlay 517 / OnlineUI 313 / RoomPage 662） | 48/48 ✅ | 常量未搬；147 个转发方法；9 个模块字段；新增 §8.4 坑 12~17 |
 | 6 | `db6b536` | **2048（不变）** | TableArea 287 → 314 / ActionPanel 424 → 513 | 48/48 ✅ | 改行为片（未动布局数值 / 文案 / 联机门控）；`ui_perf` 28 → 50 条 |
-| 5 | | | | | |
+| 5 | 本次提交 | **2048（不变）** | 无搬运（清理片）；CardData 自引用 preload → 静态缓存 | 48/48 ✅ | 删 TutorialUI；导出过滤；ARCHITECTURE §8.0；`AI_PLAYER_AUDIT` v2.0 |
 
 ### 8.3 `project.godot` 中被引擎删掉的手写注释（原文存档）
 
@@ -723,6 +731,24 @@ environment/defaults/default_clear_color=Color(0.902, 0.941, 0.98, 1)
  19. **「内容没变」不等于「什么都不用做」**（与坑 7 同源）。桌面小卡的槽位 `slot_y` 由
      “桌面: …” 文字高度决定，文字从一行变两行时小卡必须下移；所以复用路径仍然要重算
      `position`，只省掉「销毁 + 建节点 + 补间」这三件最贵的事。
+
+- 2026-11-18 **Slice 5 完成**（收尾，零行为改动）：删死文件 `scripts/TutorialUI.gd` + `.uid`、
+  修 `CardData.gd` 自引用 preload、重写 `AI_PLAYER_AUDIT.md`（v2.0）、`project.godot` 删
+  `[physics]` 段、`export_presets.cfg` 两个预设加 `exclude_filter="tests/*"`、`ARCHITECTURE.md`
+  新增 §8.0「UI 分层与刷新约定」（铁律 1~5 / 21 模块表 / `_process` 唯一钩子 / 刷新与复用判据）。
+  root **2048 行（不变）**，**48/48 全绿**，`--quit-after 120` 冒烟 0 ERROR / 0 WARNING；
+  APK 重新导出为 `chemical-pre1005.5-release.apk`（26,812,368 B，比 `pre1005` 小约 350 KB，
+  差值就是被排除的 48 套测试）。真机 A/B 未做（本机 `adb devices` 为空，没插设备）。
+  这一片踩出的三条新坑：
+  20. **自引用 preload 不能「直接删」**。`CardData.gd` 的 `const CardDataScript = preload(自己)`
+      是它 `new()` 自己的唯一途径：静态函数里没有 `self`，脚本又没加 `class_name`（铁律 4 不许加）。
+      正确改法是补一个出口：`static var _self_script` + 首次 `load()` 后缓存（ResourceLoader 有
+      全局资源缓存，第二次起只是查表）。直接删掉 = `from_dict()` 再也构造不出实例。
+  21. **`exclude_filter` 只影响打包，不影响测试**。`tools/run_tests.gd` 是在**工程目录**里
+      `--script tests/xxx.gd`，跟打包内容无关，所以排除 `tests/*` 后 48 套照常跑。
+      判据是「真机上有没有入口」：`net_smoke.gd` 靠 `--script` 启动，手机上没法传参 → 不必跟着包走。
+  22. **删 `project.godot` 的键要连 section 一起删**。只删 `3d/physics_engine` 会留下空的
+      `[physics]`；引擎下次 save 又会按默认值清一遍，纯 2D 项目不设这个键才是稳定态。
 
 
 

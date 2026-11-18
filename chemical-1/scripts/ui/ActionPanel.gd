@@ -65,7 +65,7 @@ func _ap_build_plan(cp) -> Array:
 		# 先出后验（P14-C）：选好牌 → 点「直接出牌 ⚡」，引擎按固定优先级自己挑牌型
 		# （有机物 → 单质 → 化合物 → 顺序 → 族炸），第一个合法候选才落子。
 		# 老的三步流程（出牌(选牌型) → 单质/化合物/顺序/族炸）原样保留，
-		# 教程文案（TutorialController / TutorialUI 里的「出牌(选牌型)」）不用改。
+		# 教程文案（TutorialController 里的「出牌(选牌型)」）不用改。
 		plan.append(_ap_item("直接出牌 ⚡", _ui._on_auto_play, _ui.selected_indices.is_empty()))
 		plan.append(_ap_item("出牌(选牌型)", _ui._on_step_next, _ui.selected_indices.is_empty()))
 		var hand_limit = _ui.game_manager.get_hand_limit()

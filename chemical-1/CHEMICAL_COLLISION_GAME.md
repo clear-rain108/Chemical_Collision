@@ -68,9 +68,12 @@ chemical-1/
 │   ├── CardPatterns.gd               # 牌型判定 / 比大小
 │   ├── CompoundSolver.gd             # 化合物配平 / IUPAC 命名 / 有机物
 │   ├── GameManager.gd                # 规则引擎 + 上限弃牌
-│   ├── AIPlayer.gd                   # AI 出牌策略
-│   ├── TutorialUI.gd                 # 教程内容与引导
-│   └── GameUI.gd                     # 页面管理 + 牌面渲染 + 步骤流 + 着色
+│   ├── AIPlayer.gd                   # AI 出牌计划 plan() + 单机落子 auto_play()
+│   ├── TutorialController.gd         # 教程状态机 + 引导文案
+│   ├── HelpContent.gd                # 帮助中心文案（静态）
+│   ├── HintAdvisor.gd                # 提示（只读，走 validate_play）
+│   ├── ui/ pages/ game/ tutorial/ net/   # 21 个 UI 模块（见 ARCHITECTURE.md §8.0）
+│   └── GameUI.gd                     # 门面：页面管理 + 转发 + _refresh_ui 编排
 ├── CHEMICAL_COLLISION_GAME.md        # 本文档
 ├── GAMEPLAY_RULES.md                 # 玩法规则
 ├── ARCHITECTURE.md                   # 程序架构

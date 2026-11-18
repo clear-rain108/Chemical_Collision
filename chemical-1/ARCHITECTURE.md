@@ -1,7 +1,7 @@
 # 化学碰撞 — 程序架构与实现文档
 
-> **版本**: 15.2  
-> **日期**: 2026-11-04  
+> **版本**: 15.3  
+> **日期**: 2026-11-18  
 > **引擎**: Godot 4.x / GDScript
 
 ---
@@ -30,9 +30,9 @@
 ```
 ┌─────────────────────────────────────────┐
 │                      表现层              │
-│  Main.tscn  GameUI.gd  TutorialUI.gd    │
-│  6页UI  着色与牌面渲染  按钮交互          │
-│  教程引导显示                             │
+│  Main.tscn  GameUI.gd（门面 + 转发层）   │
+│  scripts/ui · pages · game · tutorial    │
+│  scripts/net（联机接线）                  │
 ├─────────────────────────────────────────┤
 │                      逻辑层              │
 │  GameManager.gd   →  规则引擎 & 牌权轮转  │
@@ -57,6 +57,7 @@ chemical-1/
 ├── project.godot                      ← 引擎配置
 ├── Main.tscn                          ← 6 页场景
 ├── scripts/
+│   ├── GameUI.gd                      ← 门面：状态/常量/装配/_refresh_ui 编排/全部同名转发（2048 行）
 │   ├── CardData.gd                    ← 数据模型：13属性+16族常量+序列化
 │   ├── CardDatabase.gd                ← 牌库：29种元素(卤族10/高8/主6/副4)=182张
 │   ├── PlayerManager.gd               ← 人数规划：PlayerInfo类/玩家创建/发牌/手牌上限
@@ -64,23 +65,25 @@ chemical-1/
 │   ├── CardPatterns.gd                ← 牌型计算：detect_pattern/族炸/顺序/比大小
 │   ├── CompoundSolver.gd              ← 化合物形成：配平/IUPAC命名/有机物识别
 │   ├── GameManager.gd                 ← 规则引擎：play_cards/牌权/接炸/上限弃牌
-│   ├── AIPlayer.gd                    ← AI决策：出牌策略（族炸/化合物/双原子/单质/接顺序；卤族互化读开关）
+│   ├── AIPlayer.gd                    ← AI决策：plan() 只读意图 + auto_play() 单机落子
 │   ├── TutorialController.gd          ← 教程状态机：关卡初始化/预设手牌/进度检查
-│   ├── TutorialUI.gd                  ← 教程内容：引导文本/成功提示（静态）
 │   ├── HelpContent.gd                 ← 帮助中心内容：3 Tab 卡片数据（静态）
-│   └── GameUI.gd                      ← UI控制器：页面切换/牌面渲染/步骤流/着色
-├── tests/
-│   ├── verify_refactor.gd             ← 模块单测（牌型/化合物/日志/玩家/Q4牌型选择）
-│   ├── verify_integration.gd          ← 集成测试（GameManager + AIPlayer）
-│   ├── verify_logger.gd               ← 日志转发测试
-│   ├── verify_tutorial.gd             ← 教程控制器集成测试
-│   ├── verify_ai_discard.gd           ← AI 上限自动弃牌测试（Q1+Q2）
-│   ├── verify_hand_layout.gd          ← 手牌布局 / 悬停状态机 / 样式工厂 / 警告 toast
-│   ├── verify_hand_reorder.gd         ← 手牌拖拽重排（手动排列 / 按序恢复 / 选中索引进→对象）
-│   ├── verify_motion.gd               ← 动效与排版：页面淡入 / 按钮缩放 / 卡牌字号
-│   ├── verify_help_page.gd            ← 帮助中心：结构 / Tab 懒加载 / 字号 / 牌库数字
-│   ├── verify_end_page.gd             ← 结束页 / 教学页：结构画风 / 四态文案 / 按钮去向 / 统计数字
-│   └── verify_halogen.gd              ← 卤族互化：引擎 -7 / 族炸不误伤 / 提示 / AI / UI / 教程
+│   ├── HintAdvisor.gd                 ← 提示：只读候选 + validate_play 交叉验证
+│   ├── ui/                            ← 10 个 UI 模块（RefCounted，只持 _ui 回引；见 §8.0）
+│   │   ├── UITheme / TouchMetrics / Toast / PageRouter / CardMotion
+│   │   └── HandView / TableArea / SidePanels / ActionPanel / ToolRow
+│   ├── pages/                         ← PageChrome / StartPage / SuppRulesPage / HelpPage
+│   │                                    EndPage / TutorialPage / RoomPage
+│   ├── game/                          ← GameFlow（开局/结果/步骤重置）/ HintFlow（提示）
+│   ├── tutorial/                      ← Level0Overlay（第零关 Phase1~3）
+│   └── net/                           ← NetSession / ActionRouter / OnlineUI / NetProtocol
+│                                        NetTransport / ENetTransport / LoopbackTransport
+├── tools/
+│   ├── run_tests.gd                   ← 测试运行器（逐个子进程，拿真实退出码）
+│   ├── move_funcs.gd                  ← 搬运工具（切片时整段搬方法）
+│   ├── gen_facade_list.gd             ← 生成 verify_ui_facade 的方法清单
+│   └── unprefix_siblings.gd           ← 搬完还原「同模块兄弟方法」的调用前缀
+├── tests/                             ← 48 套 verify_*.gd + net_smoke.gd（多进程真机联机冒烟）
 ├── CHEMICAL_COLLISION_GAME.md         ← 游戏设计文档
 ├── GAMEPLAY_RULES.md                  ← 玩法规则文档
 ├── ARCHITECTURE.md                    ← 本文档
@@ -93,7 +96,7 @@ chemical-1/
 
 | 功能维度 | 模块 | 说明 |
 |---------|------|------|
-| **UI** | GameUI.gd / TutorialUI.gd | 页面切换、牌面渲染、出牌步骤流、教程引导显示 |
+| **UI** | GameUI.gd（门面）+ `scripts/ui/*` + `scripts/pages/*` | 页面切换、牌面渲染、出牌步骤流、着色；模块约定见 §8.0 |
 | **牌型计算** | CardPatterns.gd + CompoundSolver.gd | 纯静态函数：牌型检测、化合物配平、命名、比大小 |
 | **牌的使用和打出** | GameManager.gd | 出牌合法性校验、桌面状态、回合轮转 |
 | **信息记录** | GameLogger.gd | 统一日志写入/缓存/获取 |
@@ -308,15 +311,35 @@ _check_tutorial_progress(pattern, human) → 进度检查
 **职责**: AI 自动出牌策略（族炸/化合物/双原子分子/单质/跳过），与 UI 解耦。
 
 ```gdscript
-AIPlayer.auto_play(game_manager, ui_refresh)
-  ├─ 第0关：每回合只出 1 张单质（接不上就跳过），手牌剩 1 张即收手 —— AI 永不清空手牌
-  ├─ 族炸链：冷却→跳过 / 否则出更大族炸
-  └─ 常规：族炸→化合物对 O(n²)（`halogen_exchange_allowed` 关闭时跳过纯卤素对）
-		→化合物多分子（L4a：2 元素按最简比凑牌，`AI_RATIO_COMPOUND`）→双原子→单质→pass
+AIPlayer.plan(game_manager, seat) -> Dictionary          # 只读：返回一笔「意图」，不改任何状态
+  {}                                                     # 无法决定（无对局 / 座位非法 / 不是 AI / 已结束）
+  {"type": "play", "uids": [...], "valences": {...}, "pattern": n}
+  {"type": "pass"} / {"type": "sequence_skip"} / {"type": "sequence_pick", "pattern": n}
+
+plan 内部分派（_plan_* 全部只读）：
+  ├─ 第0关（phase>=1）：族炸链中→pass；否则 _plan_level0（每回合只出 1 张单质，手牌≤1 就 pass）
+  ├─ 族炸链中：冷却→pass / 否则 _plan_clan_bomb
+  └─ 常规 _plan_regular：接顺序（仅桌面是顺序时才出顺序，不主动出）
+		├─ 族炸（同族≥2张）
+		├─ 化合物配对 O(n²)（`halogen_exchange_allowed` 关闭时跳过纯卤素对；价态取 get_valence_pairs）
+		├─ 化合物多分子（L4a：2 元素按最简比凑牌，`AI_RATIO_COMPOUND`）
+		├─ 双原子分子配对
+		├─ 单质单张
+		└─ 全败 → {"type": "pass"}
+
+AIPlayer.auto_play(game_manager, ui_refresh)             # 单机入口：plan() + _execute_local()，签名与旧版一致
+AIPlayer._execute_local(game_manager, p)                 # 单机落子：play_cards / player_pass，不写 event_log
 ```
 
+> **为什么先出「计划」再落子**：主机要把 AI 的动作变成**可广播的意图**。直接落子在联机里
+> 等于「主机自己改局面」，客人重放不出来 → 立刻分叉。所以决策抽成只读 `plan()`：
+> 单机 `auto_play()` = `plan()` + `_execute_local()`，联机由 `NetSession.host_step_ai()` 复用
+> 同一条 `make_intent → 裁决 → 广播` 链（见 MULTIPLAYER_TASKS.md Step 2）。
+> 判定一律走 `validate_play()`（与 `play_cards()` 共用 `_evaluate_play`）：
+> 预检通过 ⇒ 落子必然返回同一个码，逐步等价由 `tests/verify_ai_plan.gd`（156 项）盯着。
+
 > **第0关刻意放水（见 §12.8）**：第0关 AI 不抽牌（`ai_no_draw`），老策略「化合物对(2 张)→双原子→单质」
-> 4 个回合就能清空 8 张手牌，新手常在只出 2~3 张牌时就看到「本局结束」。现在 `_try_play_level0()`
+> 4 个回合就能清空 8 张手牌，新手常在只出 2~3 张牌时就看到「本局结束」。现在 `_plan_level0()`
 > 每回合只出 1 张单质，且 `get_hand_count() <= 1` 时直接跳过 —— 玩家必然是获胜方。
 
 > 化合物化合价**不再由 AI 自算**（旧实现「正价取 max / 负价取 min」已删），统一调用
@@ -341,18 +364,111 @@ AIPlayer.auto_play(game_manager, ui_refresh)
 | _update_tutorial_guidance | 关卡1/2引导文本 |
 | _update_tutorial_level0_guidance | 第0关引导文本 |
 
-### 7.5 TutorialUI.gd（教程内容）
+### 7.5 （已删除）TutorialUI.gd
 
-**职责**: 静态教程文本（引导文本/成功提示/进度判定），无状态。
-
----
-
+> Slice 5 删除了这个死文件：教程的全部文案早已搬进 `TutorialController.gd`（关卡 1/2 与第零关引导）
+> 和 `pages/TutorialPage.gd`（教学引导页三张关卡卡），全项目零引用。
+> 现在只剩 §7.4 的 `TutorialController.gd` 一处真源。
 
 ---
 
 ## 8. 表现层 - GameUI.gd
 
-**职责**: 页面管理、牌面渲染、步骤流、着色、教程显示。AI 策略已拆至 AIPlayer.gd。
+**职责**: 门面 + 状态持有者 —— 常量/字段/装配、`_refresh_ui()` 编排、`_process` 分发，以及给全项目
+100+ 处调用点与 48 套测试留的**同名转发**。真正的实现按功能拆在 `scripts/ui · pages · game ·
+tutorial · net` 的 21 个模块里（AI 策略更早拆到了 `AIPlayer.gd`）。
+
+### 8.0 UI 分层与刷新约定（门面 + 模块）
+
+> 逐片台账（每片改了什么、踩过哪些坑、每个 commit）在 `UI_LAYER_REFACTOR.md`；
+> 本节只写**后续任何 UI 改动都必须遵守的约定**，违反其中一条，要么测试红，要么状态分叉。
+
+#### 铁律
+
+| # | 约束 | 为什么 |
+|---|---|---|
+| 1 | **状态只留 root**：模块不持有 `selected_indices` / `hand_buttons` / `step_mode` / `table_card_buttons` 等字段的副本 | 测试会**直接写** `scene.selected_indices = [...]`；副本一旦存在就有两个真源，双方不同步 |
+| 2 | **模块只持有一个 `_ui` 回引**；`create_tween()` / `get_tree()` / `queue_redraw()` / `add_child()` 一律走 `_ui.` | 模块是 `RefCounted`，没有这些方法；tween / 定时器必须挂在 root 上，否则换页即泄漏 |
+| 3 | **常量可下沉，root 必须留 `const X := ModScript.X` 别名**，root 里不写字面量 | 测试直读 `scene.CARD_W` / `scene.CARD_H`；两处写字面量迟早改一处忘一处 |
+| 4 | **不加 `class_name`**，一律 `preload` + `const`；模块 `extends RefCounted`，构造函数固定 `_init(ui)` | 沿用工程风格；`_init` 在 root 的 `_init` 里调用（早于 `_ready` 与子节点 `_ready`，转发目标必须已存在） |
+| 5 | **不改测试**：任何「必须改 `tests/*.gd` 才能过」的改动都算方案错了，回退重做 | 48 套测试是这次拆分的验收基线；改测试等于把尺子改短 |
+
+#### 模块表（`_init()` 里的 21 个 `ui_*` 实例）
+
+| 模块 | 文件 | 行数 | 职责 |
+|---|---|---|---|
+| root | `scripts/GameUI.gd` | 2048 | 门面：常量/字段/装配/`_refresh_ui`/`_process`/全部同名转发 |
+| theme | `ui/UITheme.gd` | 149 | 视觉常量、`panel_style(kind)`、`card_color()`（含 StyleBox 缓存） |
+| touch | `ui/TouchMetrics.gd` | 256 | 触屏档判定/几何与字号取值/运行时开关（`--touch-ui`） |
+| toast | `ui/Toast.gd` | 90 | 右栏信息 / 警告 toast |
+| router | `ui/PageRouter.gd` | 133 | `_show_*_page` / 页面淡入 / 返回路由 |
+| motion | `ui/CardMotion.gd` | 200 | 幽灵牌飞行 / 小卡入场 / 发牌淡入 |
+| hand | `ui/HandView.gd` | 1462 | 手牌渲染 / 重叠布局 / 悬停状态机 / 命中 / 拖拽重排 / 价态面板 |
+| tool | `ui/ToolRow.gd` | 113 | 提示/帮助/退出三按钮样式与几何归一 |
+| table | `ui/TableArea.gd` | 314 | 顶部状态栏 + 桌面文案 + 桌面小卡槽 |
+| side | `ui/SidePanels.gd` | 342 | 桌面小卡 / 日志面板 / 规则提醒 / 「按序 ⇅」 |
+| action | `ui/ActionPanel.gd` | 513 | 操作面板 + 出牌步骤流按钮 |
+| hint | `game/HintFlow.gd` | 99 | 提示按钮 → `HintAdvisor` → 自动选牌 + 说明 |
+| flow | `game/GameFlow.gd` | 502 | 开局 / 交互回调 / 结果处理 / 步骤重置 / AI 调度 |
+| page | `pages/PageChrome.gd` | 249 | 页面通用零件：渐变底 / 水印 / 装饰牌 / 按钮三件套 / 入场动画 |
+| start | `pages/StartPage.gd` | 389 | 开始页（标题 / 设置卡 / 按钮区 / 内联提示） |
+| supp | `pages/SuppRulesPage.gd` | 295 | 补充规则小页（4 张规则卡 / 元素池 / 勾选摘要） |
+| help | `pages/HelpPage.gd` | 499 | 帮助中心（3 Tab 懒加载 / 卡片 / 图鉴小卡） |
+| end | `pages/EndPage.gd` | 257 | 结算页（结算卡 / 统计块 / 按钮去向 / 淡入） |
+| tut | `pages/TutorialPage.gd` | 177 | 教学引导页（三张关卡卡 / 进出路由 / 错峰入场） |
+| level0 | `tutorial/Level0Overlay.gd` | 517 | 第零关 Phase1~3（高亮框 / 引导按钮 / 规则提醒） |
+| online | `net/OnlineUI.gd` | 313 | 联机接线：会话装配 / 座位视角 / 权威事件回调 / 每帧推进 |
+| room | `pages/RoomPage.gd` | 662 | 房间页（建房 / 加入 / 座位表 / 开局闸门 / 收尾） |
+
+> 行数是 2026-11-18 的快照，只用于判断「这次改动是不是搬对了地方」，不是契约。
+
+#### `_process` 唯一钩子
+
+root 是**整棵 UI 树里唯一**有 `_process`/`_physics_process` 的节点（模块是 `RefCounted`，没有帧回调）。
+需要每帧做的事只在这里分发：
+
+```gdscript
+func _process(delta: float) -> void:
+	_update_net(delta)        # → net/OnlineUI：poll 会话（收包/超时）+ 主机节流推进 AI 座位
+	_update_hand_drag()       # → ui/HandView：拖拽重排（轮询 mouse position，不用 gui_input）
+	if _drag_active:
+		return                # 拖拽期间不跑悬停状态机，否则牌会随鼠标反复抬起/落下抖动
+	_update_hand_hover()      # → ui/HandView：悬停抬牌 + 信息栏
+```
+
+- 单机时 `net_session == null`，`_update_net()` 立刻返回，等于不存在。
+- 新模块**不许**自己起 `_process` / 常驻 `Timer`：要每帧做事就回到这里加一行转发，
+  否则「谁在每帧跑」会散落在 21 个文件里，掉帧时无法定位。
+
+#### 刷新约定（`_refresh_ui()` 是全量刷新的唯一入口）
+
+```gdscript
+_refresh_ui()                     # 出牌 / 跳过 / 弃牌 / 联机 state_applied / 换人 / 教程推进 都调它
+  ├─ _update_info_label()         # 牌权状态
+  ├─ _update_table_label()        # 桌面文案 + 桌面小卡（内容签名复用）
+  ├─ _update_status_bar()         # 顶部状态栏（当前玩家/手牌/牌库/桌面）
+  ├─ _update_log_label()          # 日志
+  ├─ _update_action_panel()       # 操作面板（按清单复用）
+  ├─ _update_hand_buttons()       # 手牌（按签名复用）
+  ├─ _update_card_info_label()    # 信息栏（提示文本 / 可用牌型）
+  ├─ _update_deck_count()         # 牌库计数
+  ├─ _update_tutorial_label()     # 教程引导
+  └─ _level0_update_rule_tips()   # 第零关规则提醒
+```
+
+- 每个 `_update_*` 必须**幂等**、可重复调用；它们不知道「为什么刷新」，只按当前局面重画。
+- 高频路径已改成「先比内容，再决定要不要重建」（Slice 2b / 6）：
+  - 手牌：按 `(uid, 选中态)` 签名复用按钮，只改几何与样式；
+  - 操作面板：按「文案 + 回调 `Callable`」逐项比对，同则只翻 `disabled`；
+  - 桌面小卡：按 `牌型 + 每张 (symbol, uid)` 签名复用，同则只重摆槽位、不重播入场动画。
+- **「内容没变」≠「什么都不做」**：依赖别的控件高度的坐标必须重算 ——
+  桌面小卡的 `slot_y` 跟着「桌面: …」换行涨落，所以复用路径仍要重摆位置。
+- **复用判定要跳过 `queue_free` 待删的旧节点**：同一帧 `clear` 后重建时它们还在子节点列表里，
+  当成「不匹配」会退化成「每帧重建两次」（`_action_panel_rows()` 数行数也是同一口径）。
+- **回调不同必须重建**：文案相同但动作变了（换行动者、`跳过` ↔ `弃牌跳过(上限)`），
+  复用会让点击执行上一批的动作。签名里因此必须带 Callable（`_ap_btn_bound_to()`）。
+- **自建面板不参与复用**：`step_mode == 2`（化合价面板）由 `HandView._update_valence_buttons()` 自建，
+  共享的复用逻辑只需负责「别把上一批当可复用」。
 
 ### 页面管理
 
@@ -438,8 +554,8 @@ HelpPage (Control, full rect, visible=false)
 | 卡片高度按内容自适应，行内两列由 `GridContainer` 拉平 | 不做固定高度，避免中文长句被裁 |
 | 图鉴 29 张迷你卡用 `GridContainer(columns=7)` | 1152 宽下每列约 148px，5 行；`size_flags_horizontal = EXPAND_FILL` 让卡宽随列宽自适应 |
 
-**文案与数据**：全部在 `scripts/HelpContent.gd`（`extends RefCounted`，纯静态数据，零 UI 依赖，
-与 `TutorialUI.gd` 同风格），行格式 `{"k", "t"}`：
+**文案与数据**：全部在 `scripts/HelpContent.gd`（`extends RefCounted`，纯静态数据，零 UI 依赖），
+行格式 `{"k", "t"}`：
 
 | k | 渲染 | 字色 / 字号 |
 |---|---|---|
@@ -872,17 +988,12 @@ step3: 上限弃牌 → "确认弃置" + "取消"
 
 ### AI 策略（已拆至 AIPlayer.gd）
 
+决策细节见 §7.3（`plan()` 只读 → 单机 `auto_play()` 落子 / 联机主机广播）。一句话：
+
 ```
-AIPlayer.auto_play(game_manager, ui_refresh):
-  族炸链中 → 冷却跳过 / 出族炸
-  否则 → _try_play():
-	├─ 接顺序（仅桌面是顺序时出顺序，不主动出）
-	├─ 族炸尝试（同族≥2张）
-	├─ 化合物配对 O(n²)（`halogen_exchange_allowed` 关闭时跳过纯卤素对；化合价优先取公式配平结果，
-	│   失败时遍历常见价找一正一负兜底 → 卤族互化打开后可出 ClF）
-	├─ 双原子分子配对
-	├─ 单质单张
-	└─ 全部失败 → player_pass()（达上限时自动弃1张）
+单机：1.5s 定时器（HandView._update_ai_schedule）→ AIPlayer.auto_play → plan() + _execute_local()
+联机：GameUI._process → OnlineUI._update_net → NetSession.host_step_ai(1)（1.2s 节流）→ 广播意图
+plan()：第0关放水 / 族炸链 / 常规（顺序→族炸→化合物→多分子→双原子→单质→pass）
 ```
 
 ---
@@ -933,7 +1044,7 @@ GameManager.init_game / init_tutorial
 回合循环:
   _refresh_ui() → 状态/桌面/手牌/牌库计数/教程
   人类: 选牌→选牌型→卤族互化→化合价→play_cards
-  AI: 1.5s延迟→AIPlayer.auto_play→play_cards
+  AI: 单机 1.5s 定时→AIPlayer.auto_play（= plan + 落子）→play_cards；联机由主机 host_step_ai 代打后广播
   pass: 上限→弃牌模式 / 正常→抽1张→next_turn
   族炸: clan_bomb_chain_active→next_turn→_intercept_next
   溢出: compound_immune→免疫族炸
@@ -956,7 +1067,7 @@ GameManager.init_game / init_tutorial
 | compare_cards | CardPatterns.gd | O(n) |
 | generate_deck | CardDatabase.gd | O(28×copies) |
 | shuffle | CardDatabase.gd | O(n) Fisher-Yates |
-| _try_play (AI) | AIPlayer.gd | O(n²) 化合物配对 |
+| plan (AI) | AIPlayer.gd | O(n²) 化合物配对（只读，不改局面） |
 | _intercept_next | GameManager.gd | O(n) 顺时针查找 |
 
 ---

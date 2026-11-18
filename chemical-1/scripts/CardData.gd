@@ -3,8 +3,17 @@
 # 定义单张化学元素卡牌的所有属性
 # ============================================================
 
-# 自引用预加载（供 from_dict 反序列化使用，避免每次动态 load）
-const CardDataScript = preload("res://scripts/CardData.gd")
+# from_dict() 要 new 一个同类实例，但这里**不能**写 preload("res://scripts/CardData.gd")：
+# 脚本预加载自己会形成循环依赖（加载器还没解析完本文件，就要先拿到它）。
+# 改成「首次用到时 load 一次 + 静态缓存」：ResourceLoader 全局有资源缓存，
+# 第二次起只是查表，与原先 const preload 的开销同级，也不会每次反序列化都碰文件系统。
+static var _self_script: GDScript = null
+
+
+static func _self_script_ref() -> GDScript:
+	if _self_script == null:
+		_self_script = load("res://scripts/CardData.gd")
+	return _self_script
 
 # ============================================================
 # 一、族常量定义（16个周期表族）
@@ -129,9 +138,9 @@ func to_dict() -> Dictionary:
 	}
 
 
-# JSON 反序列化（预加载脚本，避免每次动态 load）
+# JSON 反序列化（脚本实例走 _self_script_ref() 的静态缓存，见文件头）
 static func from_dict(data: Dictionary):
-	var card = CardDataScript.new()
+	var card = _self_script_ref().new()
 	card.symbol = data.get("symbol", "")
 	card.name_cn = data.get("name_cn", "")
 	card.name_en = data.get("name_en", "")

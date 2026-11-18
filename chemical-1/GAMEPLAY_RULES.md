@@ -511,9 +511,9 @@ GameManager.init_game / init_tutorial
 | `scripts/GameManager.gd` | play_cards / 牌权轮转 / 接炸链 / 溢出化合物 / 接炸跳过摸牌 / 有机物胜利 / 顺序反转方向+指定牌型 / 记录桌面实际化合价 table_custom_valences |
 | `scripts/PlayerManager.gd` | 人数规划 / PlayerInfo / 发牌 / 手牌上限 |
 | `scripts/GameLogger.gd` | 信息记录（统一日志）|
-| `scripts/AIPlayer.gd` | AI 出牌策略（化合价：默认配平 + 一正一负兜底，卤族互化读开关）|
-| `scripts/TutorialUI.gd` | 教程内容与引导 |
-| `scripts/GameUI.gd` | 卡牌牌面渲染（桌面迷你卡牌按化学式顺序）/ 步骤流 / 卤族互化预检（真正规则在引擎，-7）/ 教程显示 / 有机物按钮 / 顺序指定弹窗 |
+| `scripts/AIPlayer.gd` | AI 出牌策略（`plan()` 只读意图 + 单机 `auto_play()` 落子；化合价取 `get_valence_pairs`，卤族互化读开关）|
+| `scripts/TutorialController.gd` | 教程状态机 + 教程引导内容 |
+| `scripts/GameUI.gd` | 门面：卡牌牌面渲染入口（桌面迷你卡牌按化学式顺序）/ 步骤流 / 卤族互化预检（真正规则在引擎，-7）/ 教程显示 / 有机物按钮 / 顺序指定弹窗；实现见 `scripts/ui · pages · game · tutorial` |
 | `scripts/CardData.gd` | 卡牌属性 + 序列化 + 族常量 |
 | `scripts/CardDatabase.gd` | 牌库生成（卤族10/高张数8/主族6/副族4）= 182 张 |
 | `Main.tscn` | 6 页场景布局（统一浅蓝白背景）|

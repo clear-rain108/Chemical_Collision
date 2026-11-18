@@ -1213,7 +1213,7 @@ Godot_v4.7.2-stable_win64.exe --path . --touch-ui
 | `GameManager.auto_play(idx, cards)` | 依次 `validate_play` 预检候选，第一个 `code >= 0` 的才 `play_cards`；全败则把「化合物那条原因」写回 `last_reject_reason` |
 | `GameManager.auto_play_preview(idx, cards)` | **只读**孪生：`{code, pattern, custom_valences, reason}`，给测试 / 按钮状态用 |
 | `GameManager._auto_play_candidates(cards)` | 候选表：有机物 → 单质 → 化合物（统一价 → 混合价）→ 顺序（规则开启）→ 族炸 |
-| `GameUI._update_action_panel()`（step 0） | 新增 `直接出牌 ⚡`，旧的 `出牌(选牌型)` 原样保留（教程文案 `TutorialController/TutorialUI` 不动） |
+| `GameUI._update_action_panel()`（step 0） | 新增 `直接出牌 ⚡`，旧的 `出牌(选牌型)` 原样保留（教程文案 `TutorialController` 不动） |
 | `GameUI._on_auto_play()` | 取 `_sel_cards()` → `auto_play()` → `_handle_result()`（成功走原有飞牌 / 顺序弹窗，失败带原因） |
 | `tests/verify_auto_play.gd` | **新增（23 条）**：六种牌的命中牌型（CH₄ / H₂ / Na+Cl / N+P / Li+Na / Fe+Co+Ni）、预览只读 + 幂等、全败时原因非空、真出牌后手牌 -2 且日志写「氯化钠」、界面按钮存在且能出、非法组合点它不动牌且弹提示 |
 
