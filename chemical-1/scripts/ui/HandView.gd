@@ -75,7 +75,6 @@ func _update_hand_buttons() -> void:
 		_ui.hand_container.remove_child(child)
 		child.queue_free()
 	_ui.hand_buttons.clear()
-	_ui.ai_triggered = false
 
 	_update_ai_schedule(actor)
 
@@ -204,11 +203,24 @@ func _apply_card_build_fonts(btn: Button) -> void:
 #   客人若也跑这个计时器，就是本地私自 play_cards → 立刻与主机分叉。
 # 复用路径与重建路径都要走这里 —— 否则 AI 回合里手牌没变化 → 不重建 → AI 永远不动。
 func _update_ai_schedule(actor) -> void:
-	var ai_acting: bool = actor != null and actor.is_ai and not _ui.game_manager.is_game_over()
-	if ai_acting and not _ui.ai_triggered and _ui.net_session == null:
-		_ui.ai_triggered = true
-		var timer = _ui.get_tree().create_timer(1.5)
-		timer.timeout.connect(_ui._ai_auto_play)
+	var gm = _ui.game_manager
+	var ai_acting: bool = actor != null and actor.is_ai and not gm.is_game_over()
+	# 非 AI 回合 / 联机：本地不该挂着 AI 定时器（联机一律由主机 host_step_ai 代打）
+	if not ai_acting or _ui.net_session != null:
+		_ui.ai_triggered = false
+		_ui.ai_armed_turn = -1
+		return
+	# 同一手只排一次。复位与置位都必须写在这里 —— 上面的「复用路径」会提前 return，
+	# 把复位留在重建分支（Slice 2b 的回归）会让闸门永久停在 true：第一台 AI 打完，
+	# 手牌没变化 → 不重建 → 第二台 AI 排不上定时器 → 整局卡死。
+	# 令牌用 gm.turn_count：next_turn / _intercept_next / _start_new_round 三条换手
+	# 路径都会 +1（set_sequence_constraint 也走 next_turn），是「这一手」的天然编号。
+	if _ui.ai_armed_turn == gm.turn_count:
+		return
+	_ui.ai_armed_turn = gm.turn_count
+	_ui.ai_triggered = true
+	var timer = _ui.get_tree().create_timer(1.5)
+	timer.timeout.connect(_ui._ai_auto_play)
 
 
 # 人类座位列表（PlayerManager 保证人类排在 0..H-1，H = 总人数 - AI 数）

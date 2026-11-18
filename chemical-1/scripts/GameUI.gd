@@ -158,7 +158,8 @@ var _hover_pending_idx: int = -1        # 正在等待稳定的目标索引
 var _hover_pending_at: int = 0          # 目标开始等待的时间戳（毫秒）
 var log_lines: Array = []               # 日志行缓存
 const MAX_LOG_LINES = 6
-var ai_triggered: bool = false          # AI 自动操作防重复
+var ai_triggered: bool = false          # 是否有待执行的 AI 定时器（verify_ui_online D8 依赖）
+var ai_armed_turn: int = -1             # 已排程的回合号（gm.turn_count）：同一手只排一次
 var _hand_read_only: bool = false       # 手牌区只读（AI 回合显示玩家自己的牌，但不可操作）
 # 热座交接（B2）：已确认「正在看自己手牌」的人类座位；-1 = 还没人确认。
 # 只记座位号不记人 → 同一位玩家连续行动（顺序牌型的二次选择）不会重复弹遮罩。

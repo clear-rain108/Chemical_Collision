@@ -18,7 +18,7 @@
 | 角色 | 入口 | 说明 |
 |---|---|---|
 | 人类 | `scripts/game/GameFlow.gd` → `_ui._router()` → `net/ActionRouter.gd` | 单机直接调 `GameManager`；联机把动作发成 intent，等主机裁决后广播 |
-| AI（单机） | `AIPlayer.auto_play(gm, refresh)` = `plan()` + `_execute_local()` | 逐字复刻改造前的写路径（`play_cards` / `player_pass`），**不写** `event_log` |
+| AI（单机） | `AIPlayer.auto_play(gm, refresh)` = `plan()` + `_execute_local()` | 逐字复刻改造前的写路径（`play_cards` / `player_pass`），**不写** `event_log`。**驱动方是 UI**：`HandView._update_ai_schedule()` 起 1.5s 定时器 → `GameFlow._ai_auto_play()`，按 `gm.turn_count` 令牌「一手只排一次」 |
 | AI（联机） | 主机 `NetSession.host_step_ai()` → `make_intent → _validate_for_seat → _host_apply` | 与人类 intent 同一条裁决链；客人重放同一笔事件，局面逐笔对齐 |
 | 提示 | `HintAdvisor.suggest()`（全静态、只读） | 每个候选都过 `validate_play()`，「说能打、点了被拒」结构上不可能 |
 
@@ -243,6 +243,7 @@ plan(gm, seat)
 | 直接出牌（预览只读 + 真出牌） | `tests/verify_auto_play.gd` |
 | 主机代 AI / 三端一致 | `tests/verify_net_session.gd` / `verify_ui_online.gd` |
 | 集成（GameManager + AIPlayer） | `tests/verify_integration.gd` |
+| 单机 AI 接力（刷新 → 排程 → 定时器 → 下一家） | `tests/verify_ai_chain.gd`（11 项，真 1.5s 定时器跑两轮） |
 
 ---
 

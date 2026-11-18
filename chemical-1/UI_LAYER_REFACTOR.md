@@ -1,7 +1,8 @@
 # UI 层重构：GameUI.gd 按功能拆分
 
 > 本文档是重构的**计划 + 进度台账**。每完成一片，回来把 ⬜ 改成 ✅ 并填「§8 完成记录」。
-> 最后更新：2026-11-18（**6 片全部完成**：root 7651 → 2048 行；Slice 5 收尾落盘，仅剩真机 A/B 对比）
+> 最后更新：2026-11-18（**6 片全部完成 + 1 笔回归修复**：root 7651 → 2049 行；Slice 5 收尾落盘；
+> 同日修复 2b 引入的「单机第二台 AI 卡死」，测试 48 → **49 套**；仅剩真机 A/B 对比）
 
 ## 0. 背景与已定决策
 
@@ -583,6 +584,7 @@ Gd --headless --path . --script tools/unprefix_siblings.gd -- --path=scripts/ui/
 | 4 | `8cd00c5`+`2afb745`+`7e438c9`+`c96f398`+`09e7a4d`+`3d176d6`+`bb2c2aa` | **2048（−2679）** | **3358**（PageChrome 249 / StartPage 389 / SuppRulesPage 295 / HelpPage 499 / EndPage 257 / TutorialPage 177 / Level0Overlay 517 / OnlineUI 313 / RoomPage 662） | 48/48 ✅ | 常量未搬；147 个转发方法；9 个模块字段；新增 §8.4 坑 12~17 |
 | 6 | `db6b536` | **2048（不变）** | TableArea 287 → 314 / ActionPanel 424 → 513 | 48/48 ✅ | 改行为片（未动布局数值 / 文案 / 联机门控）；`ui_perf` 28 → 50 条 |
 | 5 | `63b4e5e` | **2048（不变）** | 无搬运（清理片）；CardData 自引用 preload → 静态缓存 | 48/48 ✅ | 删 TutorialUI；导出过滤；ARCHITECTURE §8.0；`AI_PLAYER_AUDIT` v2.0 |
+| 修复 | 见 §8.4（2026-11-18 AI 接力） | **2049（+1）** | HandView 1462 → 1479（+17）/ GameFlow 502 → 507（+5） | **49/49 ✅** | 修单机「第二台 AI 不动」；新增 `verify_ai_chain`（11 条） |
 
 ### 8.3 `project.godot` 中被引擎删掉的手写注释（原文存档）
 
@@ -749,6 +751,27 @@ environment/defaults/default_clear_color=Color(0.902, 0.941, 0.98, 1)
       判据是「真机上有没有入口」：`net_smoke.gd` 靠 `--script` 启动，手机上没法传参 → 不必跟着包走。
   22. **删 `project.godot` 的键要连 section 一起删**。只删 `3d/physics_engine` 会留下空的
       `[physics]`；引擎下次 save 又会按默认值清一遍，纯 2D 项目不设这个键才是稳定态。
+
+- 2026-11-18 **回归修复（Slice 2b 引入：单机 AI 接力卡死）**：真机上 1 人 + 3 AI 对局，人类动完 →
+  AI 1 正常出牌 → 之后整局停在「等待 XX 行动中...」，AI 2 / AI 3 再不动，点任何按钮都无效。
+  真因：2b 的「手牌复用路径」提前 `return`，把 `ai_triggered = false` 留在了重建分支里
+  （`a347efe` 时代这句在函数前段**无条件执行**，`866ae54` 把它推到了重建分支）→ 第一台 AI 打完、
+  人类手牌当然没变化 → 不重建 → 闸门永久停在 `true` → `_update_ai_schedule()` 再也不起定时器。
+  修法：复位 / 置位统一收进 `_update_ai_schedule()`（两条分支都会经过它），并用 `gm.turn_count`
+  当「一手一号」令牌（同一手只排一次定时器）；定时器到点（`GameFlow._ai_auto_play()`）先还锁，
+  由 `auto_play()` 内部那次 `_refresh_ui()` 给下一家重新排程。新增 `tests/verify_ai_chain.gd`
+  （11 条，含**真 1.5s 定时器连跑两轮**）；root 2048 → **2049**、HandView 1462 → **1479**、
+  GameFlow 502 → **507**，**49/49 全绿**，`--quit-after 120` 冒烟 0 ERROR / 0 WARNING。
+  负向验证：把三处改动 `git stash` 掉再跑新测试 → A4 / B2 / B4 / C2 四条 FAIL
+  （C2 实测「回合号 2 → 3 之后不动」，与真机现象逐字一致）。踩出的两条新坑：
+  23. **复用路径 = 要接手「重建顺手做的所有收尾」，复位也算收尾**（坑 6 的升级版：那次只补了
+      「调用 `_update_ai_schedule()`」，没补「谁把闸门复位」）。判据：凡副作用由某个**布尔闸门**控制，
+      就去搜这个布尔被写成 `false` 的**所有**位置；只要有一处落在 `if _can_reuse_xxx(): ... return`
+      之后，就是定时炸弹。更稳的形态是换令牌（`turn_count` / 内容签名），而不是「先清标记」。
+  24. **测试绕开了 UI 排程就抓不到这类 bug**。48 套里所有 AI 测试都直接调 `AIPlayer.auto_play()` /
+      `_ai_auto_play()`，「刷新 → 排程 → 1.5s 定时器 → 下一家」这一段无人覆盖，
+      所以 48/48 全绿也照样把卡死放上了真机。判据：**异步驱动必须有一套跑真实定时器的测试**
+      （`SceneTree.create_timer` + `await`），同步桩再多也不算覆盖。
 
 
 

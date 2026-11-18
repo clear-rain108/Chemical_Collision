@@ -57,7 +57,7 @@ chemical-1/
 ├── project.godot                      ← 引擎配置
 ├── Main.tscn                          ← 6 页场景
 ├── scripts/
-│   ├── GameUI.gd                      ← 门面：状态/常量/装配/_refresh_ui 编排/全部同名转发（2048 行）
+│   ├── GameUI.gd                      ← 门面：状态/常量/装配/_refresh_ui 编排/全部同名转发（2049 行）
 │   ├── CardData.gd                    ← 数据模型：13属性+16族常量+序列化
 │   ├── CardDatabase.gd                ← 牌库：29种元素(卤族10/高8/主6/副4)=182张
 │   ├── PlayerManager.gd               ← 人数规划：PlayerInfo类/玩家创建/发牌/手牌上限
@@ -83,7 +83,7 @@ chemical-1/
 │   ├── move_funcs.gd                  ← 搬运工具（切片时整段搬方法）
 │   ├── gen_facade_list.gd             ← 生成 verify_ui_facade 的方法清单
 │   └── unprefix_siblings.gd           ← 搬完还原「同模块兄弟方法」的调用前缀
-├── tests/                             ← 48 套 verify_*.gd + net_smoke.gd（多进程真机联机冒烟）
+├── tests/                             ← 49 套 verify_*.gd + net_smoke.gd（多进程真机联机冒烟）
 ├── CHEMICAL_COLLISION_GAME.md         ← 游戏设计文档
 ├── GAMEPLAY_RULES.md                  ← 玩法规则文档
 ├── ARCHITECTURE.md                    ← 本文档
@@ -375,7 +375,7 @@ AIPlayer._execute_local(game_manager, p)                 # 单机落子：play_c
 ## 8. 表现层 - GameUI.gd
 
 **职责**: 门面 + 状态持有者 —— 常量/字段/装配、`_refresh_ui()` 编排、`_process` 分发，以及给全项目
-100+ 处调用点与 48 套测试留的**同名转发**。真正的实现按功能拆在 `scripts/ui · pages · game ·
+100+ 处调用点与 49 套测试留的**同名转发**。真正的实现按功能拆在 `scripts/ui · pages · game ·
 tutorial · net` 的 21 个模块里（AI 策略更早拆到了 `AIPlayer.gd`）。
 
 ### 8.0 UI 分层与刷新约定（门面 + 模块）
@@ -391,25 +391,26 @@ tutorial · net` 的 21 个模块里（AI 策略更早拆到了 `AIPlayer.gd`）
 | 2 | **模块只持有一个 `_ui` 回引**；`create_tween()` / `get_tree()` / `queue_redraw()` / `add_child()` 一律走 `_ui.` | 模块是 `RefCounted`，没有这些方法；tween / 定时器必须挂在 root 上，否则换页即泄漏 |
 | 3 | **常量可下沉，root 必须留 `const X := ModScript.X` 别名**，root 里不写字面量 | 测试直读 `scene.CARD_W` / `scene.CARD_H`；两处写字面量迟早改一处忘一处 |
 | 4 | **不加 `class_name`**，一律 `preload` + `const`；模块 `extends RefCounted`，构造函数固定 `_init(ui)` | 沿用工程风格；`_init` 在 root 的 `_init` 里调用（早于 `_ready` 与子节点 `_ready`，转发目标必须已存在） |
-| 5 | **不改测试**：任何「必须改 `tests/*.gd` 才能过」的改动都算方案错了，回退重做 | 48 套测试是这次拆分的验收基线；改测试等于把尺子改短 |
+| 5 | **不改测试**：任何「必须改 `tests/*.gd` 才能过」的改动都算方案错了，回退重做 | 49 套测试是验收基线；改测试等于把尺子改短 |
+| 6 | **「闸门 + 复位」的副作用，复位必须写在所有分支都会走到的位置**；跨手 / 跨帧的副作用优先按 `turn_count` 这类令牌判定，而不是裸布尔 | Slice 2b 的手牌复用路径提前 `return`，把 `ai_triggered = false` 留在重建分支里 → 第一台 AI 打完、人类手牌没变化 → 第二台 AI 永远排不上定时器，单机对局第一手之后必卡（49 套测试全绿也照样发生，见 §8.0 刷新约定末条） |
 
 #### 模块表（`_init()` 里的 21 个 `ui_*` 实例）
 
 | 模块 | 文件 | 行数 | 职责 |
 |---|---|---|---|
-| root | `scripts/GameUI.gd` | 2048 | 门面：常量/字段/装配/`_refresh_ui`/`_process`/全部同名转发 |
+| root | `scripts/GameUI.gd` | 2049 | 门面：常量/字段/装配/`_refresh_ui`/`_process`/全部同名转发 |
 | theme | `ui/UITheme.gd` | 149 | 视觉常量、`panel_style(kind)`、`card_color()`（含 StyleBox 缓存） |
 | touch | `ui/TouchMetrics.gd` | 256 | 触屏档判定/几何与字号取值/运行时开关（`--touch-ui`） |
 | toast | `ui/Toast.gd` | 90 | 右栏信息 / 警告 toast |
 | router | `ui/PageRouter.gd` | 133 | `_show_*_page` / 页面淡入 / 返回路由 |
 | motion | `ui/CardMotion.gd` | 200 | 幽灵牌飞行 / 小卡入场 / 发牌淡入 |
-| hand | `ui/HandView.gd` | 1462 | 手牌渲染 / 重叠布局 / 悬停状态机 / 命中 / 拖拽重排 / 价态面板 |
+| hand | `ui/HandView.gd` | 1479 | 手牌渲染 / 重叠布局 / 悬停状态机 / 命中 / 拖拽重排 / 价态面板 / **AI 排程** |
 | tool | `ui/ToolRow.gd` | 113 | 提示/帮助/退出三按钮样式与几何归一 |
 | table | `ui/TableArea.gd` | 314 | 顶部状态栏 + 桌面文案 + 桌面小卡槽 |
 | side | `ui/SidePanels.gd` | 342 | 桌面小卡 / 日志面板 / 规则提醒 / 「按序 ⇅」 |
 | action | `ui/ActionPanel.gd` | 513 | 操作面板 + 出牌步骤流按钮 |
 | hint | `game/HintFlow.gd` | 99 | 提示按钮 → `HintAdvisor` → 自动选牌 + 说明 |
-| flow | `game/GameFlow.gd` | 502 | 开局 / 交互回调 / 结果处理 / 步骤重置 / AI 调度 |
+| flow | `game/GameFlow.gd` | 507 | 开局 / 交互回调 / 结果处理 / 步骤重置 / AI 定时器落地 |
 | page | `pages/PageChrome.gd` | 249 | 页面通用零件：渐变底 / 水印 / 装饰牌 / 按钮三件套 / 入场动画 |
 | start | `pages/StartPage.gd` | 389 | 开始页（标题 / 设置卡 / 按钮区 / 内联提示） |
 | supp | `pages/SuppRulesPage.gd` | 295 | 补充规则小页（4 张规则卡 / 元素池 / 勾选摘要） |
@@ -469,6 +470,14 @@ _refresh_ui()                     # 出牌 / 跳过 / 弃牌 / 联机 state_appl
   复用会让点击执行上一批的动作。签名里因此必须带 Callable（`_ap_btn_bound_to()`）。
 - **自建面板不参与复用**：`step_mode == 2`（化合价面板）由 `HandView._update_valence_buttons()` 自建，
   共享的复用逻辑只需负责「别把上一批当可复用」。
+- **AI 排程只有一处决策点**：`HandView._update_ai_schedule()`，复用分支与重建分支末尾都会调它（0 个别的调用点）。
+  - 非 AI 回合 / 联机（`net_session != null`）→ `ai_triggered = false`、`ai_armed_turn = -1`；
+  - AI 回合且 `ai_armed_turn != gm.turn_count` → 置 `ai_triggered = true` 并起 **1.5s** 定时器；
+  - 定时器到点（`GameFlow._ai_auto_play()`，联机直接 return）→ 先把 `ai_triggered` 还成 `false`，
+    再由 `auto_play()` 内部那次 `_refresh_ui()` 为下一家重新排程。
+  令牌用 `gm.turn_count`：`next_turn()` / `_intercept_next()` / `_start_new_round()` 三条换手路径都会 +1
+  （`set_sequence_constraint()` 也走 `next_turn`），所以「一手一号」，同一手里刷新多少次都只排一个定时器，
+  也不会出现「第二家排不上」。回归：`tests/verify_ai_chain.gd`（真 1.5s 定时器连跑两轮 + 复用路径记账）。
 
 ### 页面管理
 
