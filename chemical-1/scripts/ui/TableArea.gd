@@ -140,10 +140,6 @@ func _format_player_status() -> String:
 func _update_table_label() -> void:
 	if not _ui.table_label or not _ui.game_manager: return
 
-	for btn in _ui.table_card_buttons:
-		if is_instance_valid(btn): btn.queue_free()
-	_ui.table_card_buttons.clear()
-
 	if _ui.game_manager.get_table_player_index() >= 0:
 		var p = _ui.game_manager.get_players()[_ui.game_manager.get_table_player_index()]
 		var cards = _ui.game_manager.get_table_cards()
@@ -238,6 +234,13 @@ func _update_table_label() -> void:
 			mini_step = min(80.0, (slot_w - 72.0) / float(cards.size() - 1))
 		var row_w: float = 72.0 + mini_step * float(cards.size() - 1)
 		var start_x: float = slot_left + max(0.0, (slot_w - row_w) * 0.5)
+		# 同一批牌 + 同一牌型 → 复用现有小卡：只重算槽位，不销毁 / 不重建 / 不重播动画。
+		# 槽位本身必须重算：「桌面: …」文字换行后高度会变，小卡得跟着下移。
+		if not replay and _reuse_mini_cards(cards.size()):
+			for i in range(cards.size()):
+				_ui.table_card_buttons[i].position = Vector2(start_x + i * mini_step, slot_y)
+			return
+		_clear_mini_cards()
 		for i in range(cards.size()):
 			var cv = null
 			if card_valences.has(i):
@@ -249,6 +252,7 @@ func _update_table_label() -> void:
 			if replay:
 				_ui._animate_mini_card_in(mini_btn, i)
 	else:
+		_clear_mini_cards()
 		_ui._table_sig = ""
 		_set_table_text("桌面: 空", -1)
 
@@ -289,3 +293,27 @@ func _tween_table_label_reveal() -> void:
 	tw.set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
 	tw.tween_property(_ui.table_label, "modulate:a", 1.0, _ui.TABLE_REVEAL_MS / 1000.0)
 	_ui.table_label.set_meta("reveal_tween", tw)
+
+
+# ============================================================
+# 桌面小卡：复用判定 / 清空（Slice 6 性能片，本轮唯一改行为处）
+# ============================================================
+# 为什么在这里判而不是靠 _table_sig：sig 只说「内容是同一批牌」，还得确认
+# 那批节点确实还活着（结算页 / 换页时可能被别处清掉），两个条件都满足才复用。
+func _reuse_mini_cards(n: int) -> bool:
+	if _ui.table_card_buttons.size() != n:
+		return false
+	for btn in _ui.table_card_buttons:
+		if not is_instance_valid(btn) or btn.is_queued_for_deletion():
+			return false
+	return true
+
+
+# 清空只做 queue_free：同一帧里新按钮照常 add_child（行数计算会跳过待删节点），
+# 与旧实现的时序完全一致，调用方无须关心帧边界。
+func _clear_mini_cards() -> void:
+	for btn in _ui.table_card_buttons:
+		if is_instance_valid(btn) and not btn.is_queued_for_deletion():
+			btn.queue_free()
+	_ui.table_card_buttons.clear()
+

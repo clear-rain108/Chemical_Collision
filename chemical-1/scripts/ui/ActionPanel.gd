@@ -19,10 +19,9 @@ func _init(ui) -> void:
 # -------- 搬运自 scripts/GameUI.gd 第 3333-3587 行 --------
 func _update_action_panel() -> void:
 	if not _ui.action_panel or not _ui.game_manager: return
-	for child in _ui.action_panel.get_children():
-		child.queue_free()
 	# 热座交接未认领前不给任何操作按钮：否则可以绕过遮罩直接点「跳过 / 出牌」
 	if _ui._hotseat_handoff_pending():
+		_ap_clear()
 		_fit_action_panel()
 		return
 	# 联机（Step 3，D1/D6）：非我回合 / 已提交待裁决 / 观战 / 待选牌型
@@ -30,26 +29,50 @@ func _update_action_panel() -> void:
 	if _ui.net_session != null:
 		var wait_text = _ui._net_wait_text()
 		if wait_text != "":
-			_ui.action_panel.add_child(_ui._mk_wait_label(wait_text))
+			# 同一句等待文案（每帧都会走到这里）就不重建那个 Label
+			if not _ap_single_label_is(wait_text):
+				_ap_clear()
+				_ui.action_panel.add_child(_ui._mk_wait_label(wait_text))
 			_fit_action_panel()
 			return
 	var cp = _ui.game_manager.get_current_player()
 	if cp == null or cp.is_ai or _ui.game_manager.is_game_over():
+		_ap_clear()
 		_fit_action_panel()
 		return
 
+	# 化合价面板由 HandView._update_valence_buttons() 自建（每选一个价就是另一批
+	# 按钮 + Label，且自带清空），这里只把它当成「不可复用的那一批」。
+	if _ui.step_mode == 2:
+		_ui._update_valence_buttons()
+		_fit_action_panel()
+		return
+
+	# 先算清单，再决定「复用还是重建」——清单即这一帧的期望内容。
+	var plan: Array = _ap_build_plan(cp)
+	if not _ap_apply_plan(plan):
+		_ap_clear()
+		for item in plan:
+			_ui.action_panel.add_child(_mkb(item["text"], item["cb"], item["dis"]))
+	_fit_action_panel()
+
+
+# 这一帧该有哪些按钮（文案 / 回调 / 禁用态）。
+# 之所以不边算边 add_child：只有先有清单，才能判断「和上一帧是不是同一批」。
+func _ap_build_plan(cp) -> Array:
+	var plan: Array = []
 	if _ui.step_mode == 0:
 		# 先出后验（P14-C）：选好牌 → 点「直接出牌 ⚡」，引擎按固定优先级自己挑牌型
 		# （有机物 → 单质 → 化合物 → 顺序 → 族炸），第一个合法候选才落子。
 		# 老的三步流程（出牌(选牌型) → 单质/化合物/顺序/族炸）原样保留，
 		# 教程文案（TutorialController / TutorialUI 里的「出牌(选牌型)」）不用改。
-		_ui.action_panel.add_child(_mkb("直接出牌 ⚡", _ui._on_auto_play, _ui.selected_indices.is_empty()))
-		_ui.action_panel.add_child(_mkb("出牌(选牌型)", _ui._on_step_next, _ui.selected_indices.is_empty()))
+		plan.append(_ap_item("直接出牌 ⚡", _ui._on_auto_play, _ui.selected_indices.is_empty()))
+		plan.append(_ap_item("出牌(选牌型)", _ui._on_step_next, _ui.selected_indices.is_empty()))
 		var hand_limit = _ui.game_manager.get_hand_limit()
 		if cp.get_hand_count() >= hand_limit:
-			_ui.action_panel.add_child(_mkb("弃牌跳过(上限)", _ui._on_pass, false))
+			plan.append(_ap_item("弃牌跳过(上限)", _ui._on_pass, false))
 		else:
-			_ui.action_panel.add_child(_mkb("跳过", _ui._on_pass, false))
+			plan.append(_ap_item("跳过", _ui._on_pass, false))
 	elif _ui.step_mode == 1:
 		var in_chain: bool = _ui.game_manager.is_clan_bomb_chain_active() \
 				and _ui.game_manager.get_current_player_index() != _ui.game_manager.get_clan_bomb_owner()
@@ -57,31 +80,97 @@ func _update_action_panel() -> void:
 			# 接炸链中：冷却期间同样不能出族炸，只能跳过（见 GAMEPLAY_RULES「族炸冷却」）
 			if cp.clan_bomb_cooling:
 				if cp.get_hand_count() >= _ui.game_manager.get_hand_limit():
-					_ui.action_panel.add_child(_mkb("弃牌跳过(上限)", _ui._on_pass, false))
+					plan.append(_ap_item("弃牌跳过(上限)", _ui._on_pass, false))
 				else:
-					_ui.action_panel.add_child(_mkb("跳过(❄冷却中不能接炸)", _ui._on_pass, false))
+					plan.append(_ap_item("跳过(❄冷却中不能接炸)", _ui._on_pass, false))
 			else:
-				_ui.action_panel.add_child(_mkb("作为族炸打出", _ui._on_clan_bomb, false))
-			_ui.action_panel.add_child(_mkb("返回", _ui._on_back, false))
+				plan.append(_ap_item("作为族炸打出", _ui._on_clan_bomb, false))
+			plan.append(_ap_item("返回", _ui._on_back, false))
 		else:
-			_ui.action_panel.add_child(_mkb("作为单质打出", _ui._on_element, false))
-			_ui.action_panel.add_child(_mkb("合成化合物", _on_choose_compound, false))
+			plan.append(_ap_item("作为单质打出", _ui._on_element, false))
+			plan.append(_ap_item("合成化合物", _on_choose_compound, false))
 			if _ui.game_manager.get_sequence_rules_enabled():
-				_ui.action_panel.add_child(_mkb("作为顺序打出", _ui._on_sequence, false))
+				plan.append(_ap_item("作为顺序打出", _ui._on_sequence, false))
 			# 冷却 / 禁炸时按钮保留但要置灰，避免「点了才报错」
 			if cp.clan_bomb_cooling:
-				_ui.action_panel.add_child(_mkb("族炸❄冷却中", _ui._on_clan_bomb, true))
+				plan.append(_ap_item("族炸❄冷却中", _ui._on_clan_bomb, true))
 			elif _ui.game_manager.clan_bomb_disabled:
-				_ui.action_panel.add_child(_mkb("族炸已禁用", _ui._on_clan_bomb, true))
+				plan.append(_ap_item("族炸已禁用", _ui._on_clan_bomb, true))
 			else:
-				_ui.action_panel.add_child(_mkb("作为族炸打出", _ui._on_clan_bomb, false))
-			_ui.action_panel.add_child(_mkb("返回", _ui._on_back, false))
-	elif _ui.step_mode == 2:
-		_ui._update_valence_buttons()
+				plan.append(_ap_item("作为族炸打出", _ui._on_clan_bomb, false))
+			plan.append(_ap_item("返回", _ui._on_back, false))
 	elif _ui.step_mode == 3:
-		_ui.action_panel.add_child(_mkb("确认弃置", _ui._on_pass, _ui.selected_indices.size() != 1))
-		_ui.action_panel.add_child(_mkb("取消", _ui._on_back, false))
-	_fit_action_panel()
+		plan.append(_ap_item("确认弃置", _ui._on_pass, _ui.selected_indices.size() != 1))
+		plan.append(_ap_item("取消", _ui._on_back, false))
+	return plan
+
+
+# 一条清单项：文案 / 回调 / 禁用态 —— 三者全同才算「同一批按钮」。
+func _ap_item(text: String, cb: Callable, dis: bool) -> Dictionary:
+	return {"text": text, "cb": cb, "dis": dis}
+
+
+# 复用：清单与现有子节点一一对应（同文案 / 同回调）时，只就地翻 disabled，绝不销毁节点。
+# 为什么值得做：AI 每次行动、每张牌选中都会走 _update_action_panel()，
+# 重建一次是 n 个 Button + 4n 个 StyleBoxFlat + n 次信号接线 + n 个 pivot/resized 回调；
+# 而绝大多数情况下按钮文案完全没变（只有 disabled 翻一下，或者根本什么都没变）。
+func _ap_apply_plan(plan: Array) -> bool:
+	if plan.is_empty():
+		return false
+	var live: Array = []
+	for c in _ui.action_panel.get_children():
+		# 同一帧里可能还挂着上一批「已 queue_free 待删」的子节点：跳过即可
+		# （它们本帧末就消失，_action_panel_rows() 也按同一口径跳过）
+		if c.is_queued_for_deletion():
+			continue
+		if not c.visible:
+			return false
+		live.append(c)
+	if live.size() != plan.size():
+		return false
+	for i in range(plan.size()):
+		if not (live[i] is Button):
+			return false
+		var btn: Button = live[i]
+		if btn.text != String(plan[i]["text"]):
+			return false
+		# 回调对不上也必须重建：否则点下去执行的是上一批的动作
+		if not _ap_btn_bound_to(btn, plan[i]["cb"]):
+			return false
+	for i in range(plan.size()):
+		var btn: Button = live[i]
+		var dis: bool = bool(plan[i]["dis"])
+		if btn.disabled != dis:
+			btn.disabled = dis
+	return true
+
+
+# 按钮当前连的 pressed 回调是不是这一条（Callable 按「对象 + 方法」比较）
+func _ap_btn_bound_to(btn: Button, cb: Callable) -> bool:
+	for conn in btn.pressed.get_connections():
+		if conn["callable"] == cb:
+			return true
+	return false
+
+
+# 联机等待文字：面板上已经只有这一条同样的 Label 就不用重建
+func _ap_single_label_is(text: String) -> bool:
+	var live: Array = []
+	for c in _ui.action_panel.get_children():
+		if c.is_queued_for_deletion():
+			continue
+		live.append(c)
+	if live.size() != 1:
+		return false
+	return live[0] is Label and (live[0] as Label).text == text
+
+
+# 清空面板：只 queue_free（同帧内新按钮照常加在旧的后面，行数计算会跳过待删节点）
+func _ap_clear() -> void:
+	for child in _ui.action_panel.get_children():
+		if not child.is_queued_for_deletion():
+			child.queue_free()
+
 
 
 # 面板行高：桌面 45，触屏 48（TOUCH_BTN_MIN_H，≈32dp；旧值 58 会让下沿出血 9px）

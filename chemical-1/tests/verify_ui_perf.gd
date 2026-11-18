@@ -1,16 +1,19 @@
 # ============================================================
-# tests/verify_ui_perf.gd - UI 增量刷新（Slice 2b）
+# tests/verify_ui_perf.gd - UI 增量刷新（Slice 2b + Slice 6 性能片）
 #
-# 这一片是本轮**唯一允许改行为**的：手牌区不再「一点就整排重建」。
 # 断言不看耗时（机器相关、CI 不稳），只看「该不该重建」这个可判定的不变量：
 #   1) 选中 / 取消选中：只改这一张牌的样式与层级，按钮对象一个都不许换
 #   2) 牌没变（同对象 / 同顺序）时重复调用 _update_hand_buttons()：复用旧按钮，
 #      不新建 / 不销毁节点，但状态（选中 / 只读）必须重刷到位
 #   3) 样式工厂：高频重绘点用共享模板（同一实例），改属性的调用点拿独立实例
+#   4) 操作面板：同一批按钮（文案 / 回调没变）不重建，只就地翻 disabled
+#   5) 桌面小卡：同一批牌（同牌型）不重建，也不重播入场动画
 #
 # 用法：godot --headless --path . --script tests/verify_ui_perf.gd
 # ============================================================
 extends SceneTree
+
+const CardPatternsScript = preload("res://scripts/CardPatterns.gd")
 
 var fails: int = 0
 
@@ -47,6 +50,8 @@ func _run():
 	_test_select_without_rebuild(scene)
 	await _test_reuse_buttons(scene)
 	await _test_style_template(scene)
+	_test_action_panel_reuse(scene)
+	_test_table_cards_reuse(scene)
 
 	if fails == 0:
 		print("ALL UI PERF TESTS PASSED")
@@ -172,3 +177,118 @@ func _test_style_template(scene) -> void:
 		if chip != null:
 			_check(chip.get_theme_stylebox("panel") == scene.call("_panel_style_template", "valence_chip"),
 				"价态圆底样式走模板")
+
+
+# ------------------------------------------------------------
+# 5) 操作面板：同一批按钮（文案 / 回调没变）不重建
+# ------------------------------------------------------------
+# 旧实现每次刷新都「清空 → 重造」：一次就是 n 个 Button + 4n 个 StyleBoxFlat
+# + n 次信号接线。而实际绝大多数刷新里，按钮文案一模一样，只有 disabled 翻了一下。
+func _panel_live(scene) -> Array:
+	var out: Array = []
+	for c in scene.action_panel.get_children():
+		if not c.is_queued_for_deletion():
+			out.append(c)
+	return out
+
+
+func _panel_find(scene, text: String):
+	for c in _panel_live(scene):
+		if c is Button and c.text == text:
+			return c
+	return null
+
+
+func _test_action_panel_reuse(scene) -> void:
+	scene.call("_update_action_panel")
+	var before: Array = _ids(_panel_live(scene))
+	_check(before.size() >= 2, "操作面板开局 ≥2 个按钮（实际 %d）" % before.size())
+	if before.size() < 2:
+		return
+	var b_play = _panel_find(scene, "直接出牌 ⚡")
+	_check(b_play != null, "面板上有「直接出牌 ⚡」")
+	_check(b_play != null and b_play.disabled, "没选牌时「直接出牌」禁用")
+
+	scene.call("_update_action_panel")
+	_check(_ids(_panel_live(scene)) == before, "同一局面重复刷新不重建操作面板（子节点 id 全同）")
+	_check(_panel_find(scene, "直接出牌 ⚡") == b_play, "「直接出牌」仍是同一个 Button 实例")
+
+	# 选中一张牌：只有 disabled 变，按钮对象一个都不许换
+	scene.call("_apply_card_selection", 0)
+	_check(_ids(_panel_live(scene)) == before, "选中一张牌后按钮对象不变（只就地翻 disabled）")
+	_check(b_play != null and not b_play.disabled, "选中后「直接出牌」可用（还是同一个 Button）")
+
+	scene.call("_apply_card_selection", 0)
+	_check(_ids(_panel_live(scene)) == before, "取消选中同样不重建")
+	_check(b_play != null and b_play.disabled, "取消选中后「直接出牌」回到禁用")
+
+	# 反向断言：内容真的变了（换步骤）必须重建，否则「复用」写成「永远不刷」也没人抓得住
+	scene.step_mode = 1
+	scene.call("_update_action_panel")
+	var step1: Array = _ids(_panel_live(scene))
+	_check(step1 != before, "换到选牌型步骤 → 面板重建（按钮内容不同）")
+	_check(_panel_find(scene, "作为单质打出") != null, "选牌型步骤出现「作为单质打出」")
+	scene.call("_update_action_panel")
+	_check(_ids(_panel_live(scene)) == step1, "选牌型步骤内重复刷新仍复用（id 不变）")
+
+	scene.step_mode = 0
+	scene.call("_update_action_panel")
+	var back: Array = _ids(_panel_live(scene))
+	_check(back != step1 and _panel_find(scene, "直接出牌 ⚡") != null,
+		"回到出牌步骤 → 重建回出牌按钮")
+
+
+# ------------------------------------------------------------
+# 6) 桌面小卡：同一批牌（同牌型）不重建，也不重播入场动画
+# ------------------------------------------------------------
+# 直接摆桌面状态（不走出牌流程）：只要 table_player_index / table_cards / table_pattern
+# 三件套就位，_update_table_label() 就会走完整的建卡路径。
+func _test_table_cards_reuse(scene) -> void:
+	var gm = scene.game_manager
+	if gm == null:
+		_check(false, "桌面小卡：game_manager 为空")
+		return
+	var cp = gm.get_current_player()
+	if cp == null or cp.get_hand_count() < 2:
+		_check(false, "桌面小卡：手牌不足 2 张")
+		return
+
+	var cards: Array = [cp.hand[0], cp.hand[1]]
+	gm.table_player_index = gm.get_current_player_index()
+	gm.table_cards = cards
+	gm.table_pattern = CardPatternsScript.CardPattern.ELEMENT
+	scene.call("_update_table_label")
+
+	var n: int = scene.table_card_buttons.size()
+	_check(n == 2, "桌面小卡建出 2 张（实际 %d）" % n)
+	if n != 2:
+		return
+	var ids: Array = _ids(scene.table_card_buttons)
+	var first = scene.table_card_buttons[0]
+	var tw0 = first.get_meta("mini_in_tween", null)
+	var pos0: Vector2 = first.position
+	_check(first.get_meta("card", null) == cards[0], "第 0 张小卡的 meta 指向对应 CardData")
+
+	scene.call("_update_table_label")
+	_check(_ids(scene.table_card_buttons) == ids, "同一批牌重复刷新不重建小卡（id 全同）")
+	_check(scene.table_card_buttons[0] == first and is_instance_valid(first),
+		"第 0 张仍是同一个 Button 实例（没有被 queue_free 重造）")
+	_check(first.get_meta("mini_in_tween", null) == tw0,
+		"复用路径不重播入场动画（tween 还是原来那个实例）")
+	_check(first.position.is_equal_approx(pos0),
+		"复用路径仍把槽位摆正（%s）" % str(first.position))
+
+	# 反向断言：换一批牌（顺序变 = 不同 uid 组合）必须重建
+	gm.table_cards = [cards[1], cards[0]]
+	scene.call("_update_table_label")
+	_check(_ids(scene.table_card_buttons) != ids, "换另一批桌面牌 → 重建小卡")
+	_check(scene.table_card_buttons[0].get_meta("card", null) == cards[1],
+		"重建后第 0 张是新顺序的第一张")
+
+	# 清桌：小卡槽跟着空
+	gm.table_cards = []
+	gm.table_player_index = -1
+	gm.table_pattern = -1
+	scene.call("_update_table_label")
+	_check(scene.table_card_buttons.is_empty(), "清桌后小卡槽为空")
+
