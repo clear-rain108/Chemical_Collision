@@ -209,15 +209,19 @@ func _update_ai_schedule(actor) -> void:
 	if not ai_acting or _ui.net_session != null:
 		_ui.ai_triggered = false
 		_ui.ai_armed_turn = -1
+		_ui.ai_armed_actor = -1
 		return
 	# 同一手只排一次。复位与置位都必须写在这里 —— 上面的「复用路径」会提前 return，
 	# 把复位留在重建分支（Slice 2b 的回归）会让闸门永久停在 true：第一台 AI 打完，
 	# 手牌没变化 → 不重建 → 第二台 AI 排不上定时器 → 整局卡死。
-	# 令牌用 gm.turn_count：next_turn / _intercept_next / _start_new_round 三条换手
+	# 令牌用 gm.turn_count：next_turn / _intercept_next / _start_new_round / _finish_clan_bomb_chain 四条换手
 	# 路径都会 +1（set_sequence_constraint 也走 next_turn），是「这一手」的天然编号。
-	if _ui.ai_armed_turn == gm.turn_count:
+	# 令牌是「回合号 + 行动者」双键：单看回合号不够，_finish_clan_bomb_chain()
+	# 是族炸接炸链终局那条换手路径：它曾经不推进回合号，只看回合号会误判「已排过」而卡死。
+	if _ui.ai_armed_turn == gm.turn_count and _ui.ai_armed_actor == actor.get_instance_id():
 		return
 	_ui.ai_armed_turn = gm.turn_count
+	_ui.ai_armed_actor = actor.get_instance_id()
 	_ui.ai_triggered = true
 	var timer = _ui.get_tree().create_timer(1.5)
 	timer.timeout.connect(_ui._ai_auto_play)

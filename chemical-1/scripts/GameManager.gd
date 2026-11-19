@@ -161,7 +161,7 @@ func init_game(player_count: int = 4, ai_count: int = 3, rng_seed: int = -1) -> 
 	# 创建玩家（人类在前，AI在后）
 	var human_count = player_count - ai_count
 	for i in range(player_count):
-		var p_name = "玩家 %d" % (i + 1) if i < human_count else "AI %d" % (i + 1 - human_count)
+		var p_name = "玩家 %d" % (i + 1) if i < human_count else "人机 %d" % (i + 1 - human_count)
 		players.append(PlayerManagerScript.PlayerInfo.new(p_name, i >= human_count))
 
 	# 每人发 8 张牌并排序
@@ -758,9 +758,9 @@ func player_pass(player_index: int) -> void:
 		# 第0关AI不抽牌
 		if ai_no_draw and player.is_ai:
 			if clan_bomb_chain_active:
-				log_messages.append("%s 不接炸，跳过（第0关AI不抽牌）" % player.player_name)
+				log_messages.append("%s 不接炸，跳过（第0关人机不抽牌）" % player.player_name)
 			else:
-				log_messages.append("%s 跳过回合（第0关AI不抽牌）" % player.player_name)
+				log_messages.append("%s 跳过回合（第0关人机不抽牌）" % player.player_name)
 		else:
 			var drawn = database.draw_cards(1)
 			if drawn.size() > 0:
@@ -874,6 +874,10 @@ func _finish_clan_bomb_chain() -> void:
 	table_custom_valences.clear()
 	is_round_starter = true
 	_reset_all_passes()
+	# 换手必推进回合号（铁律 6）：这里牌权从「最后一位不接炸者」交回炸弹主人，
+	# 是一次真正的手牌权更替。少了这一句，UI 的 AI 排程令牌（turn_count）原地不动，
+	# 单机对局就停在「无人接炸！XXX 自由出牌」，该 AI 永远排不上定时器。
+	turn_count += 1
 	current_player_index = owner_idx
 	log_messages.append("无人接炸！%s 自由出牌" % players[owner_idx].player_name)
 
@@ -1031,7 +1035,7 @@ func get_all_players_info() -> String:
 		var marker = ""
 		if i == current_player_index:
 			marker = " ← "
-		var ai_tag = "[AI]" if p.is_ai else "[P]"
+		var ai_tag = "[人机]" if p.is_ai else "[P]"
 		var pass_tag = " [跳过]" if p.has_passed else ""
 		var bomb_tag = " [❄冷却]" if p.clan_bomb_cooling else ""
 		info += "%s %s: %d 张牌%s%s%s\n" % [ai_tag, p.player_name, p.get_hand_count(), pass_tag, bomb_tag, marker]

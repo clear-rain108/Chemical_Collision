@@ -147,7 +147,7 @@ v3 = 「两条路径 + 一个裁决点」：
 |---|---|---|
 | 默认配平 | `_assign_valences(cards, cv)` | 金属取最高正价 / 非金属取最低负价 / H 与含氧酸中心原子提升为正价；产出 `formula` + `ratio_ok` |
 | 价态搜索 | `_search_valences(cards)` | 默认配平 `ratio_ok == false` 时，2~3 种元素按**实际张数** DFS 找解；金属 / 准金属取全部正价并降序（v4，见 §7） |
-| 对外出口 | `get_valence_pairs(cards)` | 先默认配平，失败再搜索；返回 `{symbol: valence}`，供 AI / 提示使用 |
+| 对外出口 | `get_valence_pairs(cards)` | 先默认配平，失败再搜索；返回 `{symbol: valence}`，供人机 / 提示使用 |
 
 成立条件（`_valence_assignment_ok`）：
 
@@ -159,14 +159,14 @@ v3 = 「两条路径 + 一个裁决点」：
 
 | 调用方 | 取价方式 | 最终校验 |
 |---|---|---|
-| AI（`AIPlayer._pair_valences`） | `get_valence_pairs()` | `play_cards → _assign_valences(cards, cv)` |
+| 人机（`AIPlayer._pair_valences`） | `get_valence_pairs()` | `play_cards → _assign_valences(cards, cv)` |
 | 提示（`HintAdvisor`） | `get_valence_pairs()` | 同上 |
 | 人类面板（`_update_valence_buttons`） | 每张牌 `common_valence` 的**全部价**，玩家自选 | 同上（UI 只预检「一正一负 + GCD 张数 + 手牌够不够」） |
 
 即：**引擎是唯一裁决点**，面板列出的是超集（含引擎会拒的组合，玩家选了会收到 `-1`）；
-AI / 提示因为只拿 `get_valence_pairs()`，天然不会提假化合物 ——
+人机 / 提示因为只拿 `get_valence_pairs()`，天然不会提假化合物 ——
 v3 时代代价是它们也不主动建议「低价金属」（如 Fe 1 张 + Cl 2 张 的 Fe(+2)，只能玩家在面板手选）；
-**v4 起金属价域开放，这类组合 AI / 提示也会自动给出（见 §7）**。
+**v4 起金属价域开放，这类组合人机 / 提示也会自动给出（见 §7）**。
 
 ### 6.2 判定结果对照
 
@@ -183,7 +183,7 @@ v3 时代代价是它们也不主动建议「低价金属」（如 Fe 1 张 + Cl
 `play_cards()` 侧：化合物分支 `get_compound_formula(cards, cv)` 为空或 `ratio_ok == false`
 一律 `-1`，旧「空式子就放行」的分支已删除。
 
-回归：`tests/verify_compound_chemistry.gd`（40 项，solver / 引擎 / 提示 / AI 四层）。
+回归：`tests/verify_compound_chemistry.gd`（40 项，solver / 引擎 / 提示 / 人机四层）。
 
 ---
 

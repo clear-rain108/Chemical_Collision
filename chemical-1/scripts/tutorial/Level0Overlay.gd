@@ -28,7 +28,7 @@ func _level0_ui_steps() -> Array:
 	return [
 		{
 			"title": "玩家顺序和手牌数",
-			"desc": "这是【玩家顺序和手牌数】\n显示每位玩家的名字、AI标签、手牌张数，以及当前轮到谁（◄标记）",
+			"desc": "这是【玩家顺序和手牌数】\n显示每位玩家的名字、人机标签、手牌张数，以及当前轮到谁（◄标记）",
 			"target": "info_label",
 			"pos": Vector2(20, 60),
 			"size": Vector2(460, 88),
@@ -369,7 +369,7 @@ func _level0_start_phase3() -> void:
 
 	_level0_create_rule_tips()
 
-	var intro_tip = _level0_make_tip_box("对局开始！请尝试出牌吧。\n本关 AI 每回合只出 1 张单质，不会抢在你前面打完。", 3.0)
+	var intro_tip = _level0_make_tip_box("对局开始！请尝试出牌吧。\n本关人机每回合只出 1 张单质，不会抢在你前面打完。", 3.0)
 	_ui._layer(2).add_child(intro_tip)
 
 

@@ -34,7 +34,7 @@
 | 属性 | 值 |
 |------|-----|
 | 牌库 | 182 张（卤族 F/Cl/Br/I 各 10 张，H/O/S 8 张，主族 6 张，副族 4 张） |
-| 玩家 | 3~8 人（1 人类 + N AI；**1 ≤ AI ≤ 总人数 - 1**，开始页改人数会自动压下 AI 数） |
+| 玩家 | 3~8 人（1 人类 + N 人机；**1 ≤ 人机 ≤ 总人数 - 1**，开始页改人数会自动压下人机数） |
 | 初始手牌 | 每人 8 张 |
 | 牌型 | 单质 / 化合物 / 族炸 / 有机物 / 顺序 |
 | 出牌规则 | 必须比桌面牌更大（原子序数和 → 小 = 大） |
@@ -170,7 +170,7 @@ detect_pattern(cards, skip_clan_bomb=false) 判定优先级:
   `NaBr`（2 原子，无论 2 张还是 4 张）/ `H₂O`（3 原子）/ `CO₂`（3 原子）→ 不免疫。
 - 日志提示: "⚠ 溢出化合物！单分子 N 个原子≥M人，免疫族炸"
 - 提示文本: "桌面溢出化合物(免疫族炸)，只能出更大的化合物 / 跳过"
-- AI 同样受此规则约束（统一在 `play_cards()` 中生效）
+- 人机同样受此规则约束（统一在 `play_cards()` 中生效）
 
 ---
 
@@ -182,7 +182,7 @@ detect_pattern(cards, skip_clan_bomb=false) 判定优先级:
 - Cl + Br / Cl + I / Br + I → ❌
 - Na + F → ✅ NaF（卤族 + 金属可以）
 - **判定点在引擎**：`GameManager.play_cards()` 只在 `pattern == COMPOUND` 时检查
-  （`is_halogen_mix()`，非法返回 `-7`）。人类「合成化合物」、AI、提示按钮三条路径共用
+  （`is_halogen_mix()`，非法返回 `-7`）。人类「合成化合物」、人机、提示按钮三条路径共用
   这一条规则，不再各写一份补丁（旧版的 `AIPlayer._is_ai_halogen_pair()` 只是局部补丁）
 - **不误伤族炸**：F + Cl 同属 VIIA 族，两张一起打出本身是**族炸**（不是化合），始终合法；
   只有带化合价（`custom_valences`）走「化合物」时才会被拦
@@ -201,16 +201,16 @@ detect_pattern(cards, skip_clan_bomb=false) 判定优先级:
 而 `NCl₃`（N +3 / Cl -1）、`NI₃`（N -3 / I +1）、`BCl₃`、`ClF` 成立。
 
 - **唯一裁决点**：`GameManager.play_cards()` 里的 `CompoundSolver.get_compound_formula(cards, cv)`
-  （内部 `_assign_valences`）。面板 / AI / 提示给出的任何价都要过它，空式子或 `ratio_ok == false` 即 `-1`。
-- **AI / 提示的取价出口**：`CompoundSolver.get_valence_pairs()`（默认配平优先，失败再做价态搜索）。
+  （内部 `_assign_valences`）。面板 / 人机 / 提示给出的任何价都要过它，空式子或 `ratio_ok == false` 即 `-1`。
+- **人机 / 提示的取价出口**：`CompoundSolver.get_valence_pairs()`（默认配平优先，失败再做价态搜索）。
   两者因此不会提出引擎会拒的组合；v4 开放金属价域后，低价金属（Fe 1 张 + Cl 2 张 → Fe(+2)）
-  AI / 提示也能自动给出，不再只能靠玩家在面板手选。
+  人机 / 提示也能自动给出，不再只能靠玩家在面板手选。
 - **人类面板**：`_update_valence_buttons()` 列出每张牌 `common_valence` 的**全部价**，玩家自选；
   UI 只预检「一正一负 + 最简比张数 + 手牌够不够」，选出的组合仍由引擎裁决 ——
   所以面板选项是**超集**（`NCl` / `ClN` 这类组合能选，但确认后会被 `-1` 拒绝）。
 - **空式子不再放行**：`play_cards()` 化合物分支若 `get_compound_formula()` 为空或 `ratio_ok=false`，
   一律返回 `-1`（旧实现"给不出化学式就放行"会让 `ClN` 这类假化合物混进桌面）。
-- 回归用例：`tests/verify_compound_chemistry.gd`（solver / 引擎 / 提示 / AI 四层）。
+- 回归用例：`tests/verify_compound_chemistry.gd`（solver / 引擎 / 提示 / 人机四层）。
 
 #### 多原子化合物与化学式约分（v16.8）
 
@@ -229,15 +229,15 @@ detect_pattern(cards, skip_clan_bomb=false) 判定优先级:
   `2H+2O` → `H₂O₂`、`4H+4O` → `2H₂O₂`。
 - **默认配平覆盖不到的解由引擎自动补搜**：默认配平一律让 O 取 −2，
   所以 `H₂O₂` / `CaO₂` 这类过氧根、`NCl₃` / `BCl₃` 这类「非金属作正价」
-  只能靠价态搜索找到。玩家 / AI 没显式选价时，`play_cards()` 会补一次
+  只能靠价态搜索找到。玩家 / 人机没显式选价时，`play_cards()` 会补一次
   `get_valence_pairs()` 搜索解，并把解出的价回写到 `table_custom_valences`
   （否则桌面小卡重新算化学式会显示成 `2HO`）。
 - **3+ 元素不再限「每种恰好 1 张」**：面板只要求总电荷 Σ = 0，
   所以 `H×2 + S + O×4` 能出 `H₂SO₄`。配不平时提示改为逐项点名
   `H-1×2 + C+4×1 + N-3×1 → Σ = -1（需 0）`，一眼能看出哪个元素多带了。
-- **AI 也会一次出多个分子**（L4a，`AIPlayer.AI_RATIO_COMPOUND`）：
+- **人机也会一次出多个分子**（L4a，`AIPlayer.AI_RATIO_COMPOUND`）：
   2 元素比例算得清时按最简比凑牌（`2Na+2Br` → 2NaBr），3+ 元素不参与
-  （组合数 × 价态搜索会明显拖慢 AI 回合）。
+  （组合数 × 价态搜索会明显拖慢人机回合）。
 - 回归用例：`tests/verify_compound_chemistry.gd`（约分 / 过氧根 / 原子数）、
   `tests/verify_overflow_compound.gd`（溢出判定口径）。
 
@@ -251,9 +251,9 @@ detect_pattern(cards, skip_clan_bomb=false) 判定优先级:
 | 非金属 | 数据原顺序 | Cl [-1, 1, 3, 5, 7]、S [-2, 4, 6]、C [4, 2, -4] |
 
 - **高价优先 = 主流解优先**：`Fe + 3O` → Fe(+3)（Fe₂O₃）；`Fe + O` 用 +3 电荷不平，自动退到 Fe(+2)（FeO）。
-  同一组牌有多个解时，先命中的那个就是 UI / AI / 联机回放看到的那个（顺序固定 → 可复现）。
+  同一组牌有多个解时，先命中的那个就是 UI / 人机 / 联机回放看到的那个（顺序固定 → 可复现）。
 - **低价金属终于能解**：Cu₂O(Cu +1) / FeO(Fe +2) / FeCl₂(Fe +2) / MnO₂(Mn +4) / Cr₂O₃(Cr +3)
-  现在自动解出；旧实现只给最高正价，这些组合只能靠玩家手选，AI / 提示给不出来。
+  现在自动解出；旧实现只给最高正价，这些组合只能靠玩家手选，人机 / 提示给不出来。
 - **C 补上 +2**：`C + O` → C(+2)/O(-2) = CO（`C + 2O` 仍取 C(+4) = CO₂，`CH₄` 仍用 C(-4)）。
 - 回归用例：`tests/verify_valence_plan.gd`（数据 / 价域顺序 / 低价金属 / v3 不倒退 / 可复现性）。
 
@@ -334,7 +334,7 @@ detect_pattern(cards, skip_clan_bomb=false) 判定优先级:
 > 玩家完全看不懂该改哪里。现在拒绝原因分四档，直接说明卡在哪一步：
 > 牌型压制 / 族炸张数不够 / 原子序数和不够 / **和相同但质量更大** / 与桌面打平。
 
-> 历史 Bug（真机日志 `玩家出 [H,Li,Na,K] → AI 2 出 [Fe,Co,Ni]` 竟然接上）：
+> 历史 Bug（真机日志 `玩家出 [H,Li,Na,K] → 人机 2 出 [Fe,Co,Ni]` 竟然接上）：
 > `compare_cards()` 写成 `if cards_a.size() >= 3: return 1`，
 > 只要参数 a 是 3 张以上就无条件赢 —— `compare(a,b)` 与 `compare(b,a)` 同时返回 1
 > （违反反对称性）。引擎判「能不能接」用的是 `compare(新牌, 桌面) > 0`，
@@ -355,18 +355,18 @@ detect_pattern(cards, skip_clan_bomb=false) 判定优先级:
 
 三个预设关卡帮助新手逐步熟悉游戏：
 
-**第零关：游戏入门**（3人：1玩家+2AI，限前3周期牌库54张）
+**第零关：游戏入门**（3人：1玩家+2人机，限前3周期牌库54张）
 - 阶段1：UI 标注介绍（玩家状态/桌面牌/手牌区/出牌区/右面板/按钮区共6步）
 - 阶段2：流程介绍（抽牌→牌型→规则的3步对话）
-- 阶段3：牌局实战（AI只出单质+化合物，右上角规则提示高亮当前相关规则）
+- 阶段3：牌局实战（人机只出单质+化合物，右上角规则提示高亮当前相关规则）
 
-**第一关：基础入门**（3人：1玩家+2AI，禁止族炸）
+**第一关：基础入门**（3人：1玩家+2人机，禁止族炸）
 - 步骤1：观察手牌→打出单质
 - 步骤2：合成化合物（如 NaCl）
 - 步骤3：练习不同组合，理解比大小
 - 步骤4：自由练习直到打完
 
-**第二关：族炸进阶**（4人：1玩家+3AI）
+**第二关：族炸进阶**（4人：1玩家+3人机）
 - 步骤1：打出族炸（H+Li=IA族2张）
 - 步骤2：出化合物解除冷却
 - 步骤3：体验接炸
@@ -407,7 +407,7 @@ GameManager.init_game / init_tutorial
 
 | 页面 | 功能 | 背景色 |
 |------|------|--------|
-| StartPage | 标题 + 人数/AI 数 + 三个补充规则开关（有机物 / 顺序 / 允许卤族互化）+ 教学引导 + 补充规则入口（P6：子节点全部代码生成；人数与 AI 数联动，AI 最多 = 总人数 - 1） | 浅蓝白 |
+| StartPage | 标题 + 人数/人机数 + 三个补充规则开关（有机物 / 顺序 / 允许卤族互化）+ 教学引导 + 补充规则入口（P6：子节点全部代码生成；人数与人机数联动，人机最多 = 总人数 - 1） | 浅蓝白 |
 | HelpPage | 帮助中心（单页 + 3 Tab：游戏规则 / 卡牌图鉴 / 补充规则，代码生成）| 白色标题栏 + 浅蓝白内容 |
 | ~~HelpPage_Rules / _Cards / _Supp~~ | P6 已从 Main.tscn 删除，统一由 HelpPage 的 3 个 Tab 承载 | — |
 | GamePage | 游戏主界面（牌面+操作面板+桌面迷你卡牌+规则提示）| 浅蓝白 |
@@ -511,14 +511,14 @@ GameManager.init_game / init_tutorial
 | `scripts/GameManager.gd` | play_cards / 牌权轮转 / 接炸链 / 溢出化合物 / 接炸跳过摸牌 / 有机物胜利 / 顺序反转方向+指定牌型 / 记录桌面实际化合价 table_custom_valences |
 | `scripts/PlayerManager.gd` | 人数规划 / PlayerInfo / 发牌 / 手牌上限 |
 | `scripts/GameLogger.gd` | 信息记录（统一日志）|
-| `scripts/AIPlayer.gd` | AI 出牌策略（`plan()` 只读意图 + 单机 `auto_play()` 落子；化合价取 `get_valence_pairs`，卤族互化读开关）|
+| `scripts/AIPlayer.gd` | 人机出牌策略（`plan()` 只读意图 + 单机 `auto_play()` 落子；化合价取 `get_valence_pairs`，卤族互化读开关）|
 | `scripts/TutorialController.gd` | 教程状态机 + 教程引导内容 |
 | `scripts/GameUI.gd` | 门面：卡牌牌面渲染入口（桌面迷你卡牌按化学式顺序）/ 步骤流 / 卤族互化预检（真正规则在引擎，-7）/ 教程显示 / 有机物按钮 / 顺序指定弹窗；实现见 `scripts/ui · pages · game · tutorial` |
 | `scripts/CardData.gd` | 卡牌属性 + 序列化 + 族常量 |
 | `scripts/CardDatabase.gd` | 牌库生成（卤族10/高张数8/主族6/副族4）= 182 张 |
 | `Main.tscn` | 6 页场景布局（统一浅蓝白背景）|
 | `COLORING_DOCUMENTATION.md` | 元素着色文档 |
-| `AI_PLAYER_AUDIT.md` | AI与玩家逻辑对照审计 |
+| `AI_PLAYER_AUDIT.md` | 人机与玩家逻辑对照审计 |
 | `GAMEPLAY_RULES.md` | 本文档 — 完整玩法规则 |
 
 ---
@@ -633,7 +633,7 @@ GameManager.init_game / init_tutorial
 | F + Cl 走「合成化合物」 | ❌ `play_cards()` 返回 `-7` | ✅ 可出 ClF（一氟化氯） |
 | F + Cl 走「作为族炸打出」 | ✅ 合法（族炸不是化合） | ✅ 合法（不受开关影响） |
 | Na + F / Ca + Cl | ✅ 合法 | ✅ 合法 |
-| AI 两元素化合物尝试 | 跳过纯卤族对 | 可合成 ClF（`AIPlayer._pair_valences()` 配价） |
+| 人机两元素化合物尝试 | 跳过纯卤族对 | 可合成 ClF（`AIPlayer._pair_valences()` 配价） |
 | 「提示」按钮 | 只建议族炸，不给 ClF | 可给出 ClF 化合物提示 |
 
 #### 实现
@@ -646,7 +646,7 @@ GameManager.init_game / init_tutorial
 - 人类预检：`GameUI._on_choose_compound()` 在进化合价面板之前挡一次，给出同样的文案（体验优化，不是判定点）
 - 提示层：`HintAdvisor._compound_candidates()` 在开关关闭时不生成纯卤素候选，`_check()` 二次兜底
 - 教程局：`init_tutorial()` 复位为 `false`（教程永远禁止卤族互化）
-- 回归：`tests/verify_halogen.gd`（引擎 / 提示 / AI / UI / 教程五层）
+- 回归：`tests/verify_halogen.gd`（引擎 / 提示 / 人机 / UI / 教程五层）
 
 ### 16.4 元素限制
 
@@ -679,7 +679,7 @@ GameManager.init_game / init_tutorial
 | 局面 | 关闭（默认） | 开启 |
 |------|--------------|------|
 | 牌库构成 | 29 种 / 182 张 | 前 20 号 + 勾选扩展 |
-| 手牌 / 提示 / AI | 全量元素 | 只会出现牌库内的元素 |
+| 手牌 / 提示 / 人机 | 全量元素 | 只会出现牌库内的元素 |
 | 族炸 | 4 种卤素任取 2 张 | 只剩 F/Cl（未勾 Br/I 时） |
 | 顺序牌型 | 1~53 连续段都可 | 只有 1~20 连续段（勾 Fe 后可用 24~30 段） |
 | 打出越界元素牌 | — | `play_cards()` 返回 `-8`（兜底，正常拿不到该牌） |
@@ -702,7 +702,7 @@ GameManager.init_game / init_tutorial
 
 ## 17. 结算页信息
 
-一局结束（获胜 / AI 获胜 / 中途退出 / 初始化失败）统一进入结算页，展示：
+一局结束（获胜 / 人机获胜 / 中途退出 / 初始化失败）统一进入结算页，展示：
 
 | 区块 | 内容 | 数据来源 |
 |---|---|---|

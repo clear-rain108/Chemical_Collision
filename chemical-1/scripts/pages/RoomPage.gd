@@ -48,12 +48,12 @@ func _build_room_page() -> void:
 		_ui.START_FS_META, _ui.START_C_ACCENT, HORIZONTAL_ALIGNMENT_LEFT)
 	page.add_child(_ui._room_hint_label)
 
-	page.add_child(_room_label("RoomAiLabel", "AI 人数", Vector2(46, 592), Vector2(110, 34),
+	page.add_child(_room_label("RoomAiLabel", "人机人数", Vector2(46, 592), Vector2(110, 34),
 		_ui.START_FS_LABEL, _ui.START_C_TITLE, HORIZONTAL_ALIGNMENT_LEFT))
 	_ui._room_ai_spin = _ui._start_make_spin(0, _ui.ROOM_MAX_SEATS - 1, 0, "RoomAiSpin")
 	_ui._room_ai_spin.position = Vector2(162, 590)
 	_ui._room_ai_spin.size = Vector2(150, 38)
-	_ui._room_ai_spin.tooltip_text = "空座位由 AI 补上（人类座位在前，AI 在后）"
+	_ui._room_ai_spin.tooltip_text = "空座位由人机补上（人类座位在前，人机在后）"
 	_ui._room_ai_spin.value_changed.connect(_ui._on_room_ai_changed)
 	page.add_child(_ui._room_ai_spin)
 
@@ -64,7 +64,7 @@ func _build_room_page() -> void:
 		"RoomSeatSpin")
 	_ui._room_seat_spin.position = Vector2(456, 590)
 	_ui._room_seat_spin.size = Vector2(150, 38)
-	_ui._room_seat_spin.tooltip_text = "本房间总座位数（3~8）：创建后固定，人类坐满后空位由 AI 补"
+	_ui._room_seat_spin.tooltip_text = "本房间总座位数（3~8）：创建后固定，人类坐满后空位由人机补"
 	_ui._room_seat_spin.value_changed.connect(_ui._on_room_seat_changed)
 	page.add_child(_ui._room_seat_spin)
 
@@ -205,7 +205,7 @@ func _room_seats_panel(page: Control) -> void:
 	panel.add_theme_stylebox_override("panel", st)
 	page.add_child(panel)
 
-	panel.add_child(_room_label("RoomSeatsTitle", "座位表（人类座位在前，AI 座位在后）",
+	panel.add_child(_room_label("RoomSeatsTitle", "座位表（人类座位在前，人机座位在后）",
 		Vector2(24, 8), Vector2(700, 24), _ui.START_FS_LABEL, _ui.START_C_TITLE,
 		HORIZONTAL_ALIGNMENT_LEFT))
 
@@ -332,8 +332,8 @@ func _room_refresh() -> void:
 		elif i >= online and (i - online) < ai:
 			# 人类座位永远排在前面 → 第 online 个之后的空座位才是 AI
 			taken = true
-			name_text = "AI %d" % (i - online + 1)
-			state_text = "AI 托管"
+			name_text = "人机 %d" % (i - online + 1)
+			state_text = "人机托管"
 		if i >= _ui._room_seat_names.size():
 			continue
 		_ui._room_seat_names[i].text = name_text

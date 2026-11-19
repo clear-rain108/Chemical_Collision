@@ -465,7 +465,7 @@ func _ai_auto_play() -> void:
 	if _ui.net_session != null:
 		return
 	# 定时器已消费：先还锁，auto_play() 内部那次 _refresh_ui 才会给下一家重新排程。
-	# ai_armed_turn 不动 —— 万一这一手没推进回合，也不要原地空转重排。
+	# ai_armed_turn / ai_armed_actor 不动 —— 万一这一手没推进回合，也不要原地空转重排。
 	_ui.ai_triggered = false
 	_ui.AIPlayerScript.auto_play(_ui.game_manager, _ui._refresh_ui)
 

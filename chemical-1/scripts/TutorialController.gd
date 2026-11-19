@@ -45,8 +45,8 @@ func init_tutorial(level: int) -> bool:
 	if level == 0:
 		_init_level0_deck()
 		gm.players.append(PlayerManagerScript.PlayerInfo.new("玩家", false))
-		gm.players.append(PlayerManagerScript.PlayerInfo.new("AI 1", true))
-		gm.players.append(PlayerManagerScript.PlayerInfo.new("AI 2", true))
+		gm.players.append(PlayerManagerScript.PlayerInfo.new("人机 1", true))
+		gm.players.append(PlayerManagerScript.PlayerInfo.new("人机 2", true))
 
 		# AI 固定手牌：O, S, C, Si, H, Mg 各1张
 		_set_preset_hand(gm.players[1], ["O", "S", "C", "Si", "H", "Mg"])
@@ -83,16 +83,16 @@ func init_tutorial(level: int) -> bool:
 	elif level == 1:
 		gm.clan_bomb_disabled = true
 		gm.players.append(PlayerManagerScript.PlayerInfo.new("玩家", false))
-		gm.players.append(PlayerManagerScript.PlayerInfo.new("AI 1", true))
-		gm.players.append(PlayerManagerScript.PlayerInfo.new("AI 2", true))
+		gm.players.append(PlayerManagerScript.PlayerInfo.new("人机 1", true))
+		gm.players.append(PlayerManagerScript.PlayerInfo.new("人机 2", true))
 		_set_preset_hand(gm.players[0], ["Na","Cl","Ca","O","He","Li","F","Mg","S","Ne"])
 		_set_preset_hand(gm.players[1], ["K","Br","B","C","Al","Si","N","P"])
 		_set_preset_hand(gm.players[2], ["H","Be","Ar","Cr","Mn","Fe","Co","Ni"])
 	elif level == 2:
 		gm.players.append(PlayerManagerScript.PlayerInfo.new("玩家", false))
-		gm.players.append(PlayerManagerScript.PlayerInfo.new("AI 1", true))
-		gm.players.append(PlayerManagerScript.PlayerInfo.new("AI 2", true))
-		gm.players.append(PlayerManagerScript.PlayerInfo.new("AI 3", true))
+		gm.players.append(PlayerManagerScript.PlayerInfo.new("人机 1", true))
+		gm.players.append(PlayerManagerScript.PlayerInfo.new("人机 2", true))
+		gm.players.append(PlayerManagerScript.PlayerInfo.new("人机 3", true))
 		_set_preset_hand(gm.players[0], ["H","Li","Na","Cl","K","O","Ca","F","He","Ne"])
 		_set_preset_hand(gm.players[1], ["Mg","S","Al","P","B","Si","C","N","Br","Be"])
 		_set_preset_hand(gm.players[2], ["Ar","Cr","Mn","Fe","Co","Ni","Cu","Zn"])
@@ -163,7 +163,7 @@ func _update_tutorial_guidance() -> void:
 		match tutorial_step:
 			1: tutorial_guidance = "【第1步】熟悉族炸：选中同族≥2张不同元素(如H+Li都是IA族)，点「作为族炸打出」。\n族炸可以抢牌权，比普通牌更强！"
 			2: tutorial_guidance = "【第2步】族炸打出后进入冷却❄，必须出一个化合物来解除冷却。\n选中两种元素合成化合物，像Na+Cl=NaCl。"
-			3: tutorial_guidance = "【第3步】试试接炸！当AI打出族炸后，你如果也有同族牌可出更大族炸接炸。\n也可以跳过让AI接炸。"
+			3: tutorial_guidance = "【第3步】试试接炸！当人机打出族炸后，你如果也有同族牌可出更大族炸接炸。\n也可以跳过让人机接炸。"
 			4: tutorial_guidance = "【第4步】注意手牌上限！手牌达到上限时不能跳过，需选择1张弃置。\n继续练习直到打完所有手牌！"
 			_: tutorial_guidance = "【练习中】继续游戏！利用族炸+化合物完成对局。"
 
@@ -174,7 +174,7 @@ func _update_tutorial_level0_guidance() -> void:
 	match tutorial_level0_phase:
 		1: tutorial_guidance = ""
 		2: tutorial_guidance = ""
-		3: tutorial_guidance = "【牌局中】先练单质和化合物：选牌 →「出牌(选牌型)」→ 选类型。\n族炸留到第二关再学（这里不提示，需要时也能打）。AI 每回合只出 1 张单质，不会抢在你前面打完。"
+		3: tutorial_guidance = "【牌局中】先练单质和化合物：选牌 →「出牌(选牌型)」→ 选类型。\n族炸留到第二关再学（这里不提示，需要时也能打）。人机每回合只出 1 张单质，不会抢在你前面打完。"
 
 
 func check_tutorial_progress(pattern: int, player_is_human: bool) -> void:

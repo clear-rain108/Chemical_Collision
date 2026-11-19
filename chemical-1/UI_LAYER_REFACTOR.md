@@ -773,6 +773,24 @@ environment/defaults/default_clear_color=Color(0.902, 0.941, 0.98, 1)
       所以 48/48 全绿也照样把卡死放上了真机。判据：**异步驱动必须有一套跑真实定时器的测试**
       （`SceneTree.create_timer` + `await`），同步桩再多也不算覆盖。
 
+- 2026-11-19 **回归修复（第二处 AI 卡死：族炸接炸链终局）**：真机 1 人 + 2 人机打出族炸、两家都不接，
+  日志停在「无人接炸！XX 自由出牌」之后整局不动，再过一会儿连人都点不动。真因不在 UI ——
+  `GameManager._finish_clan_bomb_chain()` 把牌权交回炸弹主人却没推进 `turn_count`，
+  `HandView._update_ai_schedule()` 的单键令牌 `ai_armed_turn == gm.turn_count` 于是误判「这一手已经排过」
+  → 再不起定时器，`ai_triggered` 还留在 `false`，两台人机谁都不动。
+  修法：①引擎补 `turn_count += 1`（「换手必推进回合号」= 铁律 6 的引擎侧版本）；②令牌升级成
+  **双键** `(ai_armed_turn, ai_armed_actor)`（行动者取 `instance_id`），任一变化都重新排程 ——
+  以后再漏一次 `+1`，退化成「多排一次定时器」，而不是「整局卡死」。
+  新增 D 段 8 条（`tests/verify_ai_chain.gd`：真 1.5s 定时器走完族炸链终局并续到下一家）。
+  负向验证：只回退引擎那行 `+1` → D2 / D4 立刻 FAIL；恢复后全绿。**49/49 全绿**，`--quit-after 120`
+  冒烟 0 ERROR / 0 WARNING。踩出的两条新坑：
+  25. **「换手」不等于「叫了 `next_turn()`」**。`turn_count` 是跨模块的公共令牌（UI 排程 + `state_hash`），
+      凡函数里出现「牌权从 A 挪到 B」，都要显式 `turn_count += 1`。判据：搜「谁写了
+      `current_player_index`」，而不是搜「谁调了 `next_turn()`」—— 这次那条路径是自己赋值绕过了 `next_turn()`。
+  26. **单键令牌的抗错能力上限 = 对「漏更新」的容忍度**。`turn_count` 单键只能防「同一手重复排程」，
+      挡不住「换手但号没变」（坑 23 的令牌化没解决这一类）。双键把两类错误解耦：漏号只是多排一次。
+      凡「闸门 + 令牌」结构，令牌最好带一个**独立的第二维度**（这里是行动者身份），别指望单一计数永远同步。
+
 
 
 

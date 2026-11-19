@@ -159,6 +159,7 @@ var _hover_pending_at: int = 0          # 目标开始等待的时间戳（毫�
 var log_lines: Array = []               # 日志行缓存
 const MAX_LOG_LINES = 6
 var ai_triggered: bool = false          # 是否有待执行的 AI 定时器（verify_ui_online D8 依赖）
+var ai_armed_actor: int = -1            # 与 ai_armed_turn 组成令牌（回合号 + 行动者）：换手漏 turn_count 时也不会卡死
 var ai_armed_turn: int = -1             # 已排程的回合号（gm.turn_count）：同一手只排一次
 var _hand_read_only: bool = false       # 手牌区只读（AI 回合显示玩家自己的牌，但不可操作）
 # 热座交接（B2）：已确认「正在看自己手牌」的人类座位；-1 = 还没人确认。
@@ -1060,7 +1061,7 @@ func _on_player_count_changed(value: float) -> void:
 	var before := int(ai_spin.value)
 	ai_spin.max_value = seat_for_ai   # Range 会自动把超限的 value 压回 max
 	if before > seat_for_ai:
-		_start_flash_rule_hint("AI 人数已自动降为 %d（最多 = 总人数 - 1）" % seat_for_ai)
+		_start_flash_rule_hint("人机人数已自动降为 %d（最多 = 总人数 - 1）" % seat_for_ai)
 
 # -------- 以下方法已搬进 scripts/game/GameFlow.gd（Slice 3 纯搬运，这里只留同名转发） --------
 func _on_start_game() -> void:

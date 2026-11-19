@@ -82,7 +82,7 @@ static func create_players(player_count: int, ai_count: int) -> Array:
 	var players: Array = []
 	for i in range(player_count):
 		var is_ai = i >= player_count - ai_count
-		var p_name = "玩家" if i == 0 else ("AI-%d" % i)
+		var p_name = "玩家" if i == 0 else ("人机-%d" % i)
 		players.append(PlayerInfo.new(p_name, is_ai))
 	return players
 

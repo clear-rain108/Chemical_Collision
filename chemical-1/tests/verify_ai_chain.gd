@@ -15,6 +15,7 @@
 #   A 人类跳过 → 刷新 → 该 AI 被排程（ai_triggered / ai_armed_turn 记账）
 #   B AI 回合里人类手牌未变时依然走复用路径，且「消费掉定时器之后」下一台 AI 被重新排程
 #   C 真定时器跑两轮：turn_count 至少前进 2（回归的核心断言，绕过一切桩）
+#   D 族炸接炸链终局（无人接炸）也要算换手：turn_count 推进 1 且 AI 重新排程
 #
 # 用法：godot --headless --path . --script tests/verify_ai_chain.gd
 # ============================================================
@@ -71,6 +72,7 @@ func _run() -> void:
 
 	_run_arm_after_human(scene, gm)
 	await _run_reuse_chain(scene, gm)
+	_run_chain_end_rearm(scene, gm)
 	await _run_real_timers(scene, gm)
 
 	if fails == 0:
@@ -152,3 +154,55 @@ func _run_real_timers(scene, gm) -> void:
 	_check(int(gm.turn_count) >= t2 + 2,
 		"C2 %.1fs 内 AI 接力 ≥2 手（回合号 %d → %d）：第二台 AI 不会卡死"
 		% [CHAIN_WAIT, t2, int(gm.turn_count)])
+
+
+# ------------------------------------------------------------
+# D 族炸接炸链终局：牌权交回炸弹主人，同样算「换手」 - 必须重新排程
+#   第 4 条换手路径：GameManager._finish_clan_bomb_chain() 老实现只改
+#   current_player_index、turn_count 原地不动 - 单机就停在「无人接炸！XX 自由出牌」。
+# ------------------------------------------------------------
+func _run_chain_end_rearm(scene, gm) -> void:
+	if gm.is_game_over():
+		return
+	# 把牌权挪到 AI 座位上（走 next_turn，不自己造 turn_count）
+	var moved: bool = false
+	for _i in range(8):
+		if gm.is_game_over():
+			break
+		var cp = gm.get_current_player()
+		if not (cp == null) and cp.is_ai:
+			moved = true
+			break
+		gm.next_turn()
+	if not moved:
+		_check(false, "D1 无法把牌权挪到 AI 座位上")
+		return
+	# 伪造「本手令牌已被上一台 AI 消费」：ai_triggered 已还，令牌记着同一个回合号，
+	# 但行动者是别人 —— 这正是老实现只看回合号时区分不出来的那一手。
+	scene.ai_triggered = false
+	scene.ai_armed_turn = int(gm.turn_count)
+	scene.ai_armed_actor = -1
+	scene.call("_refresh_ui")
+	_check(scene.ai_triggered == true, "D2 令牌是别的行动者：必须重新排程（只看回合号会卡在这里）")
+	var owner: int = int(gm.current_player_index)
+	_check(_armed(scene) == int(gm.turn_count) and int(scene.get("ai_armed_actor")) == gm.players[owner].get_instance_id(),
+		"D3 令牌记到（回合号 + 行动者）")
+	# 造接炸链终局：除 owner 外所有人都已 pass
+	for i in range(gm.players.size()):
+		gm.players[i].has_passed = not (i == owner)
+	gm.clan_bomb_chain_active = true
+	gm.clan_bomb_owner = owner
+	# 伪装「定时器已被消费」：此刻令牌正是（本回合号, owner）—— 老实现不推进回合号时闸门会挡住这次重新排程
+	scene.ai_triggered = false
+	var t0: int = int(gm.turn_count)
+	gm.next_turn()
+	_check(int(gm.turn_count) == t0 + 1,
+		"D4 无人接炸：换手推进回合号 " + str(t0) + " → " + str(int(gm.turn_count)))
+	_check(int(gm.current_player_index) == owner, "D5 牌权交回炸弹主人（座位 " + str(owner) + "）")
+	_check(gm.clan_bomb_chain_active == false, "D6 接炸链已关闭")
+	# 关键断言：这一手没被上一条换手路径用掉 - 必须重新排程
+	scene.call("_refresh_ui")
+	_check(scene.ai_triggered == true, "D7 刷新后重新排程")
+	_check(_armed(scene) == int(gm.turn_count)
+		and int(scene.get("ai_armed_actor")) == gm.players[owner].get_instance_id(),
+		"D8 令牌双键 = 回合号 + 行动者")

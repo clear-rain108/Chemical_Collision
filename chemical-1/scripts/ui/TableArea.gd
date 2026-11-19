@@ -57,7 +57,7 @@ func _update_status_bar() -> void:
 	if cp == null:
 		_ui.status_bar_label.text = ""
 		return
-	var ai_tag = "(AI)" if cp.is_ai else ""
+	var ai_tag = "(人机)" if cp.is_ai else ""
 	var cooling = "❄" if cp.clan_bomb_cooling else ""
 	var pass_tag = "⏸" if cp.has_passed else ""
 	var hand_limit = _ui.game_manager.get_hand_limit()
@@ -92,7 +92,7 @@ func _format_player_status() -> String:
 	for i in range(n):
 		var p = _ui.game_manager.get_players()[i]
 		var is_current = (i == cp_idx)
-		var ai_tag = "(AI)" if p.is_ai else ""
+		var ai_tag = "(人机)" if p.is_ai else ""
 		var cooling = "❄" if p.clan_bomb_cooling else ""
 		var pass_tag = "⏸" if p.has_passed else ""
 		var highlight = " ◄" if is_current else ""

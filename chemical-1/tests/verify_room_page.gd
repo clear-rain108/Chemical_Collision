@@ -411,8 +411,8 @@ func _test_fake_session(scene) -> void:
 		"2 人在线 → AI 上限 2（实际 %d）" % int(scene._room_ai_spin.max_value))
 	scene._room_ai_spin.value = 1
 	await process_frame
-	_check(_seat_name(scene, 2) == "AI 1", "AI 补在人类之后（座位 3 = %s）" % _seat_name(scene, 2))
-	_check(_seat_state(scene, 2) == "AI 托管", "AI 座位状态「AI 托管」（实际 %s）" % _seat_state(scene, 2))
+	_check(_seat_name(scene, 2) == "人机 1", "AI 补在人类之后（座位 3 = %s）" % _seat_name(scene, 2))
+	_check(_seat_state(scene, 2) == "人机托管", "AI 座位状态「人机托管」（实际 %s）" % _seat_state(scene, 2))
 	_check(not scene._room_start_btn.disabled, "2 人 + 1 AI = 3 → 开局按钮恢复可用")
 
 	fake.names = ["房主", "阿明", "小刚"]
@@ -539,7 +539,7 @@ func _test_seat_capacity(scene) -> void:
 	# ---- AI 补到容量 ----
 	scene._room_ai_spin.value = 5
 	await process_frame
-	_check(_seat_name(scene, 3) == "AI 1" and _seat_name(scene, 7) == "AI 5",
+	_check(_seat_name(scene, 3) == "人机 1" and _seat_name(scene, 7) == "人机 5",
 		"容量 8 时 AI 补满剩余 5 个座位（%s … %s）" % [_seat_name(scene, 3), _seat_name(scene, 7)])
 	_check(scene._room_can_start(), "3 人 + 5 AI = 8 = 容量 → 可开局")
 
@@ -616,7 +616,7 @@ func _test_lobby_ai_sync(scene) -> void:
 		"房主改 AI 数会回推到会话（+%d 次，入参 %s）"
 		% [host.ai_set_calls.size() - base_calls, str(host.ai_set_calls)])
 	_check(int(host.lobby_ai) == 2, "会话里的 lobby_ai = 2（实际 %d）" % int(host.lobby_ai))
-	_check(_seat_name(scene, 2) == "AI 1" and _seat_name(scene, 3) == "AI 2",
+	_check(_seat_name(scene, 2) == "人机 1" and _seat_name(scene, 3) == "人机 2",
 		"AI 座位卡按会话值补位（%s / %s）" % [_seat_name(scene, 2), _seat_name(scene, 3)])
 
 	# ---- 会话值在别处被改（例如房主广播回来 / 布局重排）→ 界面跟着走且不回推 ----
@@ -646,7 +646,7 @@ func _test_lobby_ai_sync(scene) -> void:
 	_check(not scene._room_ai_spin.editable, "客人的 AI 微调框是只读的")
 	_check(int(scene._room_ai_spin.max_value) == 2,
 		"客人端 AI 上限 = 容量 4 - 在线 2 = 2（实际 %d）" % int(scene._room_ai_spin.max_value))
-	_check(_seat_name(scene, 2) == "AI 1" and _seat_name(scene, 3) == "AI 2",
+	_check(_seat_name(scene, 2) == "人机 1" and _seat_name(scene, 3) == "人机 2",
 		"客人看得到房主补的 2 个 AI（%s / %s）" % [_seat_name(scene, 2), _seat_name(scene, 3)])
 	# 客人就算硬改微调框（误触 / 键盘输入），也只会被会话挡回来
 	scene._room_ai_spin.value = 0

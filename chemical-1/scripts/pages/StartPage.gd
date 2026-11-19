@@ -178,7 +178,7 @@ func _start_page_settings() -> void:
 	ps.size = Vector2(150, 38)
 	card.add_child(ps)
 
-	card.add_child(_start_setting_label("AiCountLabel", "AI 人数", Vector2(32, 72)))
+	card.add_child(_start_setting_label("AiCountLabel", "人机人数", Vector2(32, 72)))
 	var ai_s = _start_make_spin(1, 3, 3, "AiCountSpin")
 	ai_s.position = Vector2(300, 66)
 	ai_s.size = Vector2(150, 38)

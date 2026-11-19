@@ -392,7 +392,7 @@ tutorial · net` 的 21 个模块里（AI 策略更早拆到了 `AIPlayer.gd`）
 | 3 | **常量可下沉，root 必须留 `const X := ModScript.X` 别名**，root 里不写字面量 | 测试直读 `scene.CARD_W` / `scene.CARD_H`；两处写字面量迟早改一处忘一处 |
 | 4 | **不加 `class_name`**，一律 `preload` + `const`；模块 `extends RefCounted`，构造函数固定 `_init(ui)` | 沿用工程风格；`_init` 在 root 的 `_init` 里调用（早于 `_ready` 与子节点 `_ready`，转发目标必须已存在） |
 | 5 | **不改测试**：任何「必须改 `tests/*.gd` 才能过」的改动都算方案错了，回退重做 | 49 套测试是验收基线；改测试等于把尺子改短 |
-| 6 | **「闸门 + 复位」的副作用，复位必须写在所有分支都会走到的位置**；跨手 / 跨帧的副作用优先按 `turn_count` 这类令牌判定，而不是裸布尔 | Slice 2b 的手牌复用路径提前 `return`，把 `ai_triggered = false` 留在重建分支里 → 第一台 AI 打完、人类手牌没变化 → 第二台 AI 永远排不上定时器，单机对局第一手之后必卡（49 套测试全绿也照样发生，见 §8.0 刷新约定末条） |
+| 6 | **「闸门 + 复位」的副作用，复位必须写在所有分支都会走到的位置**；跨手 / 跨帧的副作用优先按 `turn_count` 这类令牌判定，而不是裸布尔 | Slice 2b 的手牌复用路径提前 `return`，把 `ai_triggered = false` 留在重建分支里 → 第一台 AI 打完、人类手牌没变化 → 第二台 AI 永远排不上定时器，单机对局第一手之后必卡（49 套测试全绿也照样发生，见 §8.0 刷新约定末条）。同类事故第二次出现在**引擎侧**：`_finish_clan_bomb_chain()`（族炸接炸链终局）换手却没 `turn_count += 1` → 令牌原地不动 → 单机停在「无人接炸！」后永不续局（见 §8.0 AI 排程末条） |
 
 #### 模块表（`_init()` 里的 21 个 `ui_*` 实例）
 
@@ -471,13 +471,21 @@ _refresh_ui()                     # 出牌 / 跳过 / 弃牌 / 联机 state_appl
 - **自建面板不参与复用**：`step_mode == 2`（化合价面板）由 `HandView._update_valence_buttons()` 自建，
   共享的复用逻辑只需负责「别把上一批当可复用」。
 - **AI 排程只有一处决策点**：`HandView._update_ai_schedule()`，复用分支与重建分支末尾都会调它（0 个别的调用点）。
-  - 非 AI 回合 / 联机（`net_session != null`）→ `ai_triggered = false`、`ai_armed_turn = -1`；
-  - AI 回合且 `ai_armed_turn != gm.turn_count` → 置 `ai_triggered = true` 并起 **1.5s** 定时器；
+  - 非 AI 回合 / 联机（`net_session != null`）→ `ai_triggered = false`、`ai_armed_turn = -1`、`ai_armed_actor = -1`；
+  - AI 回合且令牌 `(ai_armed_turn, ai_armed_actor)` 与当前 `(gm.turn_count, 行动者 instance_id)` 不一致
+    → 置 `ai_triggered = true`、记下令牌，并起 **1.5s** 定时器；
   - 定时器到点（`GameFlow._ai_auto_play()`，联机直接 return）→ 先把 `ai_triggered` 还成 `false`，
     再由 `auto_play()` 内部那次 `_refresh_ui()` 为下一家重新排程。
-  令牌用 `gm.turn_count`：`next_turn()` / `_intercept_next()` / `_start_new_round()` 三条换手路径都会 +1
-  （`set_sequence_constraint()` 也走 `next_turn`），所以「一手一号」，同一手里刷新多少次都只排一个定时器，
-  也不会出现「第二家排不上」。回归：`tests/verify_ai_chain.gd`（真 1.5s 定时器连跑两轮 + 复用路径记账）。
+  令牌是**双键**：回合号 `gm.turn_count` + 行动者 `get_instance_id()`（存 `ai_armed_actor`），任一变化都重新排程。
+  单看回合号是不够的：引擎只要漏一次 `turn_count += 1`（实测：`_finish_clan_bomb_chain()` 族炸接炸链终局），
+  第二台 AI 就永远等不到新令牌 → 单机停在「无人接炸！」卡死；双键下漏 `+1` 只是少一层「一手一号」保护。
+  四条换手路径都会推进 `turn_count`：`next_turn()` / `_intercept_next()` / `_start_new_round()` /
+  `_finish_clan_bomb_chain()`（`set_sequence_constraint()` 也走 `next_turn`），所以正常情况「一手一号」，
+  同一手里刷新多少次都只排一个定时器，也不会出现「第二家排不上」。
+  回归：`tests/verify_ai_chain.gd`（真 1.5s 定时器连跑两轮 + 复用路径记账 + D 段族炸接炸链终局 8 项）。
+- **界面文案统一叫「人机」**（2026-11-19 全局重命名）：代号侧仍是 AI（`AIPlayer.gd` / `ai_count` / `is_ai` /
+  `ai_armed_*`），玩家看得见的字符串（座位名「人机 %d」、`(人机)` 标签、`人机人数`、「人机托管」等）
+  一律用「人机」；改文案时两边都要过一遍 `tests/`（`verify_room_page.gd` 直接断言座位卡文案）。
 
 ### 页面管理
 
