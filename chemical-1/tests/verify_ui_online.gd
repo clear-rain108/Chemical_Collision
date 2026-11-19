@@ -35,6 +35,10 @@ class FakeSession:
 	signal desync_detected(local_hash: int, host_hash: int)
 	signal session_closed(reason: String)
 	signal error_raised(code: int, detail: String)
+	# D22：投票三信号 —— 界面接线会去连它们，假会话必须同名存在
+	signal vote_opened(state: Dictionary)
+	signal vote_updated(state: Dictionary)
+	signal vote_resolved(result: Dictionary)
 
 	var role: int = 2                 # 2 = NetSession.Role.CLIENT
 	var my_seat: int = 1
@@ -103,6 +107,28 @@ class FakeSession:
 		return "座位%d" % seat
 
 	func is_seat_ai(_seat: int) -> bool:
+		return false
+
+	# D22：投票读口（本套件不投真票，只保证界面接线与等待文案有口可调）
+	func vote_open() -> bool:
+		return false
+
+	func vote_state() -> Dictionary:
+		return {}
+
+	func vote_remain_ms() -> int:
+		return 0
+
+	func am_i_voter() -> bool:
+		return false
+
+	func my_vote() -> int:
+		return -1
+
+	func cast_vote(_approve: bool) -> int:
+		return -112
+
+	func can_claim() -> bool:
 		return false
 
 

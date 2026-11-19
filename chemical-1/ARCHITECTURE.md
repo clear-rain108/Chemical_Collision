@@ -69,21 +69,22 @@ chemical-1/
 │   ├── TutorialController.gd          ← 教程状态机：关卡初始化/预设手牌/进度检查
 │   ├── HelpContent.gd                 ← 帮助中心内容：3 Tab 卡片数据（静态）
 │   ├── HintAdvisor.gd                 ← 提示：只读候选 + validate_play 交叉验证
-│   ├── ui/                            ← 10 个 UI 模块（RefCounted，只持 _ui 回引；见 §8.0）
+│   ├── ui/                            ← 11 个 UI 模块（RefCounted，只持 _ui 回引；见 §8.0）
 │   │   ├── UITheme / TouchMetrics / Toast / PageRouter / CardMotion
-│   │   └── HandView / TableArea / SidePanels / ActionPanel / ToolRow
+│   │   └── HandView / TableArea / SidePanels / ActionPanel / ToolRow / VoteUI
 │   ├── pages/                         ← PageChrome / StartPage / SuppRulesPage / HelpPage
 │   │                                    EndPage / TutorialPage / RoomPage
 │   ├── game/                          ← GameFlow（开局/结果/步骤重置）/ HintFlow（提示）
 │   ├── tutorial/                      ← Level0Overlay（第零关 Phase1~3）
 │   └── net/                           ← NetSession / ActionRouter / OnlineUI / NetProtocol
 │                                        NetTransport / ENetTransport / LoopbackTransport
+│                                        VoteBox（D22 质疑投票纯逻辑）
 ├── tools/
 │   ├── run_tests.gd                   ← 测试运行器（逐个子进程，拿真实退出码）
 │   ├── move_funcs.gd                  ← 搬运工具（切片时整段搬方法）
 │   ├── gen_facade_list.gd             ← 生成 verify_ui_facade 的方法清单
 │   └── unprefix_siblings.gd           ← 搬完还原「同模块兄弟方法」的调用前缀
-├── tests/                             ← 49 套 verify_*.gd + net_smoke.gd（多进程真机联机冒烟）
+├── tests/                             ← 52 套 verify_*.gd + net_smoke.gd（多进程真机联机冒烟）
 ├── CHEMICAL_COLLISION_GAME.md         ← 游戏设计文档
 ├── GAMEPLAY_RULES.md                  ← 玩法规则文档
 ├── ARCHITECTURE.md                    ← 本文档
@@ -394,11 +395,11 @@ tutorial · net` 的 21 个模块里（AI 策略更早拆到了 `AIPlayer.gd`）
 | 5 | **不改测试**：任何「必须改 `tests/*.gd` 才能过」的改动都算方案错了，回退重做 | 49 套测试是验收基线；改测试等于把尺子改短 |
 | 6 | **「闸门 + 复位」的副作用，复位必须写在所有分支都会走到的位置**；跨手 / 跨帧的副作用优先按 `turn_count` 这类令牌判定，而不是裸布尔 | Slice 2b 的手牌复用路径提前 `return`，把 `ai_triggered = false` 留在重建分支里 → 第一台 AI 打完、人类手牌没变化 → 第二台 AI 永远排不上定时器，单机对局第一手之后必卡（49 套测试全绿也照样发生，见 §8.0 刷新约定末条）。同类事故第二次出现在**引擎侧**：`_finish_clan_bomb_chain()`（族炸接炸链终局）换手却没 `turn_count += 1` → 令牌原地不动 → 单机停在「无人接炸！」后永不续局（见 §8.0 AI 排程末条） |
 
-#### 模块表（`_init()` 里的 21 个 `ui_*` 实例）
+#### 模块表（`_init()` 里的 22 个 `ui_*` 实例）
 
 | 模块 | 文件 | 行数 | 职责 |
 |---|---|---|---|
-| root | `scripts/GameUI.gd` | 2049 | 门面：常量/字段/装配/`_refresh_ui`/`_process`/全部同名转发 |
+| root | `scripts/GameUI.gd` | 2053 | 门面：常量/字段/装配/`_refresh_ui`/`_process`/全部同名转发 |
 | theme | `ui/UITheme.gd` | 149 | 视觉常量、`panel_style(kind)`、`card_color()`（含 StyleBox 缓存） |
 | touch | `ui/TouchMetrics.gd` | 256 | 触屏档判定/几何与字号取值/运行时开关（`--touch-ui`） |
 | toast | `ui/Toast.gd` | 90 | 右栏信息 / 警告 toast |
@@ -406,9 +407,9 @@ tutorial · net` 的 21 个模块里（AI 策略更早拆到了 `AIPlayer.gd`）
 | motion | `ui/CardMotion.gd` | 200 | 幽灵牌飞行 / 小卡入场 / 发牌淡入 |
 | hand | `ui/HandView.gd` | 1479 | 手牌渲染 / 重叠布局 / 悬停状态机 / 命中 / 拖拽重排 / 价态面板 / **AI 排程** |
 | tool | `ui/ToolRow.gd` | 113 | 提示/帮助/退出三按钮样式与几何归一 |
-| table | `ui/TableArea.gd` | 314 | 顶部状态栏 + 桌面文案 + 桌面小卡槽 |
+| table | `ui/TableArea.gd` | 317 | 顶部状态栏 + 桌面文案（含「（投票认定）」标记）+ 桌面小卡槽 |
 | side | `ui/SidePanels.gd` | 342 | 桌面小卡 / 日志面板 / 规则提醒 / 「按序 ⇅」 |
-| action | `ui/ActionPanel.gd` | 513 | 操作面板 + 出牌步骤流按钮 |
+| action | `ui/ActionPanel.gd` | 521 | 操作面板 + 出牌步骤流按钮（配不平时转「质疑投票」） |
 | hint | `game/HintFlow.gd` | 99 | 提示按钮 → `HintAdvisor` → 自动选牌 + 说明 |
 | flow | `game/GameFlow.gd` | 507 | 开局 / 交互回调 / 结果处理 / 步骤重置 / AI 定时器落地 |
 | page | `pages/PageChrome.gd` | 249 | 页面通用零件：渐变底 / 水印 / 装饰牌 / 按钮三件套 / 入场动画 |
@@ -418,8 +419,9 @@ tutorial · net` 的 21 个模块里（AI 策略更早拆到了 `AIPlayer.gd`）
 | end | `pages/EndPage.gd` | 257 | 结算页（结算卡 / 统计块 / 按钮去向 / 淡入） |
 | tut | `pages/TutorialPage.gd` | 177 | 教学引导页（三张关卡卡 / 进出路由 / 错峰入场） |
 | level0 | `tutorial/Level0Overlay.gd` | 517 | 第零关 Phase1~3（高亮框 / 引导按钮 / 规则提醒） |
-| online | `net/OnlineUI.gd` | 313 | 联机接线：会话装配 / 座位视角 / 权威事件回调 / 每帧推进 |
+| online | `net/OnlineUI.gd` | 357 | 联机接线：会话装配 / 座位视角 / 权威事件回调 / 投票三信号转发 / 每帧推进 |
 | room | `pages/RoomPage.gd` | 662 | 房间页（建房 / 加入 / 座位表 / 开局闸门 / 收尾） |
+| vote | `ui/VoteUI.gd` | 352 | 化合物质疑投票遮罩（只读快照：牌面 / 票型分母 / 倒计时 / 两个按钮） |
 
 > 行数是 2026-11-18 的快照，只用于判断「这次改动是不是搬对了地方」，不是契约。
 

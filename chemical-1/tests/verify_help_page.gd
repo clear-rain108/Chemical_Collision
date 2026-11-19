@@ -1,6 +1,6 @@
 # 验证帮助中心（P5）：单页 + 3 Tab + 滚动容器 + 卡片
 #   1) 结构：HelpPage 代码生成 / 标题栏 / Tab 栏 / 3×ScrollContainer / 返回按钮
-#   2) 懒加载：切到才构建 —— Tab0 9 卡 2 列 / Tab1 29 迷你卡 7 列 / Tab2 6 卡
+#   2) 懒加载：切到才构建 —— Tab0 10 卡 2 列 / Tab1 29 迷你卡 7 列 / Tab2 6 卡
 #   3) 规范：无 11px 以下文字、无空格对齐、卡片标题 17 / 正文 14、选中 Tab 有下划线
 #   4) 数据：29 种元素 / 182 张（不再出现 28 种 / 172 张）
 #   5) 旧 3 页已从 Main.tscn 删除（P6 清理，不留备份节点）
@@ -97,8 +97,8 @@ func _run() -> void:
 	var g0: Array = []
 	_collect(scene.help_bodies[0], "GridContainer", g0)
 	_check(g0.size() == 1 and g0[0].columns == 2, "Tab0 用 2 列卡片网格")
-	_check(g0.size() == 1 and g0[0].get_child_count() == 9,
-		"Tab0 共 9 张卡 (实际 %d)" % (g0[0].get_child_count() if g0.size() == 1 else -1))
+	_check(g0.size() == 1 and g0[0].get_child_count() == 10,
+		"Tab0 共 10 张卡 (实际 %d)" % (g0[0].get_child_count() if g0.size() == 1 else -1))
 
 	# 切 Tab：只改可见性，不新建淡入补间
 	var tw_before = scene._page_fade_tween
@@ -158,6 +158,16 @@ func _run() -> void:
 	_check(supp_text.find("前 20 号") >= 0, "元素限制写明前 20 号元素")
 	_check(supp_text.find("Cr") >= 0 and supp_text.find("Zn") >= 0, "元素限制列出可选副族 Cr ~ Zn")
 	_check(supp_text.find("Br") >= 0 or supp_text.find("碘") >= 0, "元素限制提到 Br / I 扩展")
+
+	# D22：Tab0 必须讲清「化合物质疑投票」（联机新规则，玩家靠这里才知道有这条路）
+	var rule_text := ""
+	for card in HelpContentScript.get_rule_cards():
+		rule_text += str(card.get("title", "")) + "|"
+		for line in card.get("lines", []):
+			rule_text += str(line.get("t", "")) + "|"
+	_check(rule_text.find("化合物质疑投票") >= 0, "游戏规则含「化合物质疑投票」卡片")
+	_check(rule_text.find("在线真人") >= 0, "投票人写成「在线真人」（AI / 观战者不参与）")
+	_check(rule_text.find("罚抽 1 张") >= 0, "写清未通过要罚抽 1 张")
 
 	scene._on_help_show_rules()
 	await process_frame

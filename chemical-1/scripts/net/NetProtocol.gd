@@ -6,7 +6,11 @@
 # ============================================================
 extends RefCounted
 
-const PROTO_VERSION = 1
+# v2（D22）：新增化合物质疑投票的四条消息 + claim 意图 + 三个错误码。
+# 为什么必须升版本：v1 的客人收到 vote_* 会当未知消息丢弃（主机侧还会报 -100），
+# 于是「出题人以为在投票、客人根本没收到」。PROTO_VERSION 不符时
+# _host_on_hello 会直接拒绝握手（见 NetSession），新旧 APK 不能同房。
+const PROTO_VERSION = 2
 
 # ---- 消息类型（字符串常量便于 JSON 直传）----
 const MSG_HELLO = "hello"
@@ -27,6 +31,11 @@ const MSG_PEER_JOINED = "peer_joined"    # S→all：某座位（重新）上线
 # P11-C1-d 增补：大厅状态 / 房主收房
 const MSG_LOBBY = "lobby"                # S→all：房主改了大厅 AI 补位数（带容量 + 座位表）
 const MSG_BYE = "bye"                    # S→all：房主主动收房（先广播再断，客人立刻拿到原因）
+# D22 增补：化合物质疑投票（全部由主机裁决，客人只读镜像 + 投自己那一票）
+const MSG_VOTE_REQUEST = "vote_request"  # S→all：开票（分母 / 截止时刻 / 待裁定的出牌 / 引擎原因）
+const MSG_VOTE_CAST = "vote_cast"        # C→S：我的票 {vid, approve}
+const MSG_VOTE_STATE = "vote_state"      # S→all：票型变化 / 掉线出分母（带最新快照）
+const MSG_VOTE_RESULT = "vote_result"    # S→all：收口结论（随后紧跟一笔 applied 的 compound_ruling 事件）
 
 # ---- 客户端意图类型（与 GameManager.apply_event 的 type 完全一致）----
 const INTENT_PLAY = "play"
@@ -34,6 +43,9 @@ const INTENT_PASS = "pass"
 const INTENT_DISCARD_PASS = "discard_pass"
 const INTENT_SEQUENCE_PICK = "sequence_pick"
 const INTENT_SEQUENCE_SKIP = "sequence_skip"
+# 化合物质疑：payload 与 play 完全一致（uids / valences / pattern），
+# 区别只在主机的处理方式 —— 规则判定失败后不拒绝，而是转成投票。
+const INTENT_CLAIM = "claim_compound"
 
 const INTENT_TYPES = [
 	INTENT_PLAY,
@@ -41,6 +53,7 @@ const INTENT_TYPES = [
 	INTENT_DISCARD_PASS,
 	INTENT_SEQUENCE_PICK,
 	INTENT_SEQUENCE_SKIP,
+	INTENT_CLAIM,
 ]
 
 # ---- 错误码（-1..-8 是规则码，勿复用）----
@@ -57,6 +70,10 @@ const ERR_DUPLICATE_SEQ = -108   # 重复序号（同一意图被重投）
 const ERR_DESYNC = -109          # 重连重放后 state_hash 仍与主机不符
 # P11-C1-c 增补
 const ERR_NOT_HOST = -110        # 非主机调用主机专属接口（host_act_for_seat / host_step_ai）
+# D22 增补：化合物质疑投票
+const ERR_VOTE_PENDING = -111    # 投票进行中：本手只接受投票，其它操作一律冻结
+const ERR_NO_VOTE = -112         # 没有进行中的投票（或投票号已收口）
+const ERR_NOT_VOTER = -113       # 不在这次投票的分母里（出题人 / AI / 观战者）
 
 
 static func is_known_message(msg_type: String) -> bool:
@@ -65,6 +82,7 @@ static func is_known_message(msg_type: String) -> bool:
 		MSG_REJECTED, MSG_TURN, MSG_PENDING_SEQUENCE, MSG_SNAPSHOT,
 		MSG_PING, MSG_PONG, MSG_READY, MSG_PEER_LEFT, MSG_PEER_JOINED,
 		MSG_LOBBY, MSG_BYE,
+		MSG_VOTE_REQUEST, MSG_VOTE_CAST, MSG_VOTE_STATE, MSG_VOTE_RESULT,
 	]
 
 

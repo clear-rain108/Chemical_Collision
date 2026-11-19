@@ -503,6 +503,14 @@ func _on_confirm_compound() -> void:
 		_ui._dispatch_result(result)
 		return
 
+	# D22：配不平也可能「化学上说得通」（玩家故意选了一组引擎配不出来的价态组合）。
+	# 联机时这一手有资格交给其他真人裁定；单机 claimable 恒 false，行为完全不变。
+	# 必须先 claimable 再报错：否则玩家永远只能看到「配不平」的死路。
+	if _ui._router().claimable(sel_cards, custom_valences, _ui.CardPatternsScript.CardPattern.COMPOUND):
+		var claim_code: int = _ui._router().claim_compound(sel_cards, custom_valences)
+		_ui._dispatch_result(claim_code)
+		return
+
 	# 逐项列出「价 × 张数」，玩家一眼能看出哪个元素多带了 / 少带了
 	var parts: Array = []
 	for e in valence_list:

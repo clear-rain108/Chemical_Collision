@@ -7,6 +7,10 @@
 extends RefCounted
 
 var _ui = null
+# 已经接过信号的会话对象。attach_session 可能被重复调用（重连补拉 / 同一局重进牌桌），
+# 而 Signal.is_connected() 在这种「同一 callable 二次 connect」上并不可靠 ——
+# 只靠它会直接抛 "already connected" ERROR，所以这里再记一份实例身份兜底。
+var _wired_session = null
 
 
 func _init(ui) -> void:
@@ -38,11 +42,17 @@ func attach_session(session) -> void:
 	_ui._net_ai_wait = 0.0
 	if session == null:
 		_hide_sequence_overlay()
+		_ui.ui_vote.hide_vote()          # D22：会话没了，投票遮罩也必须跟着消失
+		_wired_session = null            # 别攥着已关闭的会话不放
 		return
 	_connect_online_signals(session)
 	# 会话已经在对局中（重连 / 热加入）：直接切到牌桌，不必等 game_started
 	if session.is_playing() and _ui.game_manager != null:
 		_enter_online_game()
+		# 重连那一刻可能正在投票：welcome / 快照里的 vote 字段在信号还没接上时
+		# 就被 _client_on_vote 吃掉了（emit 无人接），这里补一次拉取。
+		if session.has_method("vote_open") and session.vote_open():
+			_ui.ui_vote.on_vote_opened(session.vote_state())
 
 
 # -------- 座位 / 视图归属 --------
@@ -81,6 +91,10 @@ func _net_wait_text() -> String:
 		return ""
 	if _ui.net_session.is_watcher():
 		return "观战中：本轮由其他玩家操作"
+	# D22：投票裁定期间全场冻结 —— 面板必须说清楚「这不是卡住，是在等票」
+	# has_method 兜底：测试里的假会话不一定实现投票读口（同 set_lobby_ai 口径）
+	if _ui.net_session.has_method("vote_open") and _ui.net_session.vote_open():
+		return "正在投票裁定上一手牌，等待结果…"
 	if _ui.action_router != null and _ui.action_router.awaiting_reply():
 		return "已提交，等待主机裁决…"
 	if _ui.net_session.is_my_sequence_pending():
@@ -130,6 +144,10 @@ func _dispatch_result(code: int) -> void:
 
 # -------- 信号接线（attach_session 可能因重连被重复调用，必须只连一次）--------
 func _connect_online_signals(session) -> void:
+	# 同一个会话对象二次装配：信号已经在它身上接好了，别再连一遍
+	if session == _wired_session:
+		return
+	_wired_session = session
 	if not session.game_started.is_connected(_online_on_game_started):
 		session.game_started.connect(_ui._online_on_game_started)
 	if not session.state_applied.is_connected(_online_on_state_applied):
@@ -146,6 +164,13 @@ func _connect_online_signals(session) -> void:
 		session.desync_detected.connect(_ui._online_on_desync)
 	if not session.error_raised.is_connected(_online_on_error):
 		session.error_raised.connect(_ui._online_on_error)
+	# D22：化合物质疑投票（遮罩层只读快照，判定全在 NetSession）
+	if not session.vote_opened.is_connected(_online_on_vote_opened):
+		session.vote_opened.connect(_online_on_vote_opened)
+	if not session.vote_updated.is_connected(_online_on_vote_updated):
+		session.vote_updated.connect(_online_on_vote_updated)
+	if not session.vote_resolved.is_connected(_online_on_vote_resolved):
+		session.vote_resolved.connect(_online_on_vote_resolved)
 
 
 # -------- 信号回调 --------
@@ -188,6 +213,8 @@ func _online_on_sequence_cleared() -> void:
 func _online_on_session_closed(reason: String) -> void:
 	# 会话没了，此刻还开着的顺序牌型弹窗就永远等不到 sequence_cleared 了
 	_hide_sequence_overlay()
+	# D22：投票遮罩同理 —— 投票箱随会话一起没了，never 会再来 vote_resolved
+	_ui.ui_vote.hide_vote()
 	# 自己主动关的（离开房间 / 退出对局）：调用方已在收尾，别再刷一遍提示
 	if _ui._room_closing:
 		return
@@ -216,6 +243,7 @@ func _online_on_session_closed(reason: String) -> void:
 func _online_on_desync(local_hash: int, host_hash: int) -> void:
 	# 分叉后不再推进，弹窗留着只会让人以为还能选
 	_hide_sequence_overlay()
+	_ui.ui_vote.hide_vote()          # 分叉后投票也无意义（can_submit 已 false）
 	_ui._net_over_notice = "状态分叉（本端 %d / 主机 %d），已停止推进" % [int(local_hash), int(host_hash)]
 	_ui._show_info(_ui._net_over_notice)
 	# 终局提示必须常驻：toast 2.5 秒就没，牌桌上看不出「这局已经停了」（D20）
@@ -225,6 +253,19 @@ func _online_on_desync(local_hash: int, host_hash: int) -> void:
 
 func _online_on_error(code: int, detail: String) -> void:
 	_ui._show_info("联机错误 %d：%s" % [int(code), String(detail)])
+
+
+# -------- D22：化合物质疑投票（三个信号原样转发给遮罩层）--------
+func _online_on_vote_opened(state: Dictionary) -> void:
+	_ui.ui_vote.on_vote_opened(state)
+
+
+func _online_on_vote_updated(state: Dictionary) -> void:
+	_ui.ui_vote.on_vote_updated(state)
+
+
+func _online_on_vote_resolved(result: Dictionary) -> void:
+	_ui.ui_vote.on_vote_resolved(result)
 
 
 # 顺序牌型弹窗的唯一关闭口（两个回调 / 超时 / 会话结束都走它）
@@ -240,6 +281,8 @@ func _update_net(delta: float) -> void:
 		return
 	# ① 收包 / 超时 / 断线宽限：所有角色都必须 poll，否则永远收不到包
 	_ui.net_session.poll()
+	# ①之三 D22：投票遮罩的倒计时（也在这里自愈「投票已收口但遮罩还开着」）
+	_ui.ui_vote.tick(delta)
 	# ①之二 房间页：ENet 的 create_client 是异步的，连不上时一个回调都不会来，
 	#       只能自己计时给条出路（否则客人会永远停在「正在连接…」）
 	if _ui._room_mode == _ui.RoomMode.CONNECTING:
@@ -290,6 +333,7 @@ func _net_ai_delay() -> float:
 func _enter_online_game() -> void:
 	if _ui.game_manager == null:
 		return
+	_ui.ui_vote.hide_vote()           # 新一局：上一局残留的投票遮罩必须清掉
 	_ui.start_page.visible = false
 	_ui.game_page.visible = true
 	_ui.end_page.visible = false

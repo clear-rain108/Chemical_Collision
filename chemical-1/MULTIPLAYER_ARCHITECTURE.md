@@ -1,6 +1,6 @@
 # 化学碰撞（Chemical Collision）联机架构设计文档
 
-> 版本：v1.2 ｜ 状态：**设计定稿；P11-B 地基、P11-C1-a 传输、P11-C1-b 会话层均已实现；P11-C1-c Step 0 真机冒烟脚本已就绪**
+> 版本：v1.3 ｜ 状态：**设计定稿；P11-B 地基、P11-C1-a 传输、P11-C1-b 会话层均已实现；P11-C1-c Step 0 真机冒烟脚本已就绪；D22 化合物质疑投票（协议 v2）已落地**
 > 适用范围：3~8 人朋友局（默认 4），跨局域网 P2P（无端口映射条件）
 > 相关文档：[`ARCHITECTURE.md`](ARCHITECTURE.md)（单机架构）、[`GAMEPLAY_RULES.md`](GAMEPLAY_RULES.md)（规则）、[`UI_POLISH_PLAN.md`](UI_POLISH_PLAN.md)（UI 计划）
 
@@ -340,6 +340,10 @@ NAT 之后的机器没有公网可达地址。让 A、B 两台机器直连只有
 | `-102` | 未轮到你 | `NetProtocol.ERR_NOT_YOUR_TURN` | 忽略（本地 UI 竞态） |
 | `-103` | 对局已结束 | `NetProtocol.ERR_GAME_OVER` | 忽略 |
 | `-104` | 座位不匹配（替别人操作） | `NetProtocol.ERR_WRONG_SEAT` | 断开（疑似作弊/错乱） |
+| `-105` | 没有待处理的牌型选择 | `NetProtocol.ERR_NO_PENDING` | 忽略 |
+| `-111` | 正在投票裁定上一手牌 | `NetProtocol.ERR_VOTE_PENDING` | 冻结期间拒一切意图（D22） |
+| `-112` | 没有进行中的投票 | `NetProtocol.ERR_NO_VOTE` | 忽略（投票已收口） |
+| `-113` | 你不在这次投票的名单里 | `NetProtocol.ERR_NOT_VOTER` | 忽略（出题人 / 观战者 / 已掉线） |
 
 ---
 
@@ -728,6 +732,10 @@ state: IDLE ─► CONNECTING ─► LOBBY ─► PLAYING ─► OVER
 | `pending_sequence` | S→all | `{seat, remain_ms}`；`seat = -1` 表示窗口关闭 |
 | `ready` | C→S | 快照重放完，附 `{hash, events}`；主机只在 `events` 与本地相同（同一时刻）时才比对，否则就是拿旧指纹比新局面 —— 实测会稳定误报 `ERR_DESYNC` |
 | `peer_left` / `peer_joined` | S→all | 座位掉线（座位保留）/ 座位（重新）上线 |
+| `vote_request` | S→all | 开票（D22）：`{vote: 快照}`，客人据此弹投票遮罩 |
+| `vote_cast` | C→S | 我的一票：`{vid, approve}`；主机只认 `peer_id → seat` 与 `vid` 两项 |
+| `vote_state` | S→all | 票型变化 / 有人掉线出分母：`{vote: 快照}` |
+| `vote_result` | S→all | 收口结论 `{result: 快照}`；随后紧跟一笔 `applied` 的 `compound_ruling` 事件 |
 
 线格式：`[magic "CHM1" u32][body_len u32][var_to_bytes(dict)]`。用 `var_to_bytes` 而不是 JSON —— JSON 会把 `uid` / `seq` / `hash` 全变成 float，漏一处就是「`uid` 12.0 找不到手牌」的静默 bug。8 字节头让畸形包在 `bytes_to_var` 之前就被丢掉，不会让引擎刷 `Invalid data`。
 
@@ -1039,3 +1047,117 @@ transport.close()
 现状：`verify_net_session` 221 项、`verify_room_page` 199 项、`verify_ui_online` 101 项，全绿。
 
 真机判读顺序：客人改 AI 数点不动 → 房主补 2 个 AI 客人立刻看到 `AI 1 / AI 2` → 房主页点「离开房间」客人 1 秒内出现 `⚠ 联机已结束` → 换成房主直接杀进程，客人应在同一帧收尾（拿不到就等 12 秒心跳，仍应出现同样提示）。
+
+### D.14 化合物质疑投票（D22）
+
+#### 为什么要有它
+
+`-1` 配不平 / `-7` 卤族互化 在单机里是引擎一言堂。联机局里这两条属于**化学性判断**——
+「Fe + O 到底能不能算 FeO」这类问题，玩家之间本来就会争，而且引擎的配平是启发式搜索
+（`MIXED_NODE_CAP` 之上直接判无解）。把它变成**其他真人全票裁定**的事，有两个直接好处：
+判定争议有了出口；引擎的能力边界不再等于规则的边界。其余拒绝码（`-2` 牌不够大 / `-4` 接不上……）
+是牌权问题，投票没有立场改判，一律硬拒。
+
+#### 一句话模型
+
+> 出牌被拒（且拒绝码 ∈ {`-1`,`-7`}）→ 主机开票，出题人之外的所有在线真人全票赞成 →
+> **主机发一笔 `compound_ruling` 权威事件**（通过 = 落子 + 记白名单；不通过 = 罚抽 1 张）。
+
+关键点：**投票结论本身不是事件，「投票结论导致的那一笔权威事件」才是**。
+三端重放的是同一笔 `compound_ruling`，所以 `index`、`state_hash` 天然一致；
+投票过程（谁投了谁）不进 `event_log`，掉线重连的人不需要知道投票史。
+
+#### 四层职责
+
+| 层 | 文件 | 职责 | 不做什么 |
+|---|---|---|---|
+| 纯逻辑 | `scripts/net/VoteBox.gd` | 分母 / 票型 / 全票·一票否决 / 掉线出分母 / 超时收口，`snapshot()` 出扁平字典 | 不知道网络、不知道座位昵称、不碰 `GameManager` |
+| 权威 | `scripts/net/NetSession.gd` | 开票时机、`claim` → 投票的翻译、广播、收口、掉线摘除、快照里的 `vote` 字段 | 不自己判化学（全交给 `GameManager`） |
+| 规则 | `scripts/GameManager.gd` | `validate_play_claim()`（只放宽 `-1`/`-7`）、`compound_rulings` 白名单、`apply_event("compound_ruling")` | 不知道投票存在 |
+| 界面 | `scripts/ui/VoteUI.gd` | 遮罩 + 待裁定的牌 + 票型分母 + 倒计时 + 两个按钮，**只读快照** | 不算票、不改局面、不做超时判定 |
+
+#### 协议（v2）
+
+`PROTO_VERSION` **1 → 2**：v1 的客人收到 `vote_*` 会当未知消息丢掉（主机侧再报 `-100`），
+症状是「出题人以为在投票，客人根本没收到」。握手时版本不符直接拒绝，**新旧 APK 不能同房**。
+
+| 消息 | 方向 | 载荷 |
+|---|---|---|
+| `vote_request` | S→all | `{vote: snapshot}`；开票瞬间广播，客人据此弹遮罩 |
+| `vote_cast` | C→S | `{vid, approve}`；主机用 `peer_id → seat` 认人，不信任何自带座位 |
+| `vote_state` | S→all | `{vote: snapshot}`；每张票 / 每次掉线出分母都重播 |
+| `vote_result` | S→all | `{result: snapshot}`；**先**广播结论（UI 关遮罩），**再** `applied` 那笔 `compound_ruling` |
+
+新错误码：`-111 ERR_VOTE_PENDING`（投票中拒一切意图）、`-112 ERR_NO_VOTE`、`-113 ERR_NOT_VOTER`。
+
+#### 快照字段（`VoteBox.snapshot()`）
+
+| 字段 | 含义 |
+|---|---|
+| `vid` | 投票号（本局自增，便于对账；`vote_cast` 带回来核对） |
+| `by` | 出题人座位 |
+| `voters` | 分母（**升序**座位号；出题人 / AI / 观战 / 已掉线都不在里面） |
+| `votes` | 逐人票型 `{seat: bool}`（int 键，两端都是 Godot，不走 JSON float 归一） |
+| `claim` | 待裁定的那一手 `{uids, valences, pattern}` |
+| `reason` | 引擎的人话原因（`-7` 引擎不写原因时由 `_host_open_vote` 兜一句通用文案） |
+| `total` / `approve_count` / `reject_count` | 分母大小与当前票数 |
+| `remain_ms` | 剩余毫秒（主机实时算；客人读快照里带过来的值） |
+| `resolved` / `approved` / `cause` | 收口状态与结论；`cause ∈ {all_yes, rejected, timeout, no_voter}` |
+
+#### 开票前的两次判定（顺序不能反）
+
+```gdscript
+_host_apply_claim(seat, ev):
+    rule = _claim_rule_code(seat, ev)      # ① 跑一遍 validate_play（只读，顺手写好 last_reject_reason）
+    if rule >= 0:  return _host_apply(seat, play_ev)   # 本来就合法 → 当普通出牌落子
+    if _host_open_vote(seat, ev, rule) == 0: return 0  # ② 只有 -1 / -7 才开票
+    return rule                                        # 其余码原样拒
+```
+
+`_host_open_vote()` 里还要再判一次 `validate_play_claim()`（只放宽化学性两条）。
+两次判定缺一不可：第一次挡住「局面已变、这手其实合法」的绕过，第二次挡住
+「`-2` 牌不够大也来投票」的滥用。`ActionRouter` 侧同理 —— **先 `play()` 拿到 `pre < 0`，
+再看 `claimable()`**，顺序反了会让「接不上」也走投票。
+
+#### 白名单（必须进快照和指纹）
+
+粒度是**排序后的元素组成多重集**：`H,H,O` → `"H1O2"`（`compound_key()`）。
+它进 `to_snapshot()` 的 `"compound_rulings"` 与 `state_hash()`（`rulings=[...]`），
+理由和「牌 uid」一样：**重连的客人重放同一笔 `compound_ruling` 时，必须能算出与主机相同的白名单**，
+否则那一笔重放会再次配平失败 → 立刻 `-109` 分叉。空表时固定写 `rulings=[]`，单机老局面指纹也稳定。
+
+#### 冻结与收口的四道网
+
+| 场景 | 处理 |
+|---|---|
+| 投票中有人出牌 / 悔牌 / 跳过 | `can_submit()` 为假 + `_validate_for_seat()` 返回 `-111`；UI 侧面板只剩一句「正在投票裁定上一手牌」 |
+| AI 该动 | `host_step_ai()` 在 `vote_open()` 时直接返回 0（AI 不替人做化学判断） |
+| 有人掉线 | `remove_voter()` 当场出分母并广播 `vote_state`；分母空 → `no_voter` 收口 |
+| 到点没人投完 | `poll()` 里判 `expired()` → `_host_resolve_vote("timeout")`，不通过 |
+| 客人重连时正在投票 | `welcome` 带 `vote` 字段；`OnlineUI.attach_session()` 在信号接好后再拉一次 `vote_state()`（信号之前 emit 的那次没人接） |
+
+#### 界面口径（`ui/VoteUI.gd`）
+
+- 挂 `OverlayLayer`（`_layer(1)`）且 `mouse_filter = STOP`：投票期间点不到牌桌。
+- 分母 / 票型 / 剩余时间**全部照抄快照** —— 客人手里没有投票箱，永远只是镜像。
+- 非投票人（出题人 / 观战 / AI 座位）两个按钮禁用并写明「你不在这次投票的名单里」；
+  已投则锁成「已投赞成，等待其他玩家」（改票服务端也不生效，UI 先自锁避免误导）。
+- `tick()` 每帧只刷倒计时，并自愈「投票已收口但遮罩还开着」（`vote_open()` 变假就关）。
+- 收口后 `_show_info()` 按 `cause` 给出四类文案：通过 / 有反对 / 超时 / 无人可投。
+- 桌面上那一手带「（投票认定）」标记（`GameManager.is_compound_legalized()`），
+  否则后来的人（含观战 / 重连）会以为是引擎算出来的。
+
+#### 测试
+
+| 套件 | 项数 | 覆盖 |
+|---|---|---|
+| `verify_vote_box.gd` | 50 | 纯逻辑 11 段：分母去重升序 / 一票否决 / 幂等 / 掉线出分母 / 超时 / 快照字段 |
+| `verify_net_vote.gd` | 83 | 4 张独立牌桌（真 ENet 三端）：通过落子 + 白名单三端一致 / 一票否决罚抽 / 超时 / 投票人掉线仍可收口；逐笔同指纹、0 分叉 |
+| `verify_action_router.gd` C 段 | 94（全套） | `describe_code` / 单机 `claimable=false` / `claim_compound` / 投票期间冻结 / 三端指纹 |
+| `verify_vote_ui.gd` | 47 | 遮罩层级 / 牌面 / 票型文案 / 冻结面板 / 投票只发一次 / 非投票人 / 四类结论文案 / 倒计时自愈 / 重连补开 / 会话关闭 / 桌面标记 |
+
+现状：全量 52 套绿（`verify_net_session` 221 / `verify_net_vote` 83 / `verify_vote_box` 50 / `verify_vote_ui` 47 / `verify_action_router` 94）。
+
+**负向自检**：把 `validate_play_claim()` 的 `allow_override` 临时改回 `false` 跑一遍
+`verify_net_vote` → 立刻 4 项 FAIL（找不到可质疑组合、白名单不成立），确认这条护栏是**真的在生效**，
+而不是「测试恰好都走普通路径」。

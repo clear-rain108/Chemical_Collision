@@ -26,6 +26,8 @@ extends RefCounted
 
 const NetProtocolScript = preload("res://scripts/net/NetProtocol.gd")
 const NetSessionScript = preload("res://scripts/net/NetSession.gd")
+# D22：质疑默认按「化合物」提交（与 ActionPanel 的「合成化合物」路径同口径）
+const CardPatternsScript = preload("res://scripts/CardPatterns.gd")
 
 # 本层自用错误码：与规则码（-1..-8）、协议码（-100..）都不重叠
 const ERR_NO_GAME = -200       # 没注入 GameManager
@@ -142,8 +144,18 @@ func play(cards: Array, valences: Dictionary = {}, pattern: int = -1) -> int:
 	var seat := local_seat()
 	var pre: int = int(game.validate_play(seat, cards, valences, pattern))
 	if pre < 0:
-		# 没发包：把引擎写好的原因留给自己用（与单机 -1/-2 的提示完全一致）
-		return _fail(pre, game.get_last_reject_reason())
+		# 引擎写好的人话原因先留下（下面 claimable() 会重跑判定并清掉诊断字段）
+		var why: String = game.get_last_reject_reason()
+		# D22：化学性被拒（配不平 / 卤族互化）→ 若还能开票，就把这一手转成质疑。
+		# 顺序不可反：先 play 的判定（pre < 0），再 claim 的判定（claimable）。
+		# 反过来会让「-2 牌不够大」也被当成可质疑 —— 那类拒绝投票没有立场推翻。
+		if claimable(cards, valences, pattern):
+			return _submit(NetProtocolScript.INTENT_CLAIM, {
+				"uids": _uids_of(cards),
+				"valences": valences.duplicate(true),
+				"pattern": pattern,
+			})
+		return _fail(pre, why)
 	return _submit(NetProtocolScript.INTENT_PLAY, {
 		"uids": _uids_of(cards),
 		"valences": valences.duplicate(true),
@@ -163,12 +175,58 @@ func auto_play(cards: Array) -> int:
 	var plan: Dictionary = game.auto_play_preview(seat, cards)
 	var code: int = int(plan.get("code", -1))
 	if code < 0:
-		return _fail(code, String(plan.get("reason", "")))
+		var why: String = String(plan.get("reason", ""))
+		# D22：「直接出牌」全败时也允许走质疑（玩家没选牌型，但化学上想说的是
+		# 「这几种元素能化合」）。valences 留空：投票通过后由引擎按 override 放行，
+		# 价态只影响桌面显示，不影响判定。
+		if claimable(cards, {}, CardPatternsScript.CardPattern.COMPOUND):
+			return _submit(NetProtocolScript.INTENT_CLAIM, {
+				"uids": _uids_of(cards),
+				"valences": {},
+				"pattern": CardPatternsScript.CardPattern.COMPOUND,
+			})
+		return _fail(code, why)
 	var cv = plan.get("custom_valences", {})
 	return _submit(NetProtocolScript.INTENT_PLAY, {
 		"uids": _uids_of(cards),
 		"valences": (cv as Dictionary).duplicate(true) if cv is Dictionary else {},
 		"pattern": int(plan.get("pattern", -1)),
+	})
+
+
+# 现在这一手能不能走「化合物质疑投票」（UI 与 play() 共用同一判据）。
+# 三个前提缺一不可：联机对局中且还能开票（session.can_claim）、牌 ≥2 张、
+# 质疑预检通过（validate_play_claim 只放宽化学性两条）。
+func claimable(cards: Array, valences: Dictionary = {}, pattern: int = -1) -> bool:
+	if game == null or session == null or not has_session():
+		return false
+	if not (cards is Array) or cards.size() < 2:
+		return false            # 单张没有「化合」可言（那是单质，配不平与它无关）
+	if not session.can_claim():
+		return false
+	return int(game.validate_play_claim(local_seat(), cards, valences, pattern)) >= 0
+
+
+# 显式发起质疑。常规路径不需要它 —— play() 在化学性被拒时会自动转；
+# 它是给 UI 里那个明确的「请求其他玩家裁定」入口用的（也让测试能一处断言）。
+func claim_compound(cards: Array, valences: Dictionary = {}) -> int:
+	if game == null:
+		return _fail(ERR_NO_GAME, "内部错误：没有对局实例")
+	if not has_session():
+		return _fail(ERR_NO_SESSION, "单机模式没有化合物质疑投票")
+	if not session.can_claim():
+		return _fail(NetProtocolScript.ERR_NO_VOTE, "现在不能发起质疑（可能已有投票在进行）")
+	if cards == null or cards.size() < 2:
+		return _fail(-1, "至少选 2 张牌才能质疑")
+	var seat := local_seat()
+	var pre: int = int(game.validate_play_claim(seat, cards, valences,
+		CardPatternsScript.CardPattern.COMPOUND))
+	if pre < 0:
+		return _fail(pre, "这一手连质疑都不成立：" + describe_code(pre))
+	return _submit(NetProtocolScript.INTENT_CLAIM, {
+		"uids": _uids_of(cards),
+		"valences": valences.duplicate(true),
+		"pattern": CardPatternsScript.CardPattern.COMPOUND,
 	})
 
 
@@ -284,7 +342,11 @@ func _on_state_applied(ev: Dictionary, result: int) -> void:
 		return
 	if int(ev.get("by", -1)) != local_seat():
 		return
-	if String(ev.get("type", "")) != _awaiting_type:
+	# D22：质疑的「回执」是投票结论那一笔 compound_ruling，而不是 claim 本身
+	# （claim 被主机翻译成投票 → 通过则落子、驳回则罚抽，两者都以它收口）。
+	var expect: String = "compound_ruling" if _awaiting_type == NetProtocolScript.INTENT_CLAIM \
+		else _awaiting_type
+	if String(ev.get("type", "")) != expect:
 		return
 	_clear_awaiting()
 	_last_code = int(result)
@@ -354,6 +416,12 @@ static func describe_code(code: int) -> String:
 			return "重复提交"
 		-109:
 			return "状态分叉，已停止推进"
+		-111:
+			return "正在投票裁定上一手牌，暂不能操作"
+		-112:
+			return "这次投票已经结束"
+		-113:
+			return "你不在这次投票的名单里"
 		ERR_NO_GAME:
 			return "内部错误：没有对局实例"
 		ERR_NO_SESSION:

@@ -46,6 +46,7 @@ const TutorialPageScript = preload("res://scripts/pages/TutorialPage.gd")
 const Level0OverlayScript = preload("res://scripts/tutorial/Level0Overlay.gd")
 const OnlineUIScript = preload("res://scripts/net/OnlineUI.gd")
 const RoomPageScript = preload("res://scripts/pages/RoomPage.gd")
+const VoteUIScript = preload("res://scripts/ui/VoteUI.gd")
 
 # 模块实例：_init 里创建（见下方 _init 的注释）。
 # 命名避开 Control 自带的 theme / 已用的 toast_layer，统一 ui_ 前缀。
@@ -70,6 +71,7 @@ var ui_tut = null                        # 教学引导页（三张关卡卡 / �
 var ui_level0 = null                     # 第零关引导覆盖层（三步流程 / 高亮框 / 规则提醒）
 var ui_online = null                     # 联机接线（会话装配 / 座位视角 / 权威事件回调 / 每帧推进）
 var ui_room = null                       # 房间页（建房 / 加入 / 座位表 / 开局闸门 / 收尾）
+var ui_vote = null                       # 化合物质疑投票遮罩（D22 联机；单机恒不开）
 
 # ============================================================
 # 一、页面引用
@@ -400,6 +402,7 @@ func _init() -> void:
 	ui_level0 = Level0OverlayScript.new(self)
 	ui_online = OnlineUIScript.new(self)
 	ui_room = RoomPageScript.new(self)
+	ui_vote = VoteUIScript.new(self)
 
 
 # ============================================================

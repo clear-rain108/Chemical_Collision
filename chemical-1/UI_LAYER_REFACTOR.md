@@ -61,7 +61,7 @@ PlayerManager / AIPlayer / GameLogger）的验证脚本。本次是同一套做�
 
 ---
 
-## 2. 目标架构（21 个模块）
+## 2. 目标架构（22 个模块）
 
 | # | 模块 | 来源行段（当前 GameUI.gd） | 约行数 | 职责 |
 |---|---|---|---|---|
@@ -87,6 +87,7 @@ PlayerManager / AIPlayer / GameLogger）的验证脚本。本次是同一套做�
 | 19 | `scripts/game/GameFlow.gd` | 90–91、2458–2726、6063–6539、6646–6676 | 750 | 开局/系统操作/交互回调/结果处理/步骤重置 |
 | 20 | `scripts/game/HintFlow.gd` | 92–98、4669–4750 | 90 | 提示按钮 → HintAdvisor |
 | 21 | `scripts/net/OnlineUI.gd` | 112–122、6677–7007 | 350 | `attach_session`/`_update_net`/`_online_on_*` |
+| 22 | `scripts/ui/VoteUI.gd`（D22 新增，非搬运） | — | 352 | 化合物质疑投票遮罩：只读快照画牌面 / 票型分母 / 倒计时 + 两个按钮（挂 `OverlayLayer`） |
 
 ### 2.1 代码模板
 

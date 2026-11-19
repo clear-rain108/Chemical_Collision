@@ -164,6 +164,10 @@ func _update_table_label() -> void:
 					if comp_name != "":
 						txt += "（" + comp_name + "）"
 		if _ui.game_manager.is_compound_immune(): txt += " [免疫]"
+		# D22：这一手的合法性来自「其他玩家投票认定」，不是引擎配平 ——
+		# 必须写在桌面上，否则后来的人（含观战 / 重连）会以为是引擎算出来的。
+		if _ui.game_manager.is_compound_legalized(cards) \
+				and pat == _ui.CardPatternsScript.CardPattern.COMPOUND: txt += "（投票认定）"
 		if _ui.game_manager.is_clan_bomb_chain_active(): txt += " ⚠接炸中"
 		_set_table_text(txt, pat)
 

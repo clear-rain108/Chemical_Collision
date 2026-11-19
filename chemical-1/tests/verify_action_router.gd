@@ -21,6 +21,7 @@ const ENetTransportScript = preload("res://scripts/net/ENetTransport.gd")
 const CardPatternsScript = preload("res://scripts/CardPatterns.gd")
 
 const PORT = 47831                  # 与 verify_net_session（47821/47824）错开
+const PORT_CLAIM = 47833            # C 段：化合物质疑投票（D22）
 const CONNECT_TIMEOUT_MS = 5000
 const IO_TIMEOUT_MS = 3000
 const SEED = 20261110
@@ -133,6 +134,7 @@ func _logs_aligned(host: Dictionary, a: Dictionary, b: Dictionary) -> bool:
 func _run() -> void:
 	_part_single()
 	_part_online()
+	_part_claim()
 	_finish()
 
 
@@ -383,3 +385,146 @@ func _part_online() -> void:
 	cli["s"].close("测试结束")
 	host["s"].close("测试结束")
 	_pump([host], func(): return false, 100)
+
+
+# ============================================================
+# C. 化合物质疑投票（D22）：ActionRouter 的 claimable / claim_compound
+# ============================================================
+# 手牌是随机的，所以这一段先离线扫种子：找一个「座位 0 和座位 1 手上都有
+# 可质疑组合」的种子钉进 host._seed，三端因此拿到同一副牌，断言完全确定。
+func _part_claim() -> void:
+	# ---- C1 错误码人话 ----
+	_check(ActionRouterScript.describe_code(NetProtocolScript.ERR_VOTE_PENDING) != "",
+		"C1 -111 有中文说明（%s）" % ActionRouterScript.describe_code(NetProtocolScript.ERR_VOTE_PENDING))
+	_check(ActionRouterScript.describe_code(NetProtocolScript.ERR_NOT_VOTER) != "",
+		"C1 -113 有中文说明（%s）" % ActionRouterScript.describe_code(NetProtocolScript.ERR_NOT_VOTER))
+
+	# ---- C2 单机：质疑这条路根本不存在 ----
+	var solo_gm = GameManagerScript.new()
+	solo_gm.init_game(3, 0, SEED)
+	var solo = ActionRouterScript.new()
+	solo.setup(solo_gm)
+	_check(not solo.claimable(solo_gm.players[0].hand.slice(0, 2), {}, CardPatternsScript.CardPattern.COMPOUND),
+		"C2 单机 claimable = false")
+	_check(int(solo.claim_compound(solo_gm.players[0].hand.slice(0, 2))) == ActionRouterScript.ERR_NO_SESSION,
+		"C2 单机 claim_compound = -201（没有会话）")
+
+	# ---- C3 联机但牌不够 / 局面不成立 ----
+	var seed_hit := _scan_dual_seed()
+	_check(not seed_hit.is_empty(), "C3 找到一个「两边都有可质疑组合」的种子")
+	if seed_hit.is_empty():
+		return
+	var host = _make_peer()
+	var cli = _make_peer()
+	var cli2 = _make_peer()
+	var peers := [host, cli, cli2]
+	host["s"].start_host(PORT_CLAIM, 3, "房主")
+	cli["s"].start_client("127.0.0.1", PORT_CLAIM, "客人A")
+	cli2["s"].start_client("127.0.0.1", PORT_CLAIM, "客人B")
+	if not _pump(peers, func(): return cli["s"].my_seat == 1 and cli2["s"].my_seat == 2,
+			CONNECT_TIMEOUT_MS):
+		_check(false, "C3 三端握手失败（端口被占用？）")
+		return
+	host["s"]._seed = int(seed_hit["seed"])
+	host["s"].start_game(3, 0)
+	if not _pump(peers, func(): return cli["s"].is_playing() and cli2["s"].is_playing(), IO_TIMEOUT_MS):
+		_check(false, "C3 三端开局失败")
+		return
+	var rh = ActionRouterScript.new()
+	rh.setup(host["gm"], host["s"])
+	var rc = ActionRouterScript.new()
+	rc.setup(cli["gm"], cli["s"])
+	var r2 = ActionRouterScript.new()
+	r2.setup(cli2["gm"], cli2["s"])
+
+	var pair0: Array = seed_hit["pair0"]["cards"]
+	var cv0: Dictionary = seed_hit["pair0"]["cv"]
+	var pair1: Array = seed_hit["pair1"]["cards"]
+	var cv1: Dictionary = seed_hit["pair1"]["cv"]
+	_check(not rh.claimable([pair0[0]], {}, CardPatternsScript.CardPattern.COMPOUND),
+		"C3 单张不能质疑（claimable = false）")
+	var one_code: int = int(rc.claim_compound([pair1[0]]))
+	_check(one_code == -1, "C3 单张 claim_compound 被本层挡下（%d）" % one_code)
+
+	# ---- C4 判定：两张化学性不合法、但预检放行 → 可以质疑 ----
+	_check(rh.claimable(pair0, cv0, CardPatternsScript.CardPattern.COMPOUND),
+		"C4 房主可质疑（claimable = true）")
+	_check(rc.claimable(pair1, cv1, CardPatternsScript.CardPattern.COMPOUND),
+		"C4 客人可质疑（claimable = true）")
+
+	# ---- C5 房主先跳过，把牌权交给客人（桌面仍为空，客人这一手才可质疑）----
+	_check(int(rh.pass_turn()) == 0, "C5 房主跳过已提交")
+	_check(_pump(peers, func(): return int(cli["gm"].current_player_index) == 1, IO_TIMEOUT_MS),
+		"C5 牌权交到客人（座位 %d）" % int(cli["gm"].current_player_index))
+
+	# ---- C6 客人发起质疑：返回 0 = 已发出，进入等待 ----
+	var claim_code: int = int(rc.claim_compound(pair1, cv1))
+	_check(claim_code == 0, "C6 客人 claim_compound 返回 0（已发出，实得 %d）" % claim_code)
+	_check(rc.awaiting_reply(), "C6 客人进入等待")
+	_check(rc.awaiting_type() == NetProtocolScript.INTENT_CLAIM, "C6 awaiting_type = claim")
+	_check(_pump(peers, func(): return host["s"].vote_open() and r2.session.vote_open(),
+		IO_TIMEOUT_MS), "C6 主机与客人B 都看到投票已开启")
+
+	# ---- C7 投票中全场冻结 ----
+	_check(not rc.can_act(), "C7 投票期间客人 can_act = false")
+	_check(not rh.can_act(), "C7 投票期间房主 can_act = false")
+	var again: int = int(rc.claim_compound(pair1, cv1))
+	_check(again == NetProtocolScript.ERR_NO_VOTE,
+		"C7 投票中再发起质疑 → -112（实得 %d）" % again)
+
+	# ---- C8 投票人全票赞成 → 通过，客人的等待由 compound_ruling 收口 ----
+	_check(int(host["s"].cast_vote(true)) == 0, "C8 房主投赞成")
+	_check(int(cli2["s"].cast_vote(true)) == 0, "C8 客人B 投赞成")
+	_check(_pump(peers, func(): return not rc.awaiting_reply(), IO_TIMEOUT_MS),
+		"C8 客人收到 compound_ruling 后解除等待（质疑的回执不是 claim 本身）")
+	_check(rc.last_code() == 0, "C8 客人 last_code = 0（落子成功，实得 %d）" % rc.last_code())
+	_check(host["gm"].table_cards.size() == 2, "C8 投票通过 → 桌面 2 张")
+	_check(host["gm"].is_compound_legalized(pair1), "C8 白名单记入该组成")
+	_check(rc.can_act() and rh.can_act(), "C8 收口后两端恢复可操作")
+	_pump(peers, func(): return _logs_aligned(host, cli, cli2), IO_TIMEOUT_MS)
+	_check(host["gm"].state_hash() == cli["gm"].state_hash()
+		and host["gm"].state_hash() == cli2["gm"].state_hash(), "C9 三端指纹一致")
+	_check(not host["s"].is_desynced() and not cli["s"].is_desynced(), "C9 全程没有分叉")
+
+	cli["s"].close("测试结束")
+	cli2["s"].close("测试结束")
+	host["s"].close("测试结束")
+	_pump([host], func(): return false, 100)
+
+
+# 在 seat 手上找一组「普通判定拒绝、质疑预检放行」的两张牌（空字典 = 没有）
+func _find_claim_pair(gm, seat: int) -> Dictionary:
+	if seat < 0 or seat >= gm.players.size():
+		return {}
+	var hand: Array = gm.players[seat].hand
+	for i in range(hand.size()):
+		for j in range(i + 1, hand.size()):
+			var a = hand[i]
+			var b = hand[j]
+			if String(a.symbol) == String(b.symbol):
+				continue
+			var cv := {String(a.symbol): 1, String(b.symbol): -1}
+			var pair := [a, b]
+			if int(gm.validate_play(seat, pair, cv, CardPatternsScript.CardPattern.COMPOUND)) >= 0:
+				continue
+			if int(gm.validate_play_claim(seat, pair, cv,
+					CardPatternsScript.CardPattern.COMPOUND)) < 0:
+				continue
+			return {"cards": pair, "cv": cv}
+	return {}
+
+
+# 扫种子：要求座位 0 与座位 1 同时有可质疑组合（三端同牌序 + 两段都能测）
+func _scan_dual_seed() -> Dictionary:
+	for s in range(1, 200):
+		var gm = GameManagerScript.new()
+		gm.init_game(3, 0, s)
+		var p0 := _find_claim_pair(gm, 0)
+		if p0.is_empty():
+			continue
+		var p1 := _find_claim_pair(gm, 1)
+		if p1.is_empty():
+			continue
+		return {"seed": s, "pair0": p0, "pair1": p1}
+	return {}
+

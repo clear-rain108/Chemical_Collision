@@ -96,6 +96,16 @@ var deck_seed: int = -1
 # 已成功推进局面的联机事件序列（主机广播日志 / 客人重放 / 回放 / 断线重连）
 var event_log: Array = []
 
+# ---- 联机「化合物质疑投票」白名单（D22）----
+# 本局内被其他真人**全票认定**的化合物组成，键 = 排序后的元素组成多重集（如 "C1H2N1"）。
+# 一旦某组成被认定，本局内任何人打出**同一组成**的牌都按化合物直接放行（不再配平）。
+#
+# 为什么按「组成」而不是按「具体哪几张牌」：uid 是发牌产物，两端一致但玩家记不住；
+# 而「H,C,N 各一张」正是玩家投票时看的东西，也是唯一能解释清楚的白名单粒度。
+# 为什么必须进快照 / 指纹：不然重连的客人重放「compound_ruling 通过」时会被
+# `_evaluate_play` 拒掉（它没有投票上下文），三端立刻分叉 —— 这是最容易漏的一环。
+var compound_rulings: Dictionary = {}
+
 # ============================================================
 # 四、教程状态变量（委托到 TutorialController）
 # ============================================================
@@ -153,6 +163,7 @@ func init_game(player_count: int = 4, ai_count: int = 3, rng_seed: int = -1) -> 
 	logger.clear_logs()
 	deck_seed = rng_seed
 	event_log.clear()
+	compound_rulings.clear()
 
 	database = CardDatabaseScript.new()
 	database.generate_deck(get_allowed_symbols())
@@ -220,6 +231,20 @@ func get_current_player_index() -> int:
 func validate_play(player_index: int, cards: Array, custom_valences: Dictionary = {},
 		intended_pattern: int = -1) -> int:
 	return _evaluate_play(player_index, cards, custom_valences, intended_pattern)
+
+
+# 「质疑放行」预检（联机 D22）：与 validate_play 同一份规则，**只**放宽化学性两条：
+#   · -1 无法配平 / 原子比例不匹配（化合物）
+#   · -7 卤族互化（F/Cl/Br/I 之间互相化合）
+# 其余一律照旧硬拒（-2 牌不够大 / -3 族炸 / -4 接不上 / -6 顺序约束 / -8 元素限制），
+# 因为那些与「化学上说不说得通」无关，投票也没有立场推翻。
+#
+# 返回 >= 0 表示「这笔牌值得投票」；这里不落子，落子只发生在投票通过后的
+# apply_event("compound_ruling", approved=true) → play_cards(..., allow_override=true)。
+# 这条链路是「通过即打得出去」的护栏：投票里说的话与引擎最终的判定同源。
+func validate_play_claim(player_index: int, cards: Array, custom_valences: Dictionary = {},
+		intended_pattern: int = -1) -> int:
+	return _evaluate_play(player_index, cards, custom_valences, intended_pattern, true)
 
 
 func get_last_evaluated_pattern() -> int:
@@ -333,8 +358,12 @@ func _auto_play_candidates(cards: Array) -> Array:
 
 # ---- 规则正文：所有「能不能打」的判断都在这里 ----
 # 注意：本函数绝不能改手牌 / 桌面 / 轮转 / 日志，否则 validate_play 就不再只读。
+#
+# allow_override（联机 D22，默认 false）：给「化合物质疑投票」用。
+#   true 时只放宽两处化学性判定（-1 配不平 / -7 卤族互化），其余规则原样生效。
+#   默认实参意味着单机的 49 套测试、热座、教程走的还是同一条老路 —— 零回归的硬门槛。
 func _evaluate_play(player_index: int, cards: Array, custom_valences: Dictionary,
-		intended_pattern: int) -> int:
+		intended_pattern: int, allow_override: bool = false) -> int:
 	last_reject_reason = ""
 	last_evaluated_pattern = -1
 	if player_index < 0 or player_index >= players.size() or cards.is_empty():
@@ -359,8 +388,14 @@ func _evaluate_play(player_index: int, cards: Array, custom_valences: Dictionary
 	var prefer_sequence = (intended_pattern == CardPatternsScript.CardPattern.SEQUENCE)
 	var pattern = CardPatternsScript.detect_pattern(cards, skip_bomb, prefer_sequence)
 	if pattern == -1:
-		last_reject_reason = "这组牌不构成任何合法牌型（单质 / 化合物 / 顺序 / 族炸 / 有机物）"
-		return -1
+		# 联机 D22：认不出牌型时，质疑投票把它当「化合物」看待 —— 玩家想说的就是
+		# 「这几种元素能化合，只是我们的配平器不认」。≥2 张才有「化合物」可言
+		# （单张走的是单质，配不平与它无关，投票没有意义）。
+		if allow_override and cards.size() >= 2:
+			pattern = CardPatternsScript.CardPattern.COMPOUND
+		else:
+			last_reject_reason = "这组牌不构成任何合法牌型（单质 / 化合物 / 顺序 / 族炸 / 有机物）"
+			return -1
 
 	# 若玩家明确选择了牌型，校验检测结果与意图一致
 	if intended_pattern >= 0 and pattern != intended_pattern:
@@ -376,8 +411,9 @@ func _evaluate_play(player_index: int, cards: Array, custom_valences: Dictionary
 	# -------- 卤族互化（仅化合物；族炸不受限）--------
 	# 硬规则默认禁止：F/Cl/Br/I 之间不能互相「化合」（如 ClF）。
 	# 允许卤族互化（补充规则）打开后放行；同族族炸不是化合，始终合法。
+	# 联机 D22：allow_override（质疑投票）同样放行 —— 这一条正是投票要裁的两种化学性之一。
 	if pattern == CardPatternsScript.CardPattern.COMPOUND and not halogen_exchange_allowed \
-			and is_halogen_mix(cards):
+			and not allow_override and is_halogen_mix(cards):
 		return -7
 
 	# -------- 第零关AI禁止出族炸 --------
@@ -434,6 +470,14 @@ func _evaluate_play(player_index: int, cards: Array, custom_valences: Dictionary
 	# 给不出化学式（无法配平 / 电负性倒置 / 含稀有气体）一律拒绝。
 	# 旧实现「空式子就放行」会让 NCl / BrN / IN 这类假化合物混进桌面。
 	if pattern == CardPatternsScript.CardPattern.COMPOUND:
+		# 联机 D22 的两个放行口（都在这里收口，判定只有一处）：
+		#   ① allow_override：投票**当场通过**的那一手，按真人裁定落子；
+		#   ② is_compound_legalized：本局早先已被认定过的**同一组成**，直接打得出
+		#      —— 白名单进指纹，所以重放 / 重连的客人也算得出同样的结果。
+		# 注意：放行只跳过「配平」这一步，牌型 / 接牌 / 大小比较早已在上面判完。
+		if allow_override or is_compound_legalized(cards):
+			last_evaluated_pattern = pattern
+			return 0
 		var fi = CompoundSolverScript.get_compound_formula(cards, custom_valences)
 		last_understood_valences = {}
 		# 默认配平只覆盖主流解（O 一律取 −2、非金属一律取最低负价）。
@@ -477,8 +521,10 @@ func _compound_reject_reason(cards: Array, custom_valences: Dictionary) -> Strin
 
 
 # 出牌：先只读判定，通过后才落子。
-func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {}, intended_pattern: int = -1) -> int:
-	var code: int = _evaluate_play(player_index, cards, custom_valences, intended_pattern)
+# allow_override：仅联机「复合质疑投票通过」用（见 validate_play_claim 的注释），默认 false。
+func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {},
+		intended_pattern: int = -1, allow_override: bool = false) -> int:
+	var code: int = _evaluate_play(player_index, cards, custom_valences, intended_pattern, allow_override)
 	if code < 0:
 		return code
 	var pattern: int = last_evaluated_pattern
@@ -713,6 +759,84 @@ func player_fail_sequence_constraint(player_index: int) -> void:
 	sequence_constraint = -1
 	sequence_constraint_target = -1
 	next_turn()
+
+
+# ============================================================
+# 八之四、联机「化合物质疑投票」规则支持（D22）
+# ============================================================
+# 罚抽：投票未通过（或超时 / 无人可投）时，出牌撤销并罚抽一张。
+# 与 player_fail_sequence_constraint 的区别：那条是顺序约束的「罚 2 张并跳过」，
+# 语义绑死；这里只抽牌不改轮转（出牌本来就没落子，牌权还在原玩家手里）。
+# 手牌已达上限时罚抽作废 —— 否则要引入「被迫弃牌」的第三条流程，
+# 而玩家此刻正卡在被拒的出牌上，多弹一个弃牌窗只会更懵。
+func penalize_draw(player_index: int, count: int = 1, note: String = "") -> int:
+	if player_index < 0 or player_index >= players.size():
+		return -1
+	var player = players[player_index]
+	var hand_limit = _get_hand_limit()
+	if player.get_hand_count() >= hand_limit:
+		log_messages.append("%s 手牌已达上限（%d），罚抽作废%s" % [
+			player.player_name, hand_limit, ("（" + note + "）") if note != "" else ""])
+		return 0
+	var drawn = database.draw_cards(count)
+	for card in drawn:
+		player.add_card(card)
+	if not drawn.is_empty():
+		player.sort_hand_by_atomic_number()
+	log_messages.append("%s 的化合物未被认定，出牌撤销并罚抽%d张%s" % [
+		player.player_name, drawn.size(), ("（" + note + "）") if note != "" else ""])
+	return drawn.size()
+
+
+# 白名单键：排序后的元素组成多重集（H,H,C,N → "C1H2N1"）。
+# 只看「有哪几种元素、各几张」—— 这正是投票时玩家眼里看到的东西，
+# 也是唯一能跨 uid / 跨座位置放言的口径。
+func compound_key(cards: Array) -> String:
+	var counts: Dictionary = {}
+	for c in cards:
+		if c == null:
+			continue
+		counts[c.symbol] = int(counts.get(c.symbol, 0)) + 1
+	var syms: Array = counts.keys()
+	syms.sort()
+	var parts: Array = []
+	for s in syms:
+		parts.append("%s%d" % [String(s), int(counts[s])])
+	return "".join(parts)
+
+
+# 本局是否已被裁定为「化学上说得通」的同一组成
+func is_compound_legalized(cards: Array) -> bool:
+	if compound_rulings.is_empty():
+		return false
+	var key := compound_key(cards)
+	return key != "" and compound_rulings.has(key)
+
+
+# 记入白名单（投票通过后由 apply_event("compound_ruling") 调用）。
+# 返回写进去的键，便于日志 / 测试断言；空组成返回 ""。
+func legalize_compound(cards: Array) -> String:
+	var key := compound_key(cards)
+	if key == "":
+		return ""
+	compound_rulings[key] = true
+	return key
+
+
+# 白名单的规范化文本形式（指纹 / 快照用）：键排序后拼成一行
+func compound_ruling_keys() -> Array:
+	var out: Array = compound_rulings.keys()
+	out.sort()
+	return out
+
+
+# 公开版 _cards_by_uids（NetSession 开票时要拿牌面做「质疑预检」）
+# 失败返回空数组 —— 调用方按「这笔质疑不成立」处理，不区分细分原因。
+func get_cards_by_uids(player_index: int, uids) -> Array:
+	var cards = _cards_by_uids(player_index, uids)
+	if cards == null:
+		return []
+	return cards
 
 
 # ============================================================
@@ -1292,9 +1416,18 @@ func to_snapshot() -> Dictionary:
 			"custom_valences": _string_keys(table_custom_valences),
 		},
 		"deck_remaining": database.get_remaining_count() if database != null else 0,
+		# 联机 D22：被投票认定的化合物组成。快照是「中途加入 / 重连」的恢复包之一，
+		# 漏了它 → 新客人重放同一笔 compound_ruling 时配平失败 → 立刻 -109。
+		"compound_rulings": compound_ruling_keys(),
 		"players": seats,
 		"log_count": log_messages.size(),
 	}
+
+
+# 公开版 _valences_from（NetSession 开票时要把 payload 里的价态规范化，
+# 否则客人经线传来的数组 / float 会与主机算出的指纹差一点点）
+func normalize_valences(src) -> Dictionary:
+	return _valences_from(src)
 
 
 func _uids_of(cards: Array) -> Array:
@@ -1347,6 +1480,10 @@ func _canonical_string() -> String:
 		str(_sorted_pairs(table_custom_valences)),
 	])
 	parts.append("deck=%d" % (database.get_remaining_count() if database != null else -1))
+	# 联机 D22：被投票认定的化合物组成必须进指纹。它是**规则状态**（决定
+	# 「同一组成还能不能打」），不进指纹就会出现「主机认为能打、客人重放被拒」
+	# 这种最难查的分叉。空表时固定写 "rulings=[]"，保证单机老局面也稳定。
+	parts.append("rulings=%s" % str(compound_ruling_keys()))
 	for p in players:
 		var uids := _uids_of(p.hand)
 		uids.sort()
@@ -1393,6 +1530,11 @@ func _valence_key_of(v) -> String:
 #   {"type":"discard_pass",  "by":0, "uid":12}
 #   {"type":"sequence_pick", "by":0, "pattern":2}
 #   {"type":"sequence_skip", "by":0}
+#   {"type":"compound_ruling","by":0, "approved":true, "uids":[12,44], "valences":{}, "pattern":2}
+#   {"type":"compound_ruling","by":0, "approved":false, "cause":"rejected"}
+#     └ 联机 D22：化合物质疑投票的结论，由主机在投票收口后广播。
+#       approved=true  = 按真人裁定落子（play_cards allow_override），并把该组成记入白名单；
+#       approved=false = 出牌撤销 + 罚抽 1 张（cause 说明是驳回 / 超时 / 无人可投）。
 # 返回：play 透传 play_cards 的返回码（0 / 1 / -1..-8）；其它成功返回 0；
 #       EVENT_UNKNOWN = 未知类型；EVENT_BAD_PAYLOAD = 座位 / uid 非法。
 # 只有「成功推进局面」的事件才写入 event_log —— 失败事件不污染回放。
@@ -1433,6 +1575,30 @@ func apply_event(ev: Dictionary) -> int:
 			sequence_constraint_target = -1
 			next_turn()
 			result = 0
+		"compound_ruling":
+			if not is_valid_seat(by):
+				return EVENT_BAD_PAYLOAD
+			if bool(ev.get("approved", false)):
+				var rcards = _cards_by_uids(by, ev.get("uids", []))
+				if rcards == null:
+					return EVENT_BAD_PAYLOAD
+				# 通过 = 按真人裁定落子。allow_override 只放宽化学性两条（-1 / -7），
+				# 牌型 / 接牌 / 大小比较仍然照判 —— 所以「投票通过」不会打出一张
+				# 压不过桌面的牌（那种情况开票前就被 validate_play_claim 挡住了）。
+				var rcode: int = play_cards(by, rcards,
+					_valences_from(ev.get("valences", {})),
+					int(ev.get("pattern", CardPatternsScript.CardPattern.COMPOUND)), true)
+				if rcode < 0:
+					return rcode
+				# 落子成功后才写白名单：组成被认定 = 本局同组成不再投票，
+				# 但仍要满足「压得过当前桌面」，那是另一回事。
+				var key := legalize_compound(rcards)
+				logger.add_log("⚖ 投票认定：%s 的化合物组成（%s）本局视为合法" % [
+					players[by].player_name, key])
+				result = rcode
+			else:
+				penalize_draw(by, 1, String(ev.get("cause", "")))
+				result = 0
 		_:
 			return EVENT_UNKNOWN
 	if result >= 0:

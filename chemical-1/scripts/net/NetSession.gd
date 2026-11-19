@@ -18,6 +18,10 @@ extends RefCounted
 
 const NetProtocolScript = preload("res://scripts/net/NetProtocol.gd")
 const AIPlayerScript = preload("res://scripts/AIPlayer.gd")
+# D22：化合物质疑投票箱（纯逻辑，主机侧唯一权威）
+const VoteBoxScript = preload("res://scripts/net/VoteBox.gd")
+# 质疑默认按「化合物」裁定（payload 缺 pattern 时兜底用）
+const CardPatternsScript = preload("res://scripts/CardPatterns.gd")
 
 # ---- 角色 / 会话状态 ----
 enum Role { NONE, HOST, CLIENT }
@@ -32,6 +36,9 @@ const MAX_PLAYERS = 8
 const DEFAULT_MAX_PLAYERS = 4
 const DEFAULT_PENDING_TIMEOUT_MS = 15000    # 顺序牌型两阶段的等待上限
 const DEFAULT_RECONNECT_GRACE_MS = 60000    # 掉线后座位保留时长
+# D22：化合物质疑投票的等待上限。20s 是「看得完牌面 + 想得清化学」的折中，
+# 真机上比顺序牌型的 15s 略长（要读的元素更多）；测试里压到几百毫秒。
+const DEFAULT_VOTE_TIMEOUT_MS = 20000
 const WATCHER_SEAT = -1                     # 观战者：不占座位、无操作权
 const HOST_PEER_ID = 1                      # ENet / Loopback 的主机 peer_id 恒为 1
 
@@ -56,6 +63,10 @@ signal peer_left(seat: int, peer_name: String, grace_ms: int)
 signal peer_joined(seat: int, peer_name: String)
 signal session_closed(reason: String)
 signal error_raised(code: int, detail: String)
+# D22：化合物质疑投票（三端都收，主机先 emit 再广播；客人由 vote_* 消息驱动）
+signal vote_opened(state: Dictionary)     # 开票（分母 / 截止 / 待裁定的牌 / 引擎原因）
+signal vote_updated(state: Dictionary)    # 票型变化 / 掉线出分母
+signal vote_resolved(result: Dictionary)  # 收口结论（随后紧跟 applied 的 compound_ruling）
 
 # ---- 外部注入 ----
 var game = null                 # GameManager 实例（外部持有，本层不 new）
@@ -79,6 +90,15 @@ var allow_watchers: bool = true
 # 看起来就像卡死 —— 只有一条 D20 的 bye 兜不住异常退出。
 var heartbeat_ms: int = 1000
 var heartbeat_timeout_ms: int = 12000
+
+# ---- D22：化合物质疑投票 ----
+# vote_enabled：房主开关（关掉 = 回到「化学性不合法直接拒」的老行为）。
+#   它不进 _config：投票不改变牌库 / 规则判定，只改变「被拒之后怎么处理」。
+var vote_enabled: bool = true
+var vote_timeout_ms: int = DEFAULT_VOTE_TIMEOUT_MS
+var _vote = null                     # 仅主机：正在进行的投票箱（VoteBox）；null = 没有
+var _vote_view: Dictionary = {}      # 客人（以及主机 UI 的统一读口）：最新投票快照
+var _vote_next_id: int = 0           # 仅主机：本局投票号自增（1 起，进事件便于对账）
 
 # ---- 房间 / 座位表 ----
 var my_seat: int = WATCHER_SEAT
@@ -224,6 +244,10 @@ func close(reason: String = "主动退出") -> void:
 	var was_host_live := role == Role.HOST and state != State.IDLE
 	_closed_reason = reason
 	state = State.CLOSED          # 先置 CLOSED：poll 回放的包一律被守卫挡掉
+	# D22：还开着的投票直接作废（不发结论 —— 会话都要没了，罚抽也落不到任何地方）。
+	# 不清会让 UI 的投票遮罩永远收不掉（它只认 vote_resolved）。
+	_vote = null
+	_vote_view = {}
 	if was_host_live and transport != null:
 		# 房主收房（D20）：ENet 关服不保证对端立刻收到 peer_disconnected（局域网里
 		# 常见几秒延迟，甚至整个丢），所以先特意广播一条 bye 再 poll 一次把队列
@@ -261,6 +285,10 @@ func _reset_session() -> void:
 	lobby_ai = 0
 	_last_rx_ms = 0
 	_last_ping_ms = 0
+	# D22：投票状态属于「本局」，换局必须清空（投票号也从 1 重新数）
+	_vote = null
+	_vote_view = {}
+	_vote_next_id = 0
 
 
 # ============================================================
@@ -380,6 +408,10 @@ func can_submit() -> bool:
 		return false
 	if pending_seat() != WATCHER_SEAT:
 		return false
+	# D22：投票期间全场冻结 —— 出题人不能悔牌 / 再出，其他人也不能插队出牌，
+	# 否则「投票裁的那一手」与「牌桌上已经变成的局面」会打架。
+	if vote_open():
+		return false
 	return true
 
 
@@ -393,6 +425,95 @@ func pending_seat() -> int:
 	if role == Role.HOST:
 		return int(_pending.get("seat", WATCHER_SEAT))
 	return _pending_seat
+
+
+# ============================================================
+# 二之二、D22：化合物质疑投票（UI / ActionRouter 的读口）
+# ============================================================
+# 是否有一场投票正在进行
+func vote_open() -> bool:
+	if role == Role.HOST:
+		return _vote != null and bool(_vote.is_open())
+	return not _vote_view.is_empty() and not bool(_vote_view.get("resolved", false))
+
+
+# 最新投票快照（主机实时算；客人是最近一次广播的镜像）。空字典 = 没有投票。
+func vote_state() -> Dictionary:
+	if role == Role.HOST:
+		if _vote == null:
+			return {}
+		return _vote.snapshot(Time.get_ticks_msec())
+	return _vote_view.duplicate(true)
+
+
+# 剩余等待毫秒（主机实时算；客人读快照里带过来的值）
+func vote_remain_ms() -> int:
+	if role == Role.HOST:
+		if _vote == null:
+			return 0
+		return int(_vote.remain_ms(Time.get_ticks_msec()))
+	return int(_vote_view.get("remain_ms", 0))
+
+
+# 我要不要投票 / 我投过没有（UI 决定显示「赞成 / 反对」还是「已投，等待其他玩家」）
+func am_i_voter() -> bool:
+	if is_watcher() or _vote_view.is_empty() and _vote == null:
+		return false
+	var snap := vote_state()
+	if snap.is_empty():
+		return false
+	var voters = snap.get("voters", [])
+	if not (voters is Array):
+		return false
+	return voters.has(my_seat)
+
+
+func my_vote() -> int:
+	if is_watcher():
+		return -1
+	var snap := vote_state()
+	var votes = snap.get("votes", {})
+	if not (votes is Dictionary) or not votes.has(my_seat):
+		return -1
+	return 1 if bool(votes[my_seat]) else 0
+
+
+# 现在能不能发起质疑：有会话 / 对局中 / 开关打开 / 没有进行中的投票 /
+# 且**至少有一个能投票的真人**（否则开了票也只能超时不通过，白白罚抽）。
+func can_claim() -> bool:
+	if not vote_enabled or state != State.PLAYING or game == null:
+		return false
+	if is_watcher() or _desynced or game.is_game_over():
+		return false
+	if vote_open() or pending_seat() != WATCHER_SEAT:
+		return false
+	return not _voter_seats(my_seat).is_empty()
+
+
+# 谁能投这一票：在线 + 人类 + 不是出题人。AI 座位不参与（没有判断力），
+# 掉线的座位当时就已经出分母了（VoteBox.remove_voter）。
+func _voter_seats(proposer: int) -> Array:
+	var out: Array = []
+	for key in _seat_state.keys():
+		var s := int(key)
+		if s == int(proposer):
+			continue
+		if not is_valid_player_seat(s):
+			continue
+		if is_seat_ai(s):
+			continue
+		if int(_seat_state[s]) != SeatState.ONLINE:
+			continue
+		out.append(s)
+	out.sort()
+	return out
+
+
+# 座位号是否落在一局真实存在的玩家范围内（观战者 / 越界都不算）
+func is_valid_player_seat(seat: int) -> bool:
+	if game == null or seat < 0:
+		return false
+	return seat < game.players.size()
 
 
 # ============================================================
@@ -491,6 +612,19 @@ func _dispatch(peer_id: int, msg: Dictionary) -> void:
 		NetProtocolScript.MSG_BYE:
 			if role == Role.CLIENT:
 				_client_on_bye(peer_id, msg)
+		# D22：投票（主机收票 / 客人收状态与结论）
+		NetProtocolScript.MSG_VOTE_CAST:
+			if role == Role.HOST:
+				_host_on_vote_cast(peer_id, msg)
+		NetProtocolScript.MSG_VOTE_REQUEST:
+			if role == Role.CLIENT:
+				_client_on_vote(msg, true)
+		NetProtocolScript.MSG_VOTE_STATE:
+			if role == Role.CLIENT:
+				_client_on_vote(msg, false)
+		NetProtocolScript.MSG_VOTE_RESULT:
+			if role == Role.CLIENT:
+				_client_on_vote_result(msg)
 		_:
 			if role == Role.HOST:
 				error_raised.emit(NetProtocolScript.ERR_UNKNOWN_MESSAGE, "未知消息: " + mtype)
@@ -625,6 +759,11 @@ func _send_welcome(to_peer: int, seat: int, token: String, resume: bool,
 	if resume and pending_seat() != WATCHER_SEAT:
 		# 只告知剩余时间，不重置计时 —— 否则断线就能无限拖延
 		welcome["pending"] = {"seat": pending_seat(), "remain_ms": _pending_remain_ms()}
+	# D22：投票中重连同样只给剩余时间（投票超时由主机的 _poll_timeouts 判）
+	if vote_open():
+		var vsnap := vote_state()
+		vsnap["remain_ms"] = vote_remain_ms()
+		welcome["vote"] = vsnap
 	_send(to_peer, welcome)
 	if state != State.LOBBY:
 		_send(to_peer, _make_snapshot_msg())
@@ -659,6 +798,8 @@ func _make_snapshot_msg() -> Dictionary:
 		"seats": _seat_list(),
 		"pending_seat": pending_seat(),
 		"remain_ms": _pending_remain_ms(),
+		# D22：投票中重连 / 中途加入：不带这一项，新界面就永远等不到遮罩
+		"vote": vote_state(),
 	}
 
 
@@ -685,10 +826,15 @@ func _client_on_welcome(peer_id: int, msg: Dictionary) -> void:
 	_take_config(msg.get("config", null))
 	_sync_seat_list(msg.get("seats", []))
 	_pending_seat = WATCHER_SEAT
+	_vote_view = {}
 	var pend = msg.get("pending", null)
 	if pend is Dictionary:
 		_pending_seat = int(pend.get("seat", WATCHER_SEAT))
 		sequence_pending.emit(_pending_seat, int(pend.get("remain_ms", 0)))
+	# D22：重连时正卡在投票里 → 立刻把遮罩补回来（否则新界面上什么都没有，
+	# 玩家以为对局卡死，实际在等他投票）
+	if msg.has("vote"):
+		_client_on_vote({"vote": msg.get("vote", {})}, true)
 	# 未开局 → 待在房间；已开局 → 紧跟的 snapshot 会把它建成 PLAYING
 	if state != State.PLAYING:
 		state = State.LOBBY
@@ -737,6 +883,10 @@ func _client_on_snapshot(msg: Dictionary) -> void:
 		_player_count, _ai_count, _local_event_count(), _hash_text(_last_hash)])
 	_sync_seat_list(msg.get("seats", []))
 	_sync_pending_from(msg)
+	# D22：快照里带投票 → 覆盖本地镜像（重连 / 失配修复后遮罩与主机一致）
+	_vote_view = {}
+	if msg.has("vote"):
+		_client_on_vote({"vote": msg.get("vote", {})}, true)
 	state = State.PLAYING
 	room_changed.emit()
 	game_started.emit()
@@ -823,6 +973,12 @@ func _client_on_rejected(msg: Dictionary) -> void:
 	if code == NetProtocolScript.ERR_ROOM_FULL:
 		close("房间已满，无法加入")
 		return
+	# D22：投票类的拒绝与「意图被拒」不是一回事 —— 它不会改变「已发出」记账，
+	# 走 intent_rejected 会让 ActionRouter 误清 awaiting、UI 弹出「主机拒绝」。
+	if code == NetProtocolScript.ERR_NO_VOTE or code == NetProtocolScript.ERR_NOT_VOTER:
+		error_raised.emit(code, "这次投票已经结束（%d）" % code if code == NetProtocolScript.ERR_NO_VOTE
+			else "你不在这次投票的名单里（%d）" % code)
+		return
 	intent_rejected.emit(seq, code)
 
 
@@ -834,6 +990,29 @@ func _client_on_pending_sequence(msg: Dictionary) -> void:
 		return
 	_pending_seat = seat
 	sequence_pending.emit(seat, int(msg.get("remain_ms", 0)))
+
+
+# ---- 客人：D22 投票状态 ----
+# 客人不持有 VoteBox：它只是主机快照的镜子。这样「谁投了什么」永远只有一个权威。
+func _client_on_vote(msg: Dictionary, is_new: bool) -> void:
+	var snap = msg.get("vote", null)
+	if not (snap is Dictionary) or (snap as Dictionary).is_empty():
+		return
+	_vote_view = (snap as Dictionary).duplicate(true)
+	if is_new:
+		vote_opened.emit(_vote_view.duplicate(true))
+	else:
+		vote_updated.emit(_vote_view.duplicate(true))
+
+
+func _client_on_vote_result(msg: Dictionary) -> void:
+	var res = msg.get("result", null)
+	if not (res is Dictionary):
+		return
+	# 清镜像：收口之后 vote_open() 必须立刻变 false，否则 UI 的投票遮罩
+	# 要等下一帧的 applied 才关，客人会看到「已裁定」还挂着按钮。
+	_vote_view = {}
+	vote_resolved.emit((res as Dictionary).duplicate(true))
 
 
 # ============================================================
@@ -963,6 +1142,9 @@ func submit(intent_type: String, payload: Dictionary = {}) -> int:
 		var code := _validate_for_seat(my_seat, ev)
 		if code != 0:
 			return code
+		# D22：claim 不是规则事件，先翻译（合法 → 直接落子；化学性不合法 → 开票）
+		if String(ev.get("type", "")) == NetProtocolScript.INTENT_CLAIM:
+			return _host_apply_claim(my_seat, ev)
 		return _host_apply(my_seat, ev)
 	_my_seq += 1
 	_send(HOST_PEER_ID, {
@@ -1026,6 +1208,9 @@ func host_step_ai(max_steps: int = 4) -> int:
 	# 抢跑门控：客人还没按快照重建完就替 AI 出牌，客人重放必分叉
 	if not all_seats_ready():
 		return 0
+	# D22：投票期间冻结推进（AI 也不能替人做化学判断，更不能插队出牌）
+	if vote_open():
+		return 0
 	var steps := 0
 	while steps < max_steps:
 		if game.is_game_over():
@@ -1081,7 +1266,10 @@ func _host_on_intent(peer_id: int, msg: Dictionary) -> void:
 		_reject(peer_id, seq, code)
 		return
 	_last_seq[seat] = seq
-	var result := _host_apply(seat, ev)
+	# D22：claim 走翻译层（合法 → 落子；化学性不合法 → 开票，返回 0 不回 rejected）
+	var result: int = _host_apply_claim(seat, ev) \
+		if String(ev.get("type", "")) == NetProtocolScript.INTENT_CLAIM \
+		else _host_apply(seat, ev)
 	if result < 0:
 		_reject(peer_id, seq, result)
 
@@ -1093,6 +1281,10 @@ func _validate_for_seat(seat: int, ev: Dictionary) -> int:
 		return NetProtocolScript.ERR_BAD_EVENT
 	if int(ev.get("by", -1)) != seat:
 		return NetProtocolScript.ERR_WRONG_SEAT          # 谁也不许替别人出牌
+	# D22：投票期间全场冻结。票走 MSG_VOTE_CAST（不进这条校验），
+	# 所以这里拒掉一切意图 = 出题人不能悔牌、别人不能插队。
+	if vote_open():
+		return NetProtocolScript.ERR_VOTE_PENDING
 	var pend := pending_seat()
 	if pend != WATCHER_SEAT:
 		# 两阶段冻结：牌权已移交但约束还没定，此时只接受「本人指定/跳过」
@@ -1159,6 +1351,195 @@ func _reject(peer_id: int, seq: int, code: int) -> void:
 		"seq": seq,
 		"code": code,
 	})
+
+
+# ============================================================
+# 八之三、D22：化合物质疑投票（主机权威）
+# ============================================================
+# claim 意图 → 普通规则码。>=0 表示「这一手本来就合法」（那就直接落子，
+# 不许用质疑绕过 -2/-4 之类的接牌判定）；<0 才有资格转投票。
+# 注意：这里跑的是 validate_play（只读），顺带把 last_reject_reason 写好 ——
+# 开票时那句「人话原因」就是它写的。
+func _claim_rule_code(seat: int, ev: Dictionary) -> int:
+	var uids = ev.get("uids", [])
+	if not (uids is Array) or (uids as Array).is_empty():
+		return NetProtocolScript.ERR_BAD_EVENT
+	var cards: Array = game.get_cards_by_uids(seat, uids)
+	if cards.is_empty():
+		return NetProtocolScript.ERR_BAD_EVENT
+	return int(game.validate_play(seat, cards, game.normalize_valences(ev.get("valences", {})),
+		int(ev.get("pattern", CardPatternsScript.CardPattern.COMPOUND))))
+
+
+# claim 意图的唯一处理口（submit / _host_on_intent 都走这里）
+func _host_apply_claim(seat: int, ev: Dictionary) -> int:
+	var rule := _claim_rule_code(seat, ev)
+	if rule == NetProtocolScript.ERR_BAD_EVENT:
+		return NetProtocolScript.ERR_BAD_EVENT
+	if rule >= 0:
+		# 本来就合法：当普通出牌落子（客户端可能是因为本地旧局面才误发质疑）
+		var play_ev := NetProtocolScript.make_intent(NetProtocolScript.INTENT_PLAY, seat, {
+			"uids": ev.get("uids", []),
+			"valences": ev.get("valences", {}),
+			"pattern": int(ev.get("pattern", CardPatternsScript.CardPattern.COMPOUND)),
+		})
+		return _host_apply(seat, play_ev)
+	if _host_open_vote(seat, ev, rule) == 0:
+		return 0            # 0 = 已开票（ActionRouter 只当「已受理」）
+	return rule
+
+
+# 开票尝试。rule_code 是规则引擎刚才给出的拒绝码：
+#   只有 -1（配不平）/ -7（卤族互化）这两种「化学性」可以被投票推翻；
+#   -2 牌不够大 / -3 族炸 / -4 接不上 / -6 顺序约束 / -8 元素限制 一律硬拒 ——
+#   它们与化学是否说得通无关，投票没有立场改判。
+# 返回 0 = 已开票（调用方不得再 _reject）；< 0 = 不适用（调用方按原逻辑处理）。
+func _host_open_vote(seat: int, ev: Dictionary, rule_code: int) -> int:
+	if role != Role.HOST or not vote_enabled:
+		return -1
+	if String(ev.get("type", "")) != NetProtocolScript.INTENT_CLAIM:
+		return -1
+	if rule_code != -1 and rule_code != -7:
+		return -1
+	var uids = ev.get("uids", [])
+	if not (uids is Array):
+		return -1
+	var cards: Array = game.get_cards_by_uids(seat, uids)
+	if cards.is_empty():
+		return -1
+	var valences: Dictionary = game.normalize_valences(ev.get("valences", {}))
+	var pattern := int(ev.get("pattern", CardPatternsScript.CardPattern.COMPOUND))
+	# ① 先按普通规则再判一次：顺手拿到「人话原因」给其他玩家看
+	#    （play_cards 刚失败过，这里只是把诊断字段重新写好，无副作用）
+	if int(game.validate_play(seat, cards, valences, pattern)) >= 0:
+		return -1          # 局面已变，这一手本来就合法 —— 不许走质疑（避免绕过接牌判定）
+	var why: String = game.get_last_reject_reason()
+	# -7 卤族互化是「规则表直接拒」，引擎没写人话原因；-1 才有（Σ / 比例）。
+	# 兜一句通用文案，别让投票遮罩上出现空原因。
+	if why == "":
+		why = "化学上说不通（化合价 / 卤族互化），交由其他玩家裁定"
+	# ② 质疑预检：只放宽化学性两条。过不去就连投票都没有意义。
+	if int(game.validate_play_claim(seat, cards, valences, pattern)) < 0:
+		return -1
+	var voters := _voter_seats(seat)
+	if voters.is_empty():
+		return -1          # 没有其他真人在场：开票只会超时 + 罚抽，不如直接拒
+	_vote_next_id += 1
+	var vb = VoteBoxScript.new()
+	vb.open(_vote_next_id, seat, voters, {
+		"uids": (uids as Array).duplicate(),
+		"valences": valences.duplicate(true),
+		"pattern": pattern,
+	}, why, Time.get_ticks_msec(), vote_timeout_ms)
+	_vote = vb
+	var snap: Dictionary = vb.snapshot(Time.get_ticks_msec())
+	_trace("HOST vote_open vid=%d by=%d voters=%s reason=%s" % [
+		_vote_next_id, seat, str(voters), why])
+	_broadcast({
+		"type": NetProtocolScript.MSG_VOTE_REQUEST,
+		"vote": snap,
+	})
+	vote_opened.emit(snap)
+	return 0
+
+
+# 主持人收票（主机自己那一票也走这里：投票人包含房主时同样能投）。
+func _host_cast_vote(seat: int, approve: bool) -> int:
+	if role != Role.HOST:
+		return NetProtocolScript.ERR_NOT_HOST
+	if _vote == null or not bool(_vote.is_open()):
+		return NetProtocolScript.ERR_NO_VOTE
+	var code: int = int(_vote.cast(seat, approve))
+	if code != 0:
+		return code
+	_broadcast_vote_state()
+	var settle: String = String(_vote.settle_cause())
+	if settle != "":
+		_host_resolve_vote(settle)
+	return 0
+
+
+func _broadcast_vote_state() -> void:
+	if role != Role.HOST or _vote == null:
+		return
+	var snap: Dictionary = _vote.snapshot(Time.get_ticks_msec())
+	_broadcast({
+		"type": NetProtocolScript.MSG_VOTE_STATE,
+		"vote": snap,
+	})
+	vote_updated.emit(snap)
+
+
+# 收口：结论先广播（UI 关遮罩），再走一笔**权威事件** compound_ruling
+# 落子 / 罚抽。三端重放的是同一笔事件，所以 index 一致、指纹一致。
+func _host_resolve_vote(cause: String) -> void:
+	if role != Role.HOST or _vote == null:
+		return
+	var snap: Dictionary = _vote.resolve(cause)
+	_vote = null                 # 先摘掉：收口过程中一律不再收票
+	var by := int(snap.get("by", WATCHER_SEAT))
+	var ev: Dictionary
+	if bool(snap.get("approved", false)):
+		var claim = snap.get("claim", {})
+		var claim_dict: Dictionary = claim if claim is Dictionary else {}
+		ev = NetProtocolScript.make_intent("compound_ruling", by, {
+			"approved": true,
+			"uids": claim_dict.get("uids", []),
+			"valences": claim_dict.get("valences", {}),
+			"pattern": int(claim_dict.get("pattern", CardPatternsScript.CardPattern.COMPOUND)),
+		})
+	else:
+		ev = NetProtocolScript.make_intent("compound_ruling", by, {
+			"approved": false,
+			"cause": String(snap.get("cause", "")),
+		})
+	_trace("HOST vote_result vid=%d approved=%s cause=%s votes=%s/%d" % [
+		int(snap.get("vid", 0)), str(snap.get("approved", false)),
+		String(snap.get("cause", "")), str(snap.get("approve_count", 0)),
+		int(snap.get("total", 0))])
+	_broadcast({
+		"type": NetProtocolScript.MSG_VOTE_RESULT,
+		"result": snap,
+	})
+	vote_resolved.emit(snap)
+	var result := _host_apply(by, ev)
+	if result < 0:
+		# 走到这里说明「预检通过、落子却被拒」——理论上不可能（投票期间全场冻结）。
+		# 真出现就留痕，别静默吞掉：玩家会看到投票通过但牌没出去。
+		error_raised.emit(result, "投票结论落子失败（引擎 %d）" % result)
+
+
+func _host_on_vote_cast(peer_id: int, msg: Dictionary) -> void:
+	var seat := seat_of_peer(peer_id)
+	if seat == WATCHER_SEAT:
+		_send(peer_id, {"type": NetProtocolScript.MSG_REJECTED, "seq": 0,
+			"code": NetProtocolScript.ERR_NOT_VOTER})
+		return
+	if _vote == null or int(msg.get("vid", -1)) != int(_vote.vid):
+		_send(peer_id, {"type": NetProtocolScript.MSG_REJECTED, "seq": 0,
+			"code": NetProtocolScript.ERR_NO_VOTE})
+		return
+	var code: int = _host_cast_vote(seat, bool(msg.get("approve", false)))
+	if code < 0:
+		_send(peer_id, {"type": NetProtocolScript.MSG_REJECTED, "seq": 0, "code": code})
+
+
+# 对外唯一的投票入口（VoteUI 只调这个）：主机本地记票，客人把票发给主机。
+func cast_vote(approve: bool) -> int:
+	if state != State.PLAYING or game == null or is_watcher():
+		return NetProtocolScript.ERR_NOT_READY
+	if _desynced:
+		return NetProtocolScript.ERR_DESYNC
+	if role == Role.HOST:
+		return _host_cast_vote(my_seat, approve)
+	if not vote_open():
+		return NetProtocolScript.ERR_NO_VOTE
+	_send(HOST_PEER_ID, {
+		"type": NetProtocolScript.MSG_VOTE_CAST,
+		"vid": int(_vote_view.get("vid", 0)),
+		"approve": bool(approve),
+	})
+	return 0
 
 
 # ============================================================
@@ -1280,6 +1661,14 @@ func _handle_seat_offline(seat: int) -> void:
 		"grace_ms": reconnect_grace_ms,
 	})
 	peer_left.emit(seat, seat_name(seat), reconnect_grace_ms)
+	# D22：掉线的正是投票人 → 立刻出分母（它已投的票一并作废），并按新票型复查收口。
+	# 不这么做的话，一个已经离开的人能把整局卡满 vote_timeout_ms。
+	if _vote != null and bool(_vote.remove_voter(seat)):
+		_trace("HOST vote_drop seat=%d voters=%s" % [seat, str(_vote.voters)])
+		_broadcast_vote_state()
+		var settle: String = String(_vote.settle_cause())
+		if settle != "":
+			_host_resolve_vote(settle)
 	# 掉的正是两阶段里被等的那个座位 → 不干等，按「跳过」托管，牌权立刻流转
 	if pending_seat() == seat:
 		_take_over_pending(seat)
@@ -1318,6 +1707,9 @@ func _poll_timeouts() -> void:
 	if state == State.PLAYING and pending_seat() != WATCHER_SEAT \
 			and int(_pending.get("deadline", 0)) <= now:
 		_take_over_pending(pending_seat())
+	# D22：投票超时 → 视同不通过（出牌撤销 + 罚抽），绝不能让一局停在投票上
+	if state == State.PLAYING and _vote != null and bool(_vote.expired(now)):
+		_host_resolve_vote(VoteBoxScript.CAUSE_TIMEOUT)
 	# 宽限到期只是不再提示，座位与 token 一直留着，重连随时能回来（见 R11）
 	for key in _offline_deadline.keys():
 		if int(_offline_deadline[key]) <= now:
