@@ -1494,7 +1494,16 @@ func _canonical_string() -> String:
 			str(p.clan_bomb_cooling),
 			str(p.is_ai),
 		])
-	parts.append("logs=%d" % log_messages.size())
+	# 指纹只放**规则状态**，不放任何「进度计数」。进度已经由 turn= 覆盖，
+	# 精确的事件进度由联机层单独把关（ready 握手比 event_log 条数、每笔
+	# applied 逐笔比）。为什么这一行曾出过事（D23）：
+	#   1) 写 logs=<log_messages.size()>：log_messages 是 UI 的待消费队列，
+	#      SidePanels._update_log_label() 每帧 flush_logs() 清空它 → 同一局面
+	#      能算出两个指纹，真机开局第 0 笔稳定误报 -109（主机 3767668832 /
+	#      手机 3801224070，两端局面其实完全一致）。
+	#   2) 改成 events=<event_log.size()> 也不行：单机直调 play_cards /
+	#      player_pass 不写 event_log，只有 apply_event 写，两条等价路径的
+	#      指纹会分开（verify_ai_plan B 立刻转红）。
 	return "\n".join(parts)
 
 

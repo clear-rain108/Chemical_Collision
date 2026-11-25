@@ -10,7 +10,12 @@ extends RefCounted
 # 为什么必须升版本：v1 的客人收到 vote_* 会当未知消息丢弃（主机侧还会报 -100），
 # 于是「出题人以为在投票、客人根本没收到」。PROTO_VERSION 不符时
 # _host_on_hello 会直接拒绝握手（见 NetSession），新旧 APK 不能同房。
-const PROTO_VERSION = 2
+# v3（D23）：state_hash 改成**只含规则状态**，不再含任何进度计数。
+# 为什么必须升版本：v2 把 log_messages.size()（UI 待消费队列长度）写进了指纹，
+# 而牌桌日志面板每帧都 flush_logs() 清空它 → 同一局面能算出两个指纹
+# （真机开局第 0 笔误报 -109）。指纹语义变了，v2 / v3 混连必然判分叉，
+# 所以干脆在握手阶段就明确拒绝。
+const PROTO_VERSION = 3
 
 # ---- 消息类型（字符串常量便于 JSON 直传）----
 const MSG_HELLO = "hello"

@@ -1,6 +1,6 @@
 # 化学碰撞（Chemical Collision）联机架构设计文档
 
-> 版本：v1.3 ｜ 状态：**设计定稿；P11-B 地基、P11-C1-a 传输、P11-C1-b 会话层均已实现；P11-C1-c Step 0 真机冒烟脚本已就绪；D22 化合物质疑投票（协议 v2）已落地**
+> 版本：v1.4 ｜ 状态：**设计定稿；P11-B 地基、P11-C1-a 传输、P11-C1-b 会话层均已实现；P11-C1-c Step 0 真机冒烟脚本已就绪；D22 化合物质疑投票（协议 v2）已落地；D23 指纹去 UI 化（协议 v3）已落地**
 > 适用范围：3~8 人朋友局（默认 4），跨局域网 P2P（无端口映射条件）
 > 相关文档：[`ARCHITECTURE.md`](ARCHITECTURE.md)（单机架构）、[`GAMEPLAY_RULES.md`](GAMEPLAY_RULES.md)（规则）、[`UI_POLISH_PLAN.md`](UI_POLISH_PLAN.md)（UI 计划）
 
@@ -1156,8 +1156,98 @@ _host_apply_claim(seat, ev):
 | `verify_action_router.gd` C 段 | 94（全套） | `describe_code` / 单机 `claimable=false` / `claim_compound` / 投票期间冻结 / 三端指纹 |
 | `verify_vote_ui.gd` | 47 | 遮罩层级 / 牌面 / 票型文案 / 冻结面板 / 投票只发一次 / 非投票人 / 四类结论文案 / 倒计时自愈 / 重连补开 / 会话关闭 / 桌面标记 |
 
-现状：全量 52 套绿（`verify_net_session` 221 / `verify_net_vote` 83 / `verify_vote_box` 50 / `verify_vote_ui` 47 / `verify_action_router` 94）。
+现状：全量 53 套绿（`verify_net_session` 221 / `verify_net_vote` 83 / `verify_vote_box` 50 / `verify_vote_ui` 47 / `verify_action_router` 94 / `verify_state_hash_ui` 21）。
 
 **负向自检**：把 `validate_play_claim()` 的 `allow_override` 临时改回 `false` 跑一遍
 `verify_net_vote` → 立刻 4 项 FAIL（找不到可质疑组合、白名单不成立），确认这条护栏是**真的在生效**，
 而不是「测试恰好都走普通路径」。
+
+---
+
+### D.15 指纹里不许放「进度计数」——真机 -109 误报的根因（D23）
+
+#### 现象
+
+真机（Android 开房 / 加入）开局瞬间，**主机**弹一次：
+
+> 座位 1 重建后指纹不一致（对端 3801224070 / 主机 3767668832，第 0 笔）
+
+一笔都没打，游戏却完全正常（能出牌、能投票）。这条告警是**假**的 ——
+两端局面其实完全一致，只是「比对基准」不同。
+
+#### 根因
+
+v2 的 `_canonical_string()` 末尾写着：
+
+```gdscript
+parts.append("logs=%d" % log_messages.size())   # ← log_messages 是「待消费队列」
+```
+
+`log_messages` 表达的不是「说过多少句话」，而是 **UI 还没取走的话**：
+
+| 位置 | 行为 |
+|---|---|
+| `GameLogger.add_log()` | 往队列里塞一条 |
+| `SidePanels._update_log_label()` | **每刷新一帧就 `flush_logs()`，把队列清空**（`GameLogger.flush_logs()` 内部 `clear()`） |
+
+于是同一个局面能算出两个指纹：
+
+- 手机 `_send_ready()`：刚 `init_game`，它的 UI 还没消费 → `logs=2`
+- 主机 `_host_on_ready()`：poll 到 ready 时面板早就消费完了 → `logs=0`
+
+`_host_on_ready()` 只 `error_raised.emit(ERR_DESYNC)`、**不置 `_desynced`**，所以主机照常打；
+手机侧比对的是 `game_start` 里带的 hash（那一瞬两端都还没 flush）→ 也通过。
+结果就是「一次吓人的 toast + 一切正常」。
+
+为什么 52 套测试全绿也查不出来：headless 下没有任何 UI，没人 `flush_logs()`，
+两端 `log_messages.size()` 永远相同 —— 这个量在测试环境里恰好是常量。
+
+#### 修法（D23）
+
+`_canonical_string()` **只放规则状态**，不放任何进度计数：
+
+- 进度本来就有 `turn=%d`（换手次数，规则状态，两端同步推进）；
+- **精确**的事件进度由联机层单独把关：`_host_on_ready()` 比 `event_log.size()`、
+  `_client_on_applied()` 每收到一笔都比。
+
+```gdscript
+# v2 的这行直接删掉，且不要再找替代品
+parts.append("logs=%d" % log_messages.size())
+```
+
+两个「看起来更合理」的替代**都不行**，别走回头路：
+
+| 替代方案 | 为什么不行 |
+|---|---|
+| `events=<event_log.size()>` | 单机直调 `play_cards()` / `player_pass()` **不写** `event_log`，只有 `apply_event()` 写 → 同一手牌的两种等价路径指纹会分开（`verify_ai_plan` B 段当场转红，该套件明确要求「单机侧 event_log 保持为空」） |
+| 给 `GameLogger` 加「累计写入数」 | 规则层大量 `log_messages.append(...)` 直接写数组、绕过 `add_log()`，计数会漏；要修就得把这些调用点全改成 `logger.add_log()`，代价大于收益，而且它仍然是「展示层产物」混进规则指纹 |
+
+#### 协议升 v3
+
+指纹语义变了（v2 含待消费日志条数），v2 / v3 混连必然判分叉 →
+`PROTO_VERSION 2 → 3`，握手阶段直接拒绝并给出可读原因。
+**两端必须换同一批包**（`chemical-pre1005.9` 起的 APK / exe）。
+
+#### 守门测试 `tests/verify_state_hash_ui.gd`（21 项）
+
+| 段 | 断言 |
+|---|---|
+| S0 | 指纹里不再出现 `logs=` / `events=`；反向自检「旧公式确实会算出另一个指纹」 |
+| S1 | `flush_logs()` 前后 `state_hash()` 不变；出牌后再 flush 仍不变；flush 不影响 `event_log` |
+| S2 | 主机已 flush / 客人未 flush → 指纹相同；逐笔推进时两端 flush 节奏不同（主机每笔、客人隔笔）也不分叉 |
+| S3 | 主机边打边 flush vs 客人 `replay_events()` → 指纹与 `event_log` 全对齐 |
+| S4 | `to_snapshot()["log_count"]` 仍随 flush 归零（UI 语义没被误伤，只是不再进指纹） |
+| S5 | 复现 `_host_on_ready`：主机重算 == 客人 ready 报的指纹（不再 -109）+ 旧公式在此路径确实分叉 |
+
+实测：全量 **53 套绿**（`verify_net_session` 221 / `verify_net_vote` 83 /
+`verify_ui_online` 101 / `verify_state_hash_ui` 21 / `verify_ai_plan` 156）。
+
+#### 再次遇到 -109 的排查顺序（先看这三条）
+
+1. **`--net-trace` 对比第 0 行**：`HOST game_start hash=` 与 `CLIENT game_start hash=`
+   若相同，说明局面一致，问题出在「之后某个时刻重算」的量上（本例就是）。
+2. **只在真机复现、PC / headless 不复现** → 优先怀疑 UI 时序与 UI 队列，
+   而不是牌序或平台 RNG（`RandomNumberGenerator` 是 PCG32，跨平台一致）。
+3. **看 `_desynced` 有没有被置**：主机 `_host_on_ready()` 只弹错不锁死；
+   客人侧 `_client_on_applied()` 才置位并让 `cast_vote / 出牌` 一路 `-109`。
+   「只弹一次 toast、游戏照常」= 比对基准错了，不是真分叉。
