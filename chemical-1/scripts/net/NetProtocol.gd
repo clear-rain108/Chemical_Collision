@@ -15,7 +15,11 @@ extends RefCounted
 # 而牌桌日志面板每帧都 flush_logs() 清空它 → 同一局面能算出两个指纹
 # （真机开局第 0 笔误报 -109）。指纹语义变了，v2 / v3 混连必然判分叉，
 # 所以干脆在握手阶段就明确拒绝。
-const PROTO_VERSION = 3
+# v4（D24）：新增对局模式 game_mode（config.game_mode + state_hash 的 mode=%d）。
+# 为什么必须升版本：v3 的客人不认识 config.game_mode，会按标准局重放骷髅局主机
+# 广播的族炸 → 第一颗族炸才爆 -109。标准局 ↔ 标准局的房间其实兼容，但「协议允许
+# 存在对方不认识的规则字段」本身就是隐匿分叉的温床，整版拒绝更省事。
+const PROTO_VERSION = 4
 
 # ---- 消息类型（字符串常量便于 JSON 直传）----
 const MSG_HELLO = "hello"

@@ -65,6 +65,7 @@ chemical-1/
 │   ├── CardPatterns.gd                ← 牌型计算：detect_pattern/族炸/顺序/比大小
 │   ├── CompoundSolver.gd              ← 化合物形成：配平/IUPAC命名/有机物识别
 │   ├── GameManager.gd                 ← 规则引擎：play_cards/牌权/接炸/上限弃牌
+│   ├── GameModes.gd                   ← 对局模式表：模式 → 规则开关（纯数据 + 静态查询）
 │   ├── AIPlayer.gd                    ← AI决策：plan() 只读意图 + auto_play() 单机落子
 │   ├── TutorialController.gd          ← 教程状态机：关卡初始化/预设手牌/进度检查
 │   ├── HelpContent.gd                 ← 帮助中心内容：3 Tab 卡片数据（静态）
@@ -72,8 +73,8 @@ chemical-1/
 │   ├── ui/                            ← 11 个 UI 模块（RefCounted，只持 _ui 回引；见 §8.0）
 │   │   ├── UITheme / TouchMetrics / Toast / PageRouter / CardMotion
 │   │   └── HandView / TableArea / SidePanels / ActionPanel / ToolRow / VoteUI
-│   ├── pages/                         ← PageChrome / StartPage / SuppRulesPage / HelpPage
-│   │                                    EndPage / TutorialPage / RoomPage
+│   ├── pages/                         ← PageChrome / StartPage / SuppRulesPage / ModePage
+│   │                                    HelpPage / EndPage / TutorialPage / RoomPage
 │   ├── game/                          ← GameFlow（开局/结果/步骤重置）/ HintFlow（提示）
 │   ├── tutorial/                      ← Level0Overlay（第零关 Phase1~3）
 │   └── net/                           ← NetSession / ActionRouter / OnlineUI / NetProtocol
@@ -84,7 +85,7 @@ chemical-1/
 │   ├── move_funcs.gd                  ← 搬运工具（切片时整段搬方法）
 │   ├── gen_facade_list.gd             ← 生成 verify_ui_facade 的方法清单
 │   └── unprefix_siblings.gd           ← 搬完还原「同模块兄弟方法」的调用前缀
-├── tests/                             ← 52 套 verify_*.gd + net_smoke.gd（多进程真机联机冒烟）
+├── tests/                             ← 53 套 verify_*.gd + net_smoke.gd（多进程真机联机冒烟）
 ├── CHEMICAL_COLLISION_GAME.md         ← 游戏设计文档
 ├── GAMEPLAY_RULES.md                  ← 玩法规则文档
 ├── ARCHITECTURE.md                    ← 本文档
@@ -103,6 +104,7 @@ chemical-1/
 | **信息记录** | GameLogger.gd | 统一日志写入/缓存/获取 |
 | **人数规划** | PlayerManager.gd | 玩家创建、发牌、手牌上限计算 |
 | **AI决策** | AIPlayer.gd | AI 出牌策略（独立于 UI） |
+| **对局模式** | GameModes.gd（表）+ GameManager.gd（判定点） | 模式 → 规则开关；引擎只问开关，加模式只改表 |
 | **教程控制** | TutorialController.gd | 教程关卡状态机、预设手牌、进度检查 |
 | **数据层** | CardData.gd + CardDatabase.gd | 卡牌数据结构、牌库生成与洗牌 |
 
@@ -377,7 +379,7 @@ AIPlayer._execute_local(game_manager, p)                 # 单机落子：play_c
 
 **职责**: 门面 + 状态持有者 —— 常量/字段/装配、`_refresh_ui()` 编排、`_process` 分发，以及给全项目
 100+ 处调用点与 49 套测试留的**同名转发**。真正的实现按功能拆在 `scripts/ui · pages · game ·
-tutorial · net` 的 21 个模块里（AI 策略更早拆到了 `AIPlayer.gd`）。
+tutorial · net` 的 22 个模块里（AI 策略更早拆到了 `AIPlayer.gd`）。
 
 ### 8.0 UI 分层与刷新约定（门面 + 模块）
 
@@ -395,7 +397,7 @@ tutorial · net` 的 21 个模块里（AI 策略更早拆到了 `AIPlayer.gd`）
 | 5 | **不改测试**：任何「必须改 `tests/*.gd` 才能过」的改动都算方案错了，回退重做 | 49 套测试是验收基线；改测试等于把尺子改短 |
 | 6 | **「闸门 + 复位」的副作用，复位必须写在所有分支都会走到的位置**；跨手 / 跨帧的副作用优先按 `turn_count` 这类令牌判定，而不是裸布尔 | Slice 2b 的手牌复用路径提前 `return`，把 `ai_triggered = false` 留在重建分支里 → 第一台 AI 打完、人类手牌没变化 → 第二台 AI 永远排不上定时器，单机对局第一手之后必卡（49 套测试全绿也照样发生，见 §8.0 刷新约定末条）。同类事故第二次出现在**引擎侧**：`_finish_clan_bomb_chain()`（族炸接炸链终局）换手却没 `turn_count += 1` → 令牌原地不动 → 单机停在「无人接炸！」后永不续局（见 §8.0 AI 排程末条） |
 
-#### 模块表（`_init()` 里的 22 个 `ui_*` 实例）
+#### 模块表（`_init()` 里的 23 个 `ui_*` 实例）
 
 | 模块 | 文件 | 行数 | 职责 |
 |---|---|---|---|
@@ -415,6 +417,7 @@ tutorial · net` 的 21 个模块里（AI 策略更早拆到了 `AIPlayer.gd`）
 | page | `pages/PageChrome.gd` | 249 | 页面通用零件：渐变底 / 水印 / 装饰牌 / 按钮三件套 / 入场动画 |
 | start | `pages/StartPage.gd` | 389 | 开始页（标题 / 设置卡 / 按钮区 / 内联提示） |
 | supp | `pages/SuppRulesPage.gd` | 295 | 补充规则小页（4 张规则卡 / 元素池 / 勾选摘要） |
+| mode | `pages/ModePage.gd` | 155 | 对局模式小页（候选卡按 `GameModes.ORDER` 生成 / 单选 / 摘要回写） |
 | help | `pages/HelpPage.gd` | 499 | 帮助中心（3 Tab 懒加载 / 卡片 / 图鉴小卡） |
 | end | `pages/EndPage.gd` | 257 | 结算页（结算卡 / 统计块 / 按钮去向 / 淡入） |
 | tut | `pages/TutorialPage.gd` | 177 | 教学引导页（三张关卡卡 / 进出路由 / 错峰入场） |

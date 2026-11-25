@@ -124,6 +124,13 @@ func _build_end_page() -> void:
 	_ui._end_rule_note.size = Vector2(_ui.END_CARD_SIZE.x, 20)
 	card.add_child(_ui._end_rule_note)
 
+	# D24：对局模式一行（只有非标准局才有字，标准局留空 —— 老玩家界面零变化）
+	var mode_note = _ui._start_label("", 15, _ui.START_C_ACCENT, HORIZONTAL_ALIGNMENT_CENTER)
+	mode_note.name = "EndModeNote"
+	mode_note.position = Vector2(0, 372)
+	mode_note.size = Vector2(_ui.END_CARD_SIZE.x, 24)
+	card.add_child(mode_note)
+
 
 func _end_stat_style() -> StyleBoxFlat:
 	var sb := StyleBoxFlat.new()
@@ -206,6 +213,15 @@ func _fill_end_page(custom_text: String) -> void:
 			_ui._end_rule_note.text = "本局规则：%s    %s    %s    %s" % [org, seq, hal, lim]
 		else:
 			_ui._end_rule_note.text = ""
+
+	# -------- 对局模式（D24）：与规则行分开放，规则行已经占满 640 宽 --------
+	var mode_note = _ui.end_page.get_node_or_null("EndCard/EndModeNote") if _ui.end_page else null
+	if mode_note:
+		if _ui.game_manager and not _ui.game_manager.is_standard_game_mode():
+			var mode_diff: String = _ui.game_manager.get_game_mode_summary()
+			mode_note.text = "对局模式：%s" % (mode_diff if mode_diff != "" else _ui.game_manager.get_game_mode_name())
+		else:
+			mode_note.text = ""
 
 	# -------- 按钮去向：教程局回关卡列表，自由局回开始页 --------
 	if _ui.end_button:

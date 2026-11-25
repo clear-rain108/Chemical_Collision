@@ -7,6 +7,8 @@
 extends Control
 
 const GameManagerScript = preload("res://scripts/GameManager.gd")
+# 对局模式表（D24）：纯静态查询，UI 只读它，不复制任何规则判断
+const GameModesScript = preload("res://scripts/GameModes.gd")
 const CardDatabaseScript = preload("res://scripts/CardDatabase.gd")
 const CardPatternsScript = preload("res://scripts/CardPatterns.gd")
 const CompoundSolverScript = preload("res://scripts/CompoundSolver.gd")
@@ -40,6 +42,8 @@ const GameFlowScript = preload("res://scripts/game/GameFlow.gd")
 const PageChromeScript = preload("res://scripts/pages/PageChrome.gd")
 const StartPageScript = preload("res://scripts/pages/StartPage.gd")
 const SuppRulesPageScript = preload("res://scripts/pages/SuppRulesPage.gd")
+# 对局模式（D24）：候选来自 GameModes.ORDER，本文件只持有「选中了哪个」
+const ModePageScript = preload("res://scripts/pages/ModePage.gd")
 const HelpPageScript = preload("res://scripts/pages/HelpPage.gd")
 const EndPageScript = preload("res://scripts/pages/EndPage.gd")
 const TutorialPageScript = preload("res://scripts/pages/TutorialPage.gd")
@@ -65,6 +69,7 @@ var ui_flow = null                       # 开局 / 交互回调 / 结果处理 
 var ui_page = null                       # 页面通用零件（渐变底 / 水印 / 装饰牌 / 按钮三件套 / 入场动画）
 var ui_start = null                      # 开始页（标题 / 设置卡 / 按钮区 / 装饰牌 / 内联提示）
 var ui_supp = null                       # 补充规则小页（4 张规则卡 / 元素池 / 勾选摘要）
+var ui_mode = null                       # 对局模式小页（模式候选卡 / 选中摘要）
 var ui_help = null                       # 帮助中心（3 Tab 骨架 / 卡片 / 图鉴小卡 / 进出路由）
 var ui_end = null                        # 结算页（结算卡 / 统计块 / 按钮去向 / 淡入）
 var ui_tut = null                        # 教学引导页（三张关卡卡 / 进出路由 / 入场错峰）
@@ -396,6 +401,7 @@ func _init() -> void:
 	ui_page = PageChromeScript.new(self)
 	ui_start = StartPageScript.new(self)
 	ui_supp = SuppRulesPageScript.new(self)
+	ui_mode = ModePageScript.new(self)
 	ui_help = HelpPageScript.new(self)
 	ui_end = EndPageScript.new(self)
 	ui_tut = TutorialPageScript.new(self)
@@ -498,6 +504,10 @@ func _setup_pages() -> void:
 	var supp_entry = _start_child("SupplementaryHelpBtn")
 	if supp_entry:
 		supp_entry.pressed.connect(_open_supp_rules)
+	# 对局模式（D24）：设置卡右侧入口 → 模式小页（卡内单选，选完即生效）
+	var mode_entry = _start_child("ModeEntryBtn")
+	if mode_entry:
+		mode_entry.pressed.connect(_open_mode_page)
 	# 房间页（Step 4）：开始页「联机对战」→ 建房 / 加入。
 	# 页内按钮在 _build_room_page() 里已用回调绑定，这里不再 connect（否则报已连接）
 	var room_entry = _start_child("RoomEntryBtn")
@@ -555,6 +565,7 @@ func _setup_pages() -> void:
 	_apply_touch_sizing(get_node_or_null("TutorialPage"))
 	_apply_touch_sizing(help_page)
 	_apply_touch_sizing(_supp_rules_page)
+	_apply_touch_sizing(_mode_page)
 	_apply_touch_sizing(_room_page)
 	# 开关初值跟随当前档位（--touch-ui / 平台判定），用 no_signal 避免误触发一次「已开启」提示
 	_sync_touch_toggle()
@@ -698,6 +709,12 @@ var _supp_rules_page: Control = null
 var _supp_element_stats: Label = null
 var _supp_element_chips: Dictionary = {}
 
+# 对局模式（D24）：整页容器 + 本局选中的模式。
+# 为什么状态在 root 而不在 ModePage 里：NetSession 的 config 与 GameManager.game_mode
+# 都以这里为「玩家选的」，页面每次打开都按它重放选中态。
+var _mode_page: Control = null
+var _game_mode: int = GameModesScript.Id.STANDARD
+
 # ------------------------------------------------------------
 # 房间页（P11-C1-c Step 4，决策 D12~D17 见 MULTIPLAYER_TASKS.md）
 #   · 座位数 3~8，建房时由房主选（默认 4），创建后固定（D17）：
@@ -797,6 +814,30 @@ func _build_element_pool(page: Control) -> void:
 
 func _symbols_joined(syms: Array) -> String:
 	return ui_supp._symbols_joined(syms)
+
+
+# -------- 对局模式小页（D24，scripts/pages/ModePage.gd） --------
+func _build_mode_page() -> void:
+	ui_mode._build_mode_page()
+
+func _open_mode_page() -> void:
+	ui_mode._open_mode_page()
+
+func _close_mode_page() -> void:
+	ui_mode._close_mode_page()
+
+func _sync_mode_summary() -> void:
+	ui_mode._sync_mode_summary()
+
+# 本局模式（开始页选的）：GameFlow 在 init_game() 之前落到 GameManager，
+# 联机时客人这份会被主机下发的 config 覆盖 —— 只有房主的选择算数。
+func _selected_game_mode() -> int:
+	return _game_mode
+
+# 唯一写入口：非法 id 退回标准局（与 GameManager.set_game_mode_safe 同口径）
+func set_game_mode(mode: int) -> void:
+	_game_mode = mode if GameModesScript.is_valid(mode) else GameModesScript.Id.STANDARD
+	_sync_mode_summary()
 
 
 # -------- 以下方法已搬进 scripts/pages/PageChrome.gd（Slice 4a 纯搬运，这里只留同名转发） --------

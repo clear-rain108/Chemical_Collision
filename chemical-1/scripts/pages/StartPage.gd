@@ -28,6 +28,8 @@ func _build_start_page() -> void:
 	_start_page_buttons()
 	# P10：补充规则小页（盖在开始页之上，默认隐藏）
 	_ui._build_supp_rules_page()
+	# D24：对局模式小页（同上，盖在开始页之上，默认隐藏）
+	_ui._build_mode_page()
 	# Step 4：房间页（同样盖在开始页之上，默认隐藏）
 	_ui._build_room_page()
 
@@ -223,6 +225,22 @@ func _start_page_settings() -> void:
 	touch_tg.add_theme_font_size_override("font_size", 15)
 	touch_tg.tooltip_text = "按钮更高、字号 +2、手势更跟手（真机 / 平板推荐开启，随时可切回）"
 	card.add_child(touch_tg)
+
+	# D24：对局模式入口 + 当前模式名。放在人数行右侧那块空列（x 464~588、y 20~110）：
+	# 卡内纵向已经排满（divider 118 / 两个入口 128 / 摘要 170，卡高 210），
+	# 再往下挤会把 rule_hint 与开始按钮顶出卡外（P10 踩过的坑）。
+	# 触控档会把 34 高的按钮补到 48 并上移 8（→ 18~66），所以摘要行从 y=72 起。
+	var mode_entry = _start_make_ghost("ModeEntryBtn", "对局模式 ▸",
+		Vector2(464, 26), Vector2(124, 34))
+	mode_entry.tooltip_text = "标准对局 / 骷髅炸金服（只改族炸相关判定，牌库不变）"
+	card.add_child(mode_entry)
+
+	var mode_sum = _ui._start_label("", 13, _ui.START_C_MUTED, HORIZONTAL_ALIGNMENT_LEFT)
+	mode_sum.name = "ModeSummary"
+	mode_sum.position = Vector2(466, 72)
+	mode_sum.size = Vector2(122, 40)
+	mode_sum.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	card.add_child(mode_sum)
 
 
 func _start_setting_label(node_name: String, text: String, pos: Vector2) -> Label:

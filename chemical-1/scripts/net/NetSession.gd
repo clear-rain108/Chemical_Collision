@@ -1054,6 +1054,10 @@ func _make_config() -> Dictionary:
 		"organic_rules_enabled": bool(game.organic_rules_enabled),
 		"sequence_rules_enabled": bool(game.sequence_rules_enabled),
 		"halogen_exchange_allowed": bool(game.halogen_exchange_allowed),
+		# D24：对局模式由房主定，在点「开始」这一刻固化进 config 并随 game_start 下发。
+		# 它虽然不影响牌序，但**影响合法性判定**（族炸冷却 / 溢出免疫），所以必须
+		# 与影响牌库的那几个开关同级对待：两端不一致 → 第一颗族炸才爆 -109。
+		"game_mode": int(game.game_mode),
 	}
 
 
@@ -1075,6 +1079,9 @@ func _apply_config() -> void:
 	game.organic_rules_enabled = bool(_config.get("organic_rules_enabled", false))
 	game.sequence_rules_enabled = bool(_config.get("sequence_rules_enabled", false))
 	game.halogen_exchange_allowed = bool(_config.get("halogen_exchange_allowed", false))
+	# D24：缺键（老配置 / 手工构造）/ 脏值一律退回标准局，口径与 GameModes.rule()
+	# 一致（默认 0 = Id.STANDARD，由 set_game_mode_safe 兜底校验）。
+	game.set_game_mode_safe(int(_config.get("game_mode", 0)))
 
 
 func _apply_config_and_init() -> bool:

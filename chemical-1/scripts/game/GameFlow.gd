@@ -138,6 +138,10 @@ func _apply_start_page_rules(gm) -> void:
 	var limit_cb_node = _ui._start_child("ElementLimitCheckBox")
 	gm.element_limit_enabled = limit_cb_node != null and limit_cb_node.button_pressed
 	gm.allowed_extra_elements = _ui._selected_extra_elements() if gm.element_limit_enabled else []
+	# 对局模式（D24）：必须在 init_game() **之前**写 —— 它决定族炸合法性判定，
+	# 而 init_game() 不重置 game_mode（重置会把玩家选的模式悄悄吞掉）。
+	# 联机：房主这份随 game_start 的 config 下发；客人这份会被主机配置覆盖。
+	gm.set_game_mode_safe(_ui._selected_game_mode())
 
 
 func _init_game(total: int, ai: int) -> void:

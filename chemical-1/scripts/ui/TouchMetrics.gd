@@ -176,7 +176,7 @@ func set_touch_ui(on: bool) -> void:
 
 # 把当前档位刷到所有已构建的页面 + 游戏页（可逆：关掉时逐颗还原，不重建页面）
 func _apply_touch_profile_everywhere() -> void:
-	for p in [_ui.start_page, _ui.end_page, _ui.get_node_or_null("TutorialPage"), _ui.help_page, _ui._supp_rules_page]:
+	for p in [_ui.start_page, _ui.end_page, _ui.get_node_or_null("TutorialPage"), _ui.help_page, _ui._supp_rules_page, _ui._mode_page]:
 		if p == null:
 			continue
 		if _ui._touch_ui:

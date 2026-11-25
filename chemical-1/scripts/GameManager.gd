@@ -11,6 +11,7 @@ const CompoundSolverScript = preload("res://scripts/CompoundSolver.gd")
 const PlayerManagerScript = preload("res://scripts/PlayerManager.gd")
 const GameLoggerScript = preload("res://scripts/GameLogger.gd")
 const TutorialControllerScript = preload("res://scripts/TutorialController.gd")
+const GameModesScript = preload("res://scripts/GameModes.gd")
 
 # ============================================================
 # 一、游戏常量
@@ -86,6 +87,16 @@ var sequence_constraint_active: bool = false   # 顺序约束是否激活
 # 只有这一名玩家受约束：必须打出指定牌型，否则罚抽 2 张。
 # 别人出族炸、别人出牌、接炸链结束都不会解除该约束。
 var sequence_constraint_target: int = -1
+
+# ------------------------------------------------------------
+# 三之二·五、对局模式（模式 = 一组规则开关，见 scripts/GameModes.gd）
+# 引擎只问「这条规则开没开」：cooling_enabled / immunity_enabled；
+# 加新模式只改 GameModes 的表，引擎判定点零改动。
+# 注意：init_game() **不重置**它（同 organic_rules_enabled）—— 模式属于「局配置」，
+#      必须由调用方（开始页 GameFlow / NetSession._apply_config）在 init 之前写入。
+#      教程局由 init_tutorial() 强制回 STANDARD。
+# ------------------------------------------------------------
+var game_mode: int = GameModesScript.Id.STANDARD
 
 # ============================================================
 # 三之三、联机地基状态（P11-B）
@@ -184,6 +195,9 @@ func init_game(player_count: int = 4, ai_count: int = 3, rng_seed: int = -1) -> 
 
 	phase = 1
 	logger.add_log("===== 游戏开始 =====")
+	# 特殊模式必须留痕：日志是第一现场（玩家问「族炸怎么没冷却」时先看这行）
+	if not is_standard_game_mode():
+		logger.add_log("【特殊模式】" + get_game_mode_summary())
 	if organic_rules_enabled or sequence_rules_enabled or halogen_exchange_allowed or element_limit_enabled:
 		var rules_list: Array = []
 		if organic_rules_enabled: rules_list.append("有机物胜利")
@@ -437,9 +451,11 @@ func _evaluate_play(player_index: int, cards: Array, custom_valences: Dictionary
 		# 冷却优先于接炸链：冷却期间一律不能再出族炸（含接炸），
 		# 只能出化合物解除，或跳过放弃接炸（见 GAMEPLAY_RULES「族炸冷却」）。
 		# 若在此处放行接炸，冷却玩家可借别人的族炸反复接炸，冷却形同虚设。
-		if player.clan_bomb_cooling:
+		# 模式开关：骷髅炸金服下族炸不产生冷却，这条判定整段失效（见 GameModes.gd）
+		if _cooling_enabled() and player.clan_bomb_cooling:
 			return -3
-		if compound_immune and not clan_bomb_chain_active:
+		# 模式开关：骷髅炸金服下 compound_immune 永不置位，免疫族炸整段失效
+		if _immunity_enabled() and compound_immune and not clan_bomb_chain_active:
 			return -4  # 溢出化合物免疫族炸
 		if clan_bomb_chain_active:
 			if table_cards.size() > 0:
@@ -589,7 +605,10 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 
 	# -------- 族炸：启动接炸链 + 牌权移交 --------
 	if pattern == CardPatternsScript.CardPattern.CLAN_BOMB:
-		player.clan_bomb_cooling = true
+		# 只有「冷却规则开着」的模式才置位。这里绝不能写 else 清 false ——
+		# 链里别人的冷却状态不归这行管（清了就等于复活「冷却形同虚设」的历史漏洞）。
+		if _cooling_enabled():
+			player.clan_bomb_cooling = true
 		clan_bomb_chain_active = true
 		clan_bomb_owner = player_index
 		# 族炸不解除顺序约束（约束只由被指定的玩家自己出牌 / 跳过才结束）——
@@ -639,10 +658,13 @@ func play_cards(player_index: int, cards: Array, custom_valences: Dictionary = {
 		# B′：溢出按「一个分子的原子数」判，不按「出了几张牌」判。
 		# 2Na+2Br 是 4 张牌但每分子只有 2 个原子，不该免疫族炸；
 		# P₂O₅（7 个原子）、Fe₃O₄（7 个原子）这类大分子才免疫。
-		var atom_count: int = CompoundSolverScript.get_formula_atom_count(cards)
-		if atom_count >= players.size():
-			compound_immune = true
-			log_messages.append("⚠ 溢出化合物！单分子 %d 个原子≥%d人，免疫族炸" % [atom_count, players.size()])
+		# 模式开关：骷髅炸金服下整段失效 —— 不判原子数、不置 compound_immune、不打日志。
+		# 桌面大分子仍只能被「更大的化合物」接，只是不能再挡族炸。
+		if _immunity_enabled():
+			var atom_count: int = CompoundSolverScript.get_formula_atom_count(cards)
+			if atom_count >= players.size():
+				compound_immune = true
+				log_messages.append("⚠ 溢出化合物！单分子 %d 个原子≥%d人，免疫族炸" % [atom_count, players.size()])
 
 	# -------- 非族炸/非顺序出牌完成：重置状态 --------
 	clan_bomb_chain_active = false
@@ -1085,6 +1107,8 @@ func init_tutorial(level: int) -> bool:
 	sequence_constraint = -1
 	sequence_constraint_active = false
 	sequence_constraint_target = -1
+	# 教程只教标准规则：特殊模式一律不参与教学（同下面两行的「强制关」逻辑）
+	game_mode = GameModesScript.Id.STANDARD
 	halogen_exchange_allowed = false   # 教程局同样默认禁止卤族互化
 	element_limit_enabled = false      # 教程局永远 29 种元素全量（预设手牌含 Fe 等副族）
 	allowed_extra_elements.clear()
@@ -1284,6 +1308,33 @@ func get_sequence_rules_enabled() -> bool:
 func get_halogen_exchange_allowed() -> bool:
 	return halogen_exchange_allowed
 
+# -------- 对局模式（特殊模式，见 scripts/GameModes.gd）--------
+func get_game_mode() -> int:
+	return game_mode
+
+func get_game_mode_name() -> String:
+	return GameModesScript.name_of(game_mode)
+
+# 开局日志 / 状态栏用的一行摘要；标准局返回 ""（不刷屏）
+func get_game_mode_summary() -> String:
+	return GameModesScript.summary_of(game_mode)
+
+func is_standard_game_mode() -> bool:
+	return GameModesScript.is_standard(game_mode)
+
+# 这两个开关是模式在引擎里的全部投影：判定点只认它们，不认模式名
+func _cooling_enabled() -> bool:
+	return GameModesScript.cooling_enabled(game_mode)
+
+func _immunity_enabled() -> bool:
+	return GameModesScript.immunity_enabled(game_mode)
+
+# 写入口（开始页 / NetSession._apply_config 统一走这里）：
+# 未知模式 id 一律退回标准局 —— 脏值绝不能进局，否则「本地认这套规则、
+# 对端认那套规则」会变成第一颗族炸才发现的分叉（-109）。
+func set_game_mode_safe(mode: int) -> void:
+	game_mode = mode if GameModesScript.is_valid(mode) else GameModesScript.Id.STANDARD
+
 # -------- 元素限制（补充规则）--------
 func get_element_limit_enabled() -> bool:
 	return element_limit_enabled
@@ -1406,6 +1457,8 @@ func to_snapshot() -> Dictionary:
 		"clan_bomb_chain_active": clan_bomb_chain_active,
 		"clan_bomb_owner": clan_bomb_owner,
 		"clan_bomb_disabled": clan_bomb_disabled,
+		# 局配置也要进快照：重连 / 中途加入的 UI 要能显示「本局是特殊模式」
+		"game_mode": game_mode,
 		"sequence_constraint": sequence_constraint,
 		"sequence_constraint_active": sequence_constraint_active,
 		"sequence_constraint_target": sequence_constraint_target,
@@ -1472,6 +1525,10 @@ func _canonical_string() -> String:
 	parts.append("immune=%s" % str(compound_immune))
 	parts.append("chain=%s:%d" % [str(clan_bomb_chain_active), clan_bomb_owner])
 	parts.append("no_bomb=%s" % str(clan_bomb_disabled))
+	# 模式也是**规则状态**：它直接决定族炸合不合法（冷却 / 免疫两条判定），不同步就会
+	# 变成「主机认、客人重放被拒」的延后型 -109 —— 与 D22 的 rulings= 同一个道理。
+	# 它不违反 D23：这是规则开关，不是「进度计数」。
+	parts.append("mode=%d" % game_mode)
 	parts.append("cons=%d:%s:%d" % [sequence_constraint, str(sequence_constraint_active), sequence_constraint_target])
 	parts.append("table=%s/%d/%d/%s" % [
 		str(_uids_of(table_cards)),

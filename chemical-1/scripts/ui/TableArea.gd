@@ -74,9 +74,14 @@ func _update_status_bar() -> void:
 			pat = _ui.CardPatternsScript.detect_pattern(_ui.game_manager.get_table_cards())
 		var pn = _ui.CardPatternsScript.get_pattern_name(pat)
 		table_txt = "桌面: %s 打出 %s" % [tp.player_name, pn]
-	_ui.status_bar_label.text = "▶ %s %s%s%s  手牌 %d/%d  ｜  牌库 %d  ｜  %s" % [
+	# D24：非标准局在状态栏末尾挂模式名。为什么不做成单独一行：
+	# 状态栏只有 60px 高、一行字，玩家得随时看到「族炸为什么不用冷却了」。
+	var mode_txt := ""
+	if not _ui.game_manager.is_standard_game_mode():
+		mode_txt = "  ｜  模式 %s" % _ui.game_manager.get_game_mode_name()
+	_ui.status_bar_label.text = "▶ %s %s%s%s  手牌 %d/%d  ｜  牌库 %d  ｜  %s%s" % [
 		cp.player_name, ai_tag, cooling, pass_tag,
-		cp.get_hand_count(), hand_limit, deck_remain, table_txt
+		cp.get_hand_count(), hand_limit, deck_remain, table_txt, mode_txt
 	]
 
 
@@ -116,6 +121,11 @@ func _format_player_status() -> String:
 		lines.append(("手牌: " if ci == 0 else "　　　") + " | ".join(seg))
 		ci += _ui.PLAYER_STATUS_PER_LINE
 	# 补充规则 / 方向：只在还留得下行数时追加（8 座位时这两行会被挤掉）
+	# D24：特殊模式优先于补充规则抢行 —— 不知道自己在骷髅局里比不知道
+	# 「有机物胜利开着」更容易打出争议牌。标准局这一行不存在（零噪音）。
+	if not _ui.game_manager.is_standard_game_mode() and lines.size() < _ui.INFO_LABEL_MAX_LINES - 1:
+		var mode_diff: String = _ui.game_manager.get_game_mode_summary()
+		lines.append("【特殊模式】%s" % (mode_diff if mode_diff != "" else _ui.game_manager.get_game_mode_name()))
 	var has_rules: bool = _ui.game_manager.get_organic_rules_enabled() \
 		or _ui.game_manager.get_sequence_rules_enabled() \
 		or _ui.game_manager.get_halogen_exchange_allowed() \

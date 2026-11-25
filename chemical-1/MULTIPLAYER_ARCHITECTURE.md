@@ -1,6 +1,6 @@
 # 化学碰撞（Chemical Collision）联机架构设计文档
 
-> 版本：v1.4 ｜ 状态：**设计定稿；P11-B 地基、P11-C1-a 传输、P11-C1-b 会话层均已实现；P11-C1-c Step 0 真机冒烟脚本已就绪；D22 化合物质疑投票（协议 v2）已落地；D23 指纹去 UI 化（协议 v3）已落地**
+> 版本：v1.5 ｜ 状态：**设计定稿；P11-B 地基、P11-C1-a 传输、P11-C1-b 会话层均已实现；P11-C1-c Step 0 真机冒烟脚本已就绪；D22 化合物质疑投票（协议 v2）已落地；D23 指纹去 UI 化（协议 v3）已落地；D24 对局模式（协议 v4）已落地**
 > 适用范围：3~8 人朋友局（默认 4），跨局域网 P2P（无端口映射条件）
 > 相关文档：[`ARCHITECTURE.md`](ARCHITECTURE.md)（单机架构）、[`GAMEPLAY_RULES.md`](GAMEPLAY_RULES.md)（规则）、[`UI_POLISH_PLAN.md`](UI_POLISH_PLAN.md)（UI 计划）
 
@@ -1251,3 +1251,73 @@ parts.append("logs=%d" % log_messages.size())
 3. **看 `_desynced` 有没有被置**：主机 `_host_on_ready()` 只弹错不锁死；
    客人侧 `_client_on_applied()` 才置位并让 `cast_vote / 出牌` 一路 `-109`。
    「只弹一次 toast、游戏照常」= 比对基准错了，不是真分叉。
+
+---
+
+### D.16 对局模式必须进 config 与指纹（D24）
+
+**一句话**：模式 = 一组规则开关，`scripts/GameModes.gd` 是唯一真源；它决定「族炸合不合法」，
+所以要和「影响牌库的那几个开关」同级对待 —— 进 `game_start` 的 `config`，也进 `state_hash`。
+
+#### 为什么引擎不许认识模式名
+
+`GameManager` 里原本有 4 个与模式相关的判定点：
+
+| # | 位置 | 作用 | 关掉之后的语义 |
+|---|---|---|---|
+| 1 | `_evaluate_play()` 冷却判定 | 冷却中出族炸 → `-3` | 不判冷却 |
+| 2 | `_evaluate_play()` 免疫判定 | 桌面溢出化合物 → 族炸 `-4` | 不判溢出免疫 |
+| 3 | `play_cards()` 冷却置位 | 族炸后 `clan_bomb_cooling = true` | **不置位**（不是 `else` 清掉） |
+| 4 | `play_cards()` 免疫置位 | 溢出化合物 `compound_immune = true` | 不置位、不打日志 |
+
+四个点全部改走 `_cooling_enabled()` / `_immunity_enabled()`，模式名只出现在模式表里。
+这样才能保证「标准局行为逐字不变」（表驱动下漏写 = 走默认 = 与标准局一致），
+也才能让第二种模式只写「与默认不同的那几条」。
+
+⚠ 第 3 点的 `else` 分支是禁区：写 `else: clan_bomb_cooling = false` 会顺手清掉**接炸链里别人**
+的冷却标记，直接复活 D 早期修掉的「链一重开冷却就失效」漏洞。
+
+#### 为什么必须进 config
+
+客人的 `GameManager` 由 `_apply_config_and_init()` 重建，`config` 里没有 `game_mode` 就等于
+「主机按骷髅局判、客人按标准局重放」：主机广播的族炸在客人侧被 `-3` / `-4` 拒，
+**第一颗族炸才爆 -109**（和 D22 `rulings=` 漏进快照是同一类延迟型分叉）。
+
+- `_make_config()`：`"game_mode": int(game.game_mode)`（房主在开始页选的，开局瞬间固化）
+- `_apply_config()`：`game.set_game_mode_safe(int(_config.get("game_mode", 0)))`
+  —— 缺键 / 脏值一律退回标准局（`GameModes.rule()` 同口径：宁保守，不放水）
+
+#### 为什么必须进指纹
+
+`_canonical_string()` 加一行 `mode=%d`。规则开关不同 = 合法性判定不同，
+同一副牌算出的「同一局面」其实不是同一个局面；不进指纹的话，两端会在第一次族炸才分叉。
+
+#### 协议升 v4
+
+`PROTO_VERSION 3 → 4`。v3 的客人不认识 `config.game_mode`，会按标准局重放骷髅局主机广播的族炸。
+「标准局 ↔ 标准局」的房间其实兼容，但**协议允许存在对方不认识的规则字段**本身就是隐匿分叉的温床，
+整版拒绝更省事。两端必须换同一批包。
+
+#### 加新模式（三步，判定代码零改动）
+
+1. `GameModes.Id` 加一项；
+2. `MODE_OVERRIDES` / `MODE_META` 各加一条（只写与默认不同的键）；
+3. 开始页候选卡自动出现（`pages/ModePage.gd` 按 `GameModes.ORDER` 生成）。
+
+#### 守门测试 `tests/verify_game_mode.gd`（86 项）
+
+| 段 | 断言 |
+|---|---|
+| M0 | 模式表：`ORDER` 与实际条目一致 / 每个模式有 name+desc / 未知 id 非法 / 默认表 == 标准局 / 缺键退回默认 |
+| M1 | 标准局冷却回归：族炸后进 ❄、冷却中再出 `-3`、被拒手牌不变 |
+| M2 | 骷髅局：不进冷却、立刻能再炸、**接炸链照常开**（抢牌权保留） |
+| M3 | 骷髅局链中可立刻用更大的族炸接炸（标准局同场景 `-3`，作对照） |
+| M4 | 溢出免疫两半边：`P2O5` 不置免疫（置位侧）+ 手动置 `compound_immune` 也不挡族炸（判定侧） |
+| M5 | 教程局强制回标准局 |
+| M6 | `_make_config` 带模式 / 客人落地 / 脏值·缺键兜底 / 同 seed 两端 `state_hash()` 一致 |
+| M7 | 快照带 `game_mode`、指纹含 `mode=`、改模式指纹立刻变、改回来指纹复原（无隐藏随机源） |
+| M8 | 开局日志留痕、getter 与 `GameModes.summary_of()` 一致、`init_game()` 不重置模式 |
+| M9 | UI 链路：设置卡入口在卡内 → 模式页单选互斥 → 开局落到 `GameManager` → 状态栏 / 玩家链 / 结算页都写明模式；切回标准局后一字不多 |
+
+负向自检：把 `GameModes.cooling_enabled()` 硬改成 `return true` → M0/M2/M3/M8 立刻 9 项转红。
+
